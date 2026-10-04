@@ -14,7 +14,8 @@ struct Queue : IExecutor {
 };
 struct Store : IIdentityStore {
  std::optional<IdentityMaterial> identity; int writes=0;
- Result<std::optional<IdentityMaterial>> LoadIdentity() override {return Result<std::optional<IdentityMaterial>>::Success(identity);}
+ std::function<void()> before_load;
+ Result<std::optional<IdentityMaterial>> LoadIdentity() override {if(before_load)before_load();return Result<std::optional<IdentityMaterial>>::Success(identity);}
  Result<void> SaveIdentity(const IdentityMaterial& i) override {identity=i;++writes;return Result<void>::Success();}
  Result<std::vector<TrustedDevice>> LoadTrust() override {return Result<std::vector<TrustedDevice>>::Success({});}
  Result<void> SaveTrust(const TrustedDevice&) override {return Result<void>::Success();}
@@ -59,7 +60,145 @@ struct Permission : IPermissionAgent { ResultCallback<void> pending; void Reques
 void Barrier(ShareSdk& sdk) {sdk.Runtime()->scheduler->Invoke([]{});}
 void Ready(ShareSdk& sdk,PlatformFake& p) {Barrier(sdk);p.sockets.ready(Result<std::uint16_t>::Success(43123));Barrier(sdk);p.dns.published(Result<void>::Success());Barrier(sdk);}
 ServiceRecord Peer() {ServiceRecord r;r.instance="peer";r.interface_id="wifi";r.srv_target="peer.local.";r.service_type="_share._tcp.local.";r.port=1234;r.addresses={"192.0.2.1"};r.txt={{"id","01234567-89ab-4def-8123-456789abcdef"},{"name","peer"},{"platform","ios"},{"pv","1.0"}};return r;}
-int main() {
+void InitializePreservesRequestedExecutors() {
+ PlatformFake platform;
+ ShareSdk sdk(platform);
+ auto executor_a=std::make_shared<Queue>();
+ auto executor_b=std::make_shared<Queue>();
+ std::promise<void> reading,release;
+ auto release_future=release.get_future().share();
+ platform.store.before_load=[&]{reading.set_value();release_future.wait();};
+ SdkConfig a,b;
+ a.device_name="accepted A";a.callback_executor=executor_a;
+ b.device_name="rejected B";b.callback_executor=executor_b;
+ int draining=0,route_a=0,route_b=0;
+ sdk.Initialize(a,[&](auto result){CHECK(result.ok());route_a=draining;});
+ reading.get_future().wait();
+ std::promise<void> entered;
+ std::thread concurrent([&]{
+  entered.set_value();
+  sdk.Initialize(b,[&](auto result){CHECK(!result.ok());route_b=draining;});
+ });
+ entered.get_future().wait();
+ release.set_value();
+ concurrent.join();
+ Barrier(sdk);
+ draining=1;executor_a->Drain();
+ draining=2;executor_b->Drain();
+ CHECK(route_a==1 && route_b==2);
+ CHECK(sdk.Runtime()->config.device_name=="accepted A");
+ CHECK(sdk.Runtime()->callbacks==executor_a);
+}
+
+void InitializeReturnsWhileStorageBlocked() {
+ PlatformFake platform;
+ ShareSdk sdk(platform);
+ auto executor=std::make_shared<Queue>();
+ std::promise<void> reading,release,returned;
+ auto release_future=release.get_future().share();
+ platform.store.before_load=[&]{reading.set_value();release_future.wait();};
+ SdkConfig config;config.device_name="blocked store";config.callback_executor=executor;
+ sdk.Initialize(config,[](auto result){CHECK(result.ok());});
+ reading.get_future().wait();
+ std::thread caller([&]{sdk.Initialize(config,[](auto result){CHECK(!result.ok());});returned.set_value();});
+ const bool immediate=returned.get_future().wait_for(std::chrono::milliseconds(200))==std::future_status::ready;
+ release.set_value();
+ caller.join();
+ Barrier(sdk);
+ executor->Drain();
+ CHECK(immediate);
+}
+
+void InitializeQueuesConcurrentConfigurations() {
+ PlatformFake platform;
+ ShareSdk sdk(platform);
+ auto executor_a=std::make_shared<Queue>();
+ auto executor_b=std::make_shared<Queue>();
+ std::promise<void> core_entered,release_core,launch,returned_a,returned_b;
+ auto core_release=release_core.get_future().share();
+ auto begin=launch.get_future().share();
+ sdk.Runtime()->scheduler->Post([&]{core_entered.set_value();core_release.wait();});
+ core_entered.get_future().wait();
+ SdkConfig a,b;
+ a.device_name="concurrent A";a.callback_executor=executor_a;
+ b.device_name="concurrent B";b.callback_executor=executor_b;
+ bool success_a=false,success_b=false;
+ int draining=0,route_a=0,route_b=0;
+ OperationId id_a=0,id_b=0;
+ std::thread caller_a([&]{
+  begin.wait();
+  id_a=sdk.Initialize(a,[&](auto result){success_a=result.ok();route_a=draining;});
+  returned_a.set_value();
+ });
+ std::thread caller_b([&]{
+  begin.wait();
+  id_b=sdk.Initialize(b,[&](auto result){success_b=result.ok();route_b=draining;});
+  returned_b.set_value();
+ });
+ launch.set_value();
+ const bool queued_a=returned_a.get_future().wait_for(std::chrono::milliseconds(200))==std::future_status::ready;
+ const bool queued_b=returned_b.get_future().wait_for(std::chrono::milliseconds(200))==std::future_status::ready;
+ release_core.set_value();
+ caller_a.join();caller_b.join();
+ Barrier(sdk);
+ draining=1;executor_a->Drain();
+ draining=2;executor_b->Drain();
+ CHECK(queued_a && queued_b && id_a && id_b && id_a!=id_b);
+ CHECK(route_a==1 && route_b==2 && success_a!=success_b);
+ CHECK(sdk.Runtime()->config.device_name==(success_a?"concurrent A":"concurrent B"));
+ CHECK(sdk.Runtime()->callbacks==(success_a?executor_a:executor_b));
+}
+
+void RecoveryExpiresPeers(bool fail) {
+ PlatformFake platform;
+ ShareSdk sdk(platform);
+ auto executor=std::make_shared<Queue>();
+ SdkConfig config;config.device_name="recovery";config.callback_executor=executor;
+ config.offline_debounce=std::chrono::seconds(1);
+ sdk.Initialize(config,[](auto result){CHECK(result.ok());});
+ Barrier(sdk);executor->Drain();
+ std::vector<DiscoveryEventKind> events;
+ sdk.Discovery()->SetEventHandler([&](auto event){events.push_back(event.kind);});
+ sdk.Start([](auto result){CHECK(result.ok());});
+ Ready(sdk,platform);
+ platform.dns.found(Result<ServiceRecord>::Success(Peer()));
+ Barrier(sdk);executor->Drain();
+ platform.changed();
+ Barrier(sdk);
+ CHECK(sdk.Discovery()->GetDevices().size()==1);
+ // Reach publication but deliberately hold its completion beyond debounce.
+ platform.sockets.ready(Result<std::uint16_t>::Success(43124));
+ Barrier(sdk);
+ if(fail) {
+  platform.dns.published(Result<void>::Failure({ErrorCode::DiscoveryFailed,"recovery failed",77}));
+  Barrier(sdk);
+  // Failure cannot silently clear an already-online peer.
+  CHECK(sdk.Discovery()->GetDevices().size()==1);
+ }
+ std::this_thread::sleep_for(std::chrono::milliseconds(1150));
+ Barrier(sdk);executor->Drain();
+ CHECK(events==std::vector<DiscoveryEventKind>({DiscoveryEventKind::Online,DiscoveryEventKind::Offline}));
+ CHECK(sdk.Discovery()->GetDevices().empty());
+ sdk.Stop([](auto result){CHECK(result.ok());});
+ Barrier(sdk);executor->Drain();
+}
+
+int main(int argc,char** argv) {
+ if(argc>1) {
+  const std::string test=argv[1];
+  if(test=="init-executors")InitializePreservesRequestedExecutors();
+  else if(test=="init-return")InitializeReturnsWhileStorageBlocked();
+  else if(test=="init-concurrent")InitializeQueuesConcurrentConfigurations();
+  else if(test=="recovery-delayed")RecoveryExpiresPeers(false);
+  else if(test=="recovery-failed")RecoveryExpiresPeers(true);
+  else CHECK(false);
+  return 0;
+ }
+ InitializePreservesRequestedExecutors();
+ InitializeReturnsWhileStorageBlocked();
+ InitializeQueuesConcurrentConfigurations();
+ RecoveryExpiresPeers(false);
+ RecoveryExpiresPeers(true);
  PlatformFake p;auto q=std::make_shared<Queue>();SdkConfig config;config.device_name="phone";config.callback_executor=q;
  ShareSdk sdk(p);int initialized=0,starts=0,stops=0;std::vector<DiscoveryEventKind> events;std::vector<ErrorCode> errors;std::vector<DiscoveryState> states;
  sdk.Initialize(config,[&](auto r){CHECK(r.ok());++initialized;});Barrier(sdk);CHECK(initialized==0);q->Drain();CHECK(initialized==1);
