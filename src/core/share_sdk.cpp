@@ -1,5 +1,6 @@
 #include "share_sdk.hpp"
 #include "device_catalog.hpp"
+#include "sdk_services.hpp"
 #include <algorithm>
 namespace unishare::core {
 namespace {
@@ -25,6 +26,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  std::unique_ptr<DeviceCatalog> catalog;std::vector<Ticket> starters;
  std::function<void(DiscoveryEvent)> event_handler;std::function<void(ShareError)> error_handler;
  std::function<void(DiscoveryState)> state_handler;
+ std::map<std::string,bool> paired_metadata;
  explicit State(IPlatform& p):platform(p){}
  template<class F> auto Guard(std::uint64_t g,F f) {
   return [weak=weak_from_this(),queue=runtime->scheduler,g,f=std::move(f)](auto result) mutable {
@@ -37,7 +39,9 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  }
  void EmitState(DiscoveryState v){if(state_handler)runtime->callbacks->Post([f=state_handler,v]{f(v);});}
  void EmitError(ShareError e){if(error_handler)runtime->callbacks->Post([f=error_handler,e=std::move(e)]{f(e);});}
- void Emit(std::vector<DeviceEvent> events){if(event_handler)for(auto& e:events)runtime->callbacks->Post([f=event_handler,e=std::move(e)]{f(e);});}
+ bool Paired(DeviceId id) const {return std::any_of(runtime->trusted_devices.begin(),runtime->trusted_devices.end(),[&](auto& d){return d.id==id;});}
+ void Emit(std::vector<DeviceEvent> events){for(auto& e:events){e.device.paired=Paired(e.device.id);paired_metadata[e.device.id.ToString()]=e.device.paired;if(event_handler)runtime->callbacks->Post([f=event_handler,e=std::move(e)]{f(e);});}}
+ void TrustChanged(){if(catalog)for(auto d:catalog->Snapshot())if(paired_metadata[d.id.ToString()]!=Paired(d.id))Emit({{DiscoveryEventKind::Updated,d}});}
  void FinishStart(Result<void> result) {auto pending=std::move(starters);starters.clear();for(auto& t:pending)t.Complete(result);}
  void Shutdown(ShareError reason,bool cancel,bool preserve_catalog=false) {
   ++generation;
@@ -53,6 +57,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
    runtime->scheduler->Cancel(expiry);
    expiry=0;
    catalog.reset();
+   paired_metadata.clear();
   }
   if(state!=SdkState::Uninitialized)state=SdkState::Stopped;
  }
@@ -152,6 +157,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
    if(s->starting){s->starters.push_back(ticket);return;}
    if(s->state==SdkState::Running){ticket.Complete(Result<void>::Success());return;}
    s->starters.push_back(ticket);
+   if(s->runtime->start_services)s->runtime->start_services();
    s->BeginNetwork();
   });
   return ticket.id;
@@ -163,6 +169,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
     s->Shutdown(Error(ErrorCode::Cancelled,"SDK stopped"),true);
     s->EmitState(DiscoveryState::Stopped);
    } else {
+    if(s->runtime->stop_services)s->runtime->stop_services(Error(ErrorCode::Cancelled,"SDK stopped"));
     s->runtime->operations->CancelAll();
     if(s->state==SdkState::Initialized)s->state=SdkState::Stopped;
    }
@@ -170,13 +177,13 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
   });
   return ticket.id;
  }
- std::vector<DeviceInfo> GetDevices() const override {std::vector<DeviceInfo> out;runtime->scheduler->Invoke([&]{if(catalog)out=catalog->Snapshot();});return out;}
+ std::vector<DeviceInfo> GetDevices() const override {std::vector<DeviceInfo> out;runtime->scheduler->Invoke([&]{if(catalog)out=catalog->Snapshot();for(auto& d:out)d.paired=Paired(d.id);});return out;}
  void SetEventHandler(std::function<void(DiscoveryEvent)> f) override {runtime->scheduler->Invoke([&]{event_handler=std::move(f);});}
  void SetErrorHandler(std::function<void(ShareError)> f) override {runtime->scheduler->Invoke([&]{error_handler=std::move(f);});}
  void SetStateHandler(std::function<void(DiscoveryState)> f) override {runtime->scheduler->Invoke([&]{state_handler=std::move(f);});}
 };
 ShareSdk::ShareSdk(IPlatform& p):state_(std::make_shared<State>(p)){}
-ShareSdk::~ShareSdk(){auto s=state_;s->runtime->scheduler->Invoke([s]{s->Shutdown(Error(ErrorCode::Cancelled,"SDK destroyed"),true);s->alive=false;});}
+ShareSdk::~ShareSdk(){auto s=state_;s->runtime->scheduler->Invoke([s]{s->Shutdown(Error(ErrorCode::Cancelled,"SDK destroyed"),true);s->alive=false;s->runtime->alive=false;});}
 OperationId ShareSdk::Initialize(SdkConfig config,ResultCallback<void> cb) {
  auto s=state_;
  // Capture this invocation's executor before queueing. Neither registration nor
@@ -198,6 +205,8 @@ OperationId ShareSdk::Initialize(SdkConfig config,ResultCallback<void> cb) {
    t.Complete(Result<void>::Failure(identity.error()));
    return;
   }
+  auto trust=s->platform.IdentityStore().LoadTrust();
+  if(!trust.ok()){t.Complete(Result<void>::Failure(trust.error()));return;}
   // Commit config, executor and identity together in the accepted core command.
   // Concurrent rejected calls keep their own completion executor without
   // changing any accepted configuration or future service callback policy.
@@ -208,6 +217,9 @@ OperationId ShareSdk::Initialize(SdkConfig config,ResultCallback<void> cb) {
   s->runtime->config.callback_executor=executor;
   s->runtime->buffers=std::make_shared<ByteBudget>(static_cast<std::size_t>(s->runtime->config.max_buffer_bytes));
   s->runtime->admission=SessionAdmission(s->runtime->buffers);
+  s->runtime->trusted_devices=trust.value();
+  std::weak_ptr<State> weak=s;
+  InstallServices(s->runtime,s->platform,[weak]{if(auto s=weak.lock())return s->GetDevices();return std::vector<DeviceInfo>{};},[weak]{if(auto s=weak.lock())s->TrustChanged();});
   s->state=SdkState::Initialized;
   t.Complete(Result<void>::Success());
  });

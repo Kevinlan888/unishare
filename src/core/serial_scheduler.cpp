@@ -14,7 +14,12 @@ SerialScheduler::SerialScheduler():state_(std::make_shared<State>()),worker_([s=
   if(first->first.first>now) {if(s->stopping){s->tasks.clear();return;}const auto deadline=first->first.first;s->wake.wait_until(lock,deadline);continue;}
   auto f=std::move(first->second);s->tasks.erase(first);lock.unlock();
   // Host callbacks cannot terminate the queue or strand later completions.
-  try {f();} catch(...) {} lock.lock();
+  try {f();} catch(...) {}
+  // A task can hold the last scheduler owner (e.g. a late adapter callback).
+  // Release captures before reacquiring State::mutex: its destructor locks the
+  // same mutex and detaches when running on this worker. The worker retains s.
+  f={};
+  lock.lock();
  }
 }) {}
 SerialScheduler::~SerialScheduler() {

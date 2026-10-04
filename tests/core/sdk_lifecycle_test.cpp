@@ -239,6 +239,8 @@ int main(int argc,char** argv) {
  CHECK(p.dns.publication.port==43123 && p.dns.publication.service_type=="_share._tcp.local." && p.dns.publication.txt_bytes.size()<=1300);
  CHECK(p.dns.publication.txt[2].second=="android");auto identity=p.store.identity->id;
  CHECK(states==std::vector<DiscoveryState>({DiscoveryState::Starting,DiscoveryState::Browsing}));
+ // Exercise the lifecycle fallback explicitly: Initialize now installs services.
+ runtime->scheduler->Invoke([&]{runtime->accept_socket={};});
  auto unwired=std::make_shared<Socket>();p.sockets.incoming(Result<std::shared_ptr<ISocket>>::Success(unwired));Barrier(sdk);CHECK(unwired->closed);
  int accepted=0;auto wired=std::make_shared<Socket>();runtime->scheduler->Invoke([&]{runtime->accept_socket=[&](auto socket){CHECK(socket==wired);++accepted;};});p.sockets.incoming(Result<std::shared_ptr<ISocket>>::Success(wired));Barrier(sdk);CHECK(accepted==1&&!wired->closed);runtime->scheduler->Invoke([&]{runtime->accept_socket={};});
  p.dns.found(Result<ServiceRecord>::Failure({ErrorCode::DiscoveryFailed,"query failed",9}));Barrier(sdk);q->Drain();CHECK(errors==std::vector<ErrorCode>({ErrorCode::DiscoveryFailed}));
@@ -250,7 +252,8 @@ int main(int argc,char** argv) {
  auto ticket=runtime->operations->Begin<void>([&](auto r){CHECK(!r.ok()&&r.error().code==ErrorCode::Cancelled&&cleanups==1&&wired->closed);++stops;});
  sdk.Stop([&](auto r){CHECK(r.ok());++stops;});Barrier(sdk);CHECK(!ticket.Complete(Result<void>::Success()));stale(Result<ServiceRecord>::Success(Peer()));Barrier(sdk);q->Drain();CHECK(stops==2&&events.size()==3);
  sdk.Stop([&](auto r){CHECK(r.ok());++stops;});Barrier(sdk);q->Drain();CHECK(stops==3);
- CHECK(cleanups==1);auto late_socket=std::make_shared<Socket>();old_accept(Result<std::shared_ptr<ISocket>>::Success(late_socket));Barrier(sdk);CHECK(late_socket->closed);runtime->scheduler->Invoke([&]{runtime->stop_services={};});
+ // Independently restarted services must also be cleaned by a repeated SDK Stop.
+ CHECK(cleanups==2);auto late_socket=std::make_shared<Socket>();old_accept(Result<std::shared_ptr<ISocket>>::Success(late_socket));Barrier(sdk);CHECK(late_socket->closed);runtime->scheduler->Invoke([&]{runtime->stop_services={};});
  sdk.Start([&](auto r){CHECK(r.ok());++starts;});Ready(sdk,p);q->Drain();CHECK(p.store.identity->id==identity&&p.store.writes==1&&starts==3);
  sdk.Stop([](auto){});Barrier(sdk);q->Drain();
  // Stop wins over delayed permission success and suppresses a late publication.

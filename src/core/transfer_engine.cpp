@@ -30,12 +30,12 @@ struct TransferEngine::Send {
  protocol::Message message;std::function<void(Result<void>)> done;
 };
 TransferEngine::TransferEngine(std::shared_ptr<Session> s,ISessionScheduler& q,SessionAdmission& a,SdkConfig c,
- OfferHandler o,ProgressHandler p,ResultHandler r):session_(std::move(s)),queue_(q),budget_(a.Buffers()),admission_(a),config_(std::move(c)),
+ OfferHandler o,ProgressHandler p,ResultHandler r,std::shared_ptr<ISessionScheduler> owner):scheduler_owner_(std::move(owner)),session_(std::move(s)),queue_(q),budget_(a.Buffers()),admission_(a),config_(std::move(c)),
  executor_(config_.callback_executor?config_.callback_executor:std::shared_ptr<IExecutor>(&q,[](IExecutor*){})),
  offer_(std::move(o)),progress_(std::move(p)),result_(std::move(r)){}
 std::shared_ptr<TransferEngine> TransferEngine::Create(std::shared_ptr<Session> s,ISessionScheduler& q,SessionAdmission& a,
- SdkConfig c,OfferHandler o,ProgressHandler p,ResultHandler r){
- auto e=std::shared_ptr<TransferEngine>(new TransferEngine(std::move(s),q,a,std::move(c),std::move(o),std::move(p),std::move(r)));
+ SdkConfig c,OfferHandler o,ProgressHandler p,ResultHandler r,std::shared_ptr<ISessionScheduler> owner){
+ auto e=std::shared_ptr<TransferEngine>(new TransferEngine(std::move(s),q,a,std::move(c),std::move(o),std::move(p),std::move(r),std::move(owner)));
  std::weak_ptr<TransferEngine> w=e;e->session_->SetContentHandler([w](auto m,auto ack){if(auto e=w.lock())e->Receive(std::move(m),std::move(ack));else ack(Result<void>::Failure(Error(ErrorCode::Cancelled,"transfer engine destroyed")));},
  [w](auto error){if(auto e=w.lock())e->Closed(error);});return e;
 }
@@ -53,8 +53,8 @@ std::optional<ShareError> TransferEngine::Validate(const protocol::Offer& o)cons
  for(unsigned char c:o.mime_type)if(c<32||c==127)return Error(ErrorCode::InvalidInput,"invalid MIME type");
  return {};
 }
-void TransferEngine::Emit(TransferId id,Result<void> result){auto fn=result_;if(fn)executor_->Post([fn,id,result]{fn({id,result});});}
-void TransferEngine::Progress(const std::shared_ptr<Transfer>& t){if(!Current(t))return;auto fn=progress_;auto p=TransferProgress{t->offer.transfer_id,t->bytes,t->offer.byte_count};if(fn)executor_->Post([fn,p]{fn(p);});}
+void TransferEngine::Emit(TransferId id,Result<void> result){if(core_result_)core_result_({id,result});auto fn=result_;if(fn)executor_->Post([fn,id,result]{fn({id,result});});}
+void TransferEngine::Progress(const std::shared_ptr<Transfer>& t){if(!Current(t))return;auto fn=progress_;auto p=TransferProgress{t->offer.transfer_id,t->bytes,t->offer.byte_count};if(core_progress_)core_progress_(p);if(fn)executor_->Post([fn,p]{fn(p);});}
 void TransferEngine::Deadline(const std::shared_ptr<Transfer>& t){
  queue_.Cancel(t->deadline);std::weak_ptr<TransferEngine> w=weak_from_this();
  const auto generation=++t->deadline_generation;
@@ -119,7 +119,7 @@ void TransferEngine::Read(const std::shared_ptr<Transfer>& t){
  auto remaining=t->offer.byte_count-t->bytes;auto n=static_cast<std::size_t>(std::min<std::uint64_t>(remaining?remaining:1,max));
  auto charge=budget_.Reserve(2*n);if(!charge){Fail(t,Error(ErrorCode::ResourceLimit,"source buffer limit"));return;}
  std::weak_ptr<TransferEngine> w=weak_from_this();auto* q=&queue_;auto stream=t->stream;
- stream->Read(n,[w,q,t,charge,stream,n](Result<std::vector<std::uint8_t>> result){
+ stream->Read(n,[w,q,t,charge,stream,n,owner=scheduler_owner_](Result<std::vector<std::uint8_t>> result){
   struct ReadResult {std::shared_ptr<ByteBudget::Reservation> charge;Result<std::vector<std::uint8_t>> result;};
   auto held=std::make_shared<ReadResult>(ReadResult{charge,std::move(result)});
   q->Post([w,t,held,n]{auto e=w.lock();if(!e||!e->Current(t))return;auto& r=held->result;
@@ -151,6 +151,7 @@ void TransferEngine::Receive(std::shared_ptr<const protocol::Message> message,Se
   // the executor discards its queue after engine destruction.
   struct OfferEvent {std::shared_ptr<Transfer> transfer;IncomingOffer event;};
   auto posted=std::make_shared<OfferEvent>(OfferEvent{t,std::move(event)});
+  if(core_offer_)core_offer_(posted->event);
   auto fn=offer_;if(fn)executor_->Post([fn,posted]{fn(posted->event);});ok();return;
  }
  TransferId id=std::visit([](const auto& m)->TransferId{using T=std::decay_t<decltype(m)>;if constexpr(std::is_same_v<T,protocol::Data>||std::is_same_v<T,protocol::Finish>||std::is_same_v<T,protocol::Status>)return m.transfer_id;else return {};},*message);
@@ -174,7 +175,7 @@ void TransferEngine::Receive(std::shared_ptr<const protocol::Message> message,Se
   struct WriteHold {std::shared_ptr<ByteBudget::Reservation> charge;std::shared_ptr<const protocol::Message> message;Session::ContentAck ack;};
   auto held=std::make_shared<WriteHold>(WriteHold{std::move(charge),std::move(message),std::move(ack)});
   auto count=data->payload.size();auto stream=t->stream;std::weak_ptr<TransferEngine> w=weak_from_this();auto* q=&queue_;
-  stream->Write(data->payload,[w,q,t,held,stream,count](auto result){q->Post([w,t,held,result,count]{
+  stream->Write(data->payload,[w,q,t,held,stream,count,owner=scheduler_owner_](auto result){q->Post([w,t,held,result,count]{
    if(auto e=w.lock())if(e->Current(t)){if(!result.ok())e->Fail(t,result.error());else{t->bytes+=count;++t->sequence;e->Progress(t);e->Deadline(t);}}
    held->message.reset();held->ack(Result<void>::Success());
   });});return;

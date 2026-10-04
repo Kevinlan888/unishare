@@ -17,12 +17,16 @@ struct SdkRuntime {
  std::shared_ptr<ByteBudget> buffers=std::make_shared<ByteBudget>();
  SessionAdmission admission{buffers};
  SdkConfig config;std::optional<LocalIdentity> identity;
+ std::vector<TrustedDevice> trusted_devices;
+ RequestId next_request=1;
+ bool alive=true;
  std::shared_ptr<IConnectionManager> connections;
  std::shared_ptr<ITransferService> transfers;
  std::shared_ptr<IClipboardService> clipboard;
  std::function<void(std::shared_ptr<ISocket>)> accept_socket;
  // Stop/network loss invokes cleanup before cancelling public operations.
  std::function<void(ShareError)> stop_services;
+ std::function<void()> start_services;
 };
 class ShareSdk final : public IShareSdk {
  struct State;std::shared_ptr<State> state_;

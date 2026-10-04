@@ -41,7 +41,7 @@ class Session : public std::enable_shared_from_this<Session> {
 public:
  using SocketHandle=std::shared_ptr<ISocket>;
  using Handler=std::function<void(SessionEvent)>;
- Session(LocalIdentity,TrustStore&,ISocketFactory&,ISessionScheduler&,SessionAdmission&,std::shared_ptr<IExecutor>,Handler);
+ Session(LocalIdentity,TrustStore&,ISocketFactory&,ISessionScheduler&,SessionAdmission&,std::shared_ptr<IExecutor>,Handler,std::shared_ptr<ISessionScheduler> scheduler_owner = {});
  ~Session();
  Session(const Session&)=delete; Session& operator=(const Session&)=delete;
  void Connect(DeviceInfo);
@@ -67,6 +67,7 @@ public:
  // messages keep their reservation until released. Ack failure closes Session.
  void SetContentHandler(ContentHandler, std::function<void(ShareError)> on_closed);
 private:
+ std::shared_ptr<ISessionScheduler> scheduler_owner_;
  LocalIdentity identity_; TrustStore& trust_; ISocketFactory& factory_;
  ISessionScheduler& scheduler_; SessionAdmission& admission_;
  std::shared_ptr<IExecutor> executor_; Handler handler_; SocketHandle socket_;

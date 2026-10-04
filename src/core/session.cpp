@@ -37,8 +37,8 @@ bool SessionAdmission::Pair(const std::string& source,ISessionScheduler::Time no
  auto& q=attempts_[source];if(q.size()>=3)return false;q.push_back(now);++pending_;return true;
 }
 void SessionAdmission::ReleasePair(){if(pending_)--pending_;}
-Session::Session(LocalIdentity i,TrustStore& t,ISocketFactory& f,ISessionScheduler& s,SessionAdmission& a,std::shared_ptr<IExecutor> e,Handler h)
- :identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(e?std::move(e):std::shared_ptr<IExecutor>(&s,[](IExecutor*){})),handler_(std::move(h)){}
+Session::Session(LocalIdentity i,TrustStore& t,ISocketFactory& f,ISessionScheduler& s,SessionAdmission& a,std::shared_ptr<IExecutor> e,Handler h,std::shared_ptr<ISessionScheduler> owner)
+ :scheduler_owner_(std::move(owner)),identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(e?std::move(e):std::shared_ptr<IExecutor>(&s,[](IExecutor*){})),handler_(std::move(h)){}
 Session::~Session(){if(!closed_)Close({ErrorCode::Cancelled,"session destroyed",{}});if(deadline_)scheduler_.Cancel(deadline_);if(socket_)socket_->Close();if(pair_slot_)admission_.ReleasePair();if(admitted_)admission_.Closed();SSL_free(ssl_);SSL_CTX_free(ctx_);}
 void Session::Emit(SessionEvent::Kind kind,std::optional<ShareError> error,std::string sas){
  SessionEvent event{kind,request_,hello_received_?peer_.device_id:expected_.value_or(DeviceId{}),std::move(sas),std::move(error)};
@@ -72,7 +72,7 @@ void Session::Connect(DeviceInfo device){
  if(device.addresses.empty()||!device.port){Fail(ErrorCode::InvalidInput,"missing connect endpoint");return;}
  auto weak=weak_from_this();deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
  auto* scheduler=&scheduler_;
- factory_.Connect(device.addresses.front(),device.port,[weak,scheduler](Result<SocketHandle> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_){if(result.ok())result.value()->Close();return;}if(!result.ok())self->Close(result.error());else self->Begin(result.value());}else if(result.ok())result.value()->Close();});});
+ factory_.Connect(device.addresses.front(),device.port,[weak,scheduler,owner=scheduler_owner_](Result<SocketHandle> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_){if(result.ok())result.value()->Close();return;}if(!result.ok())self->Close(result.error());else self->Begin(result.value());}else if(result.ok())result.value()->Close();});});
 }
 void Session::Accept(SocketHandle socket){if(started_||closed_){if(socket)socket->Close();return;}started_=true;Begin(std::move(socket));}
 bool Session::InitTls(){
@@ -154,7 +154,7 @@ void Session::DispatchDelivery(){
  const auto generation=delivery_generation_;
  std::shared_ptr<const protocol::Message> view(delivery_,&delivery_->message);
  auto weak=weak_from_this();auto* queue=&scheduler_;
- ContentAck ack=[weak,queue,generation](Result<void> result){queue->Post([weak,generation,result]{
+ ContentAck ack=[weak,queue,generation,owner=scheduler_owner_](Result<void> result){queue->Post([weak,generation,result]{
   if(auto self=weak.lock()){
    if(self->closed_||!self->delivery_||self->delivery_generation_!=generation)return;
    self->delivery_.reset();
@@ -229,7 +229,7 @@ void Session::Pump(){
 }
 void Session::Read(){
  if(closed_||reading_||delivery_)return;reading_=true;auto weak=weak_from_this();auto* scheduler=&scheduler_;
- socket_->Read(16384,[weak,scheduler,charge=io_charge_](Result<protocol::Bytes> result){scheduler->Post([weak,result,charge]{if(auto self=weak.lock()){if(self->closed_)return;self->reading_=false;if(!result.ok()){self->Close(result.error());return;}if(result.value().empty()){self->Fail(ErrorCode::NetworkLost,"socket EOF");return;}if(result.value().size()>16384||BIO_ctrl_pending(SSL_get_rbio(self->ssl_))+result.value().size()>MaxQueued){self->Fail(ErrorCode::ResourceLimit,"TLS input budget");return;}if(BIO_write(SSL_get_rbio(self->ssl_),result.value().data(),static_cast<int>(result.value().size()))!=static_cast<int>(result.value().size())){self->Fail(ErrorCode::NetworkLost,"TLS input failed");return;}self->Pump();}});});
+ socket_->Read(16384,[weak,scheduler,owner=scheduler_owner_,charge=io_charge_](Result<protocol::Bytes> result){scheduler->Post([weak,result,charge]{if(auto self=weak.lock()){if(self->closed_)return;self->reading_=false;if(!result.ok()){self->Close(result.error());return;}if(result.value().empty()){self->Fail(ErrorCode::NetworkLost,"socket EOF");return;}if(result.value().size()>16384||BIO_ctrl_pending(SSL_get_rbio(self->ssl_))+result.value().size()>MaxQueued){self->Fail(ErrorCode::ResourceLimit,"TLS input budget");return;}if(BIO_write(SSL_get_rbio(self->ssl_),result.value().data(),static_cast<int>(result.value().size()))!=static_cast<int>(result.value().size())){self->Fail(ErrorCode::NetworkLost,"TLS input failed");return;}self->Pump();}});});
 }
 void Session::Flush(){
  if(closed_||writing_)return;
@@ -243,7 +243,7 @@ void Session::Flush(){
   return;
  }
  writing_=true;auto weak=weak_from_this();auto* scheduler=&scheduler_;
- auto bytes=std::move(ciphertext_.front());ciphertext_.pop_front();socket_->Write(std::move(bytes),[weak,scheduler,charge=send_charge_?send_charge_:io_charge_](Result<void> result){scheduler->Post([weak,result,charge]{if(auto self=weak.lock()){if(self->closed_)return;self->writing_=false;if(!result.ok()){self->Close(result.error());return;}self->Flush();}});});
+ auto bytes=std::move(ciphertext_.front());ciphertext_.pop_front();socket_->Write(std::move(bytes),[weak,scheduler,owner=scheduler_owner_,charge=send_charge_?send_charge_:io_charge_](Result<void> result){scheduler->Post([weak,result,charge]{if(auto self=weak.lock()){if(self->closed_)return;self->writing_=false;if(!result.ok()){self->Close(result.error());return;}self->Flush();}});});
 }
 void Session::Message(const protocol::Message& message){
  if(auto* hello=std::get_if<protocol::Hello>(&message)){
