@@ -23,3 +23,4 @@ message Cancel { optional bytes transfer_id = 1; optional string reason = 2; }
 message Finish { optional bytes transfer_id = 1; optional uint64 byte_count = 2; optional bytes sha256 = 3; }
 message Complete { optional bytes transfer_id = 1; optional string reason = 2; }
 message Failed { optional bytes transfer_id = 1; optional string reason = 2; }
+message PairDecision { optional bool confirmed = 1; }

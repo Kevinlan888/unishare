@@ -1,0 +1,159 @@
+#include "session.hpp"
+#include <openssl/err.h>
+#include <openssl/rand.h>
+#include <openssl/x509.h>
+#include <atomic>
+#include <algorithm>
+namespace unishare::core {
+namespace {
+std::atomic<OperationId> next_request{1};
+constexpr std::size_t MaxQueued=256*1024;
+// TLS proves possession. After handshake VerifyPeer enforces a valid self-signed
+// leaf; trust is established only by the persisted SPKI binding or bilateral SAS.
+int OnCertificate(int,X509_STORE_CTX*){return 1;}
+}
+bool SessionAdmission::Open(){if(connections_==8)return false;++connections_;return true;}
+void SessionAdmission::Closed(){if(connections_)--connections_;}
+bool SessionAdmission::Pair(const std::string& source,ISessionScheduler::Time now){
+ for(auto i=attempts_.begin();i!=attempts_.end();){auto& q=i->second;while(!q.empty()&&now-q.front()>=std::chrono::seconds(60))q.pop_front();if(q.empty())i=attempts_.erase(i);else ++i;}
+ // Bound source history as well as simultaneous requests; saturated history fails closed.
+ if(source.empty()||pending_>=4||(attempts_.count(source)==0&&attempts_.size()>=1024))return false;
+ auto& q=attempts_[source];if(q.size()>=3)return false;q.push_back(now);++pending_;return true;
+}
+void SessionAdmission::ReleasePair(){if(pending_)--pending_;}
+Session::Session(LocalIdentity i,TrustStore& t,ISocketFactory& f,ISessionScheduler& s,SessionAdmission& a,std::shared_ptr<IExecutor> e,Handler h)
+ :identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(std::move(e)),handler_(std::move(h)){}
+Session::~Session(){if(deadline_)scheduler_.Cancel(deadline_);if(socket_)socket_->Close();if(pair_slot_)admission_.ReleasePair();if(admitted_)admission_.Closed();SSL_free(ssl_);SSL_CTX_free(ctx_);}
+void Session::Emit(SessionEvent::Kind kind,std::optional<ShareError> error,std::string sas){
+ SessionEvent event{kind,request_,hello_received_?peer_.device_id:expected_.value_or(DeviceId{}),std::move(sas),std::move(error)};
+ auto handler=handler_;if(handler)executor_->Post([handler,event]{handler(event);});
+}
+void Session::Fail(ErrorCode code,const char* why){Close({code,why,{}});}
+void Session::Close(ShareError error){
+ if(closed_)return;closed_=true;connected_=false;
+ if(deadline_){scheduler_.Cancel(deadline_);deadline_=0;}
+ if(socket_)socket_->Close();
+ if(pair_slot_){admission_.ReleasePair();pair_slot_=false;}if(admitted_){admission_.Closed();admitted_=false;}
+ plaintext_.clear();ciphertext_.clear();
+ if(error.code==ErrorCode::IdentityChanged)Emit(SessionEvent::Kind::IdentityChanged,error);
+ Emit(SessionEvent::Kind::Disconnected,error);
+}
+void Session::Connect(DeviceInfo device){
+ if(started_||closed_)return;started_=true;initiator_=true;expected_=device.id;
+ if(!executor_||device.addresses.empty()||!device.port){if(!executor_)executor_=std::shared_ptr<IExecutor>(&scheduler_,[](IExecutor*){});Fail(ErrorCode::InvalidInput,"missing connect endpoint or executor");return;}
+ auto weak=weak_from_this();deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
+ auto* scheduler=&scheduler_;
+ factory_.Connect(device.addresses.front(),device.port,[weak,scheduler](Result<SocketHandle> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_){if(result.ok())result.value()->Close();return;}if(!result.ok())self->Close(result.error());else self->Begin(result.value());}else if(result.ok())result.value()->Close();});});
+}
+void Session::Accept(SocketHandle socket){if(started_||closed_){if(socket)socket->Close();return;}started_=true;Begin(std::move(socket));}
+bool Session::InitTls(){
+ ctx_=SSL_CTX_new(TLS_method());if(!ctx_)return false;
+ if(SSL_CTX_set_min_proto_version(ctx_,TLS1_3_VERSION)!=1||SSL_CTX_set_max_proto_version(ctx_,TLS1_3_VERSION)!=1||SSL_CTX_set_max_early_data(ctx_,0)!=1)return false;
+ SSL_CTX_set_session_cache_mode(ctx_,SSL_SESS_CACHE_OFF);SSL_CTX_set_options(ctx_,SSL_OP_NO_TICKET);if(SSL_CTX_set_num_tickets(ctx_,0)!=1)return false;
+ SSL_CTX_set_verify(ctx_,SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT,OnCertificate);
+ SSL_CTX_set_max_cert_list(ctx_,64*1024);
+ const auto* cert_data=identity_.material.certificate.data();const auto* key_data=identity_.material.private_key.data();
+ auto* cert=d2i_X509(nullptr,&cert_data,static_cast<long>(identity_.material.certificate.size()));
+ auto* info=d2i_PKCS8_PRIV_KEY_INFO(nullptr,&key_data,static_cast<long>(identity_.material.private_key.size()));auto* key=info?EVP_PKCS82PKEY(info):nullptr;
+ const bool loaded=cert&&key&&SSL_CTX_use_certificate(ctx_,cert)==1&&SSL_CTX_use_PrivateKey(ctx_,key)==1&&SSL_CTX_check_private_key(ctx_)==1;
+ EVP_PKEY_free(key);PKCS8_PRIV_KEY_INFO_free(info);X509_free(cert);if(!loaded)return false;
+ ssl_=SSL_new(ctx_);if(!ssl_)return false;auto* in=BIO_new(BIO_s_mem());auto* out=BIO_new(BIO_s_mem());if(!in||!out){BIO_free(in);BIO_free(out);return false;}
+ BIO_set_mem_eof_return(in,-1);BIO_set_mem_eof_return(out,-1);SSL_set_bio(ssl_,in,out);
+ if(initiator_)SSL_set_connect_state(ssl_);else SSL_set_accept_state(ssl_);
+ local_.device_id=identity_.material.id;local_.public_key_fingerprint=identity_.public_key_fingerprint;
+ return RAND_bytes(local_.nonce.data(),static_cast<int>(local_.nonce.size()))==1;
+}
+void Session::Begin(SocketHandle socket){
+ socket_=std::move(socket);if(!executor_)executor_=std::shared_ptr<IExecutor>(&scheduler_,[](IExecutor*){});
+ if(!socket_){Fail(ErrorCode::InvalidInput,"null socket");return;}
+ if(!admission_.Open()){Fail(ErrorCode::ResourceLimit,"connection limit");return;}admitted_=true;
+ auto weak=weak_from_this();if(!deadline_)deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
+ if(!InitTls()){Fail(ErrorCode::AuthenticationFailed,"TLS initialization failed");return;}Pump();
+}
+bool Session::VerifyPeer(){
+ if(SSL_version(ssl_)!=TLS1_3_VERSION||SSL_session_reused(ssl_))return false;
+ auto* cert=SSL_get1_peer_certificate(ssl_);if(!cert)return false;auto* key=X509_get_pubkey(cert);
+ unsigned char* encoded=nullptr;const int size=key?i2d_PUBKEY(key,&encoded):0;Fingerprint fp{};unsigned int digest_size=0;
+ const bool valid=key&&EVP_PKEY_is_a(key,"EC")&&EVP_PKEY_get_bits(key)==256&&X509_verify(cert,key)==1&&X509_cmp_current_time(X509_get0_notBefore(cert))<0&&X509_cmp_current_time(X509_get0_notAfter(cert))>0&&size>0&&EVP_Digest(encoded,size,fp.data(),&digest_size,EVP_sha256(),nullptr)==1&&digest_size==32;
+ OPENSSL_free(encoded);EVP_PKEY_free(key);X509_free(cert);if(valid)tls_peer_fingerprint_=fp;return valid;
+}
+void Session::Queue(protocol::Message message){plaintext_.push_back(codec_.Encode(message));}
+void Session::Pump(){
+ if(closed_)return;
+ bool write_blocked=false;
+ if(!handshake_){ERR_clear_error();const int rc=SSL_do_handshake(ssl_);const int error=rc==1?SSL_ERROR_NONE:SSL_get_error(ssl_,rc);
+  if(rc==1){if(!VerifyPeer()){Fail(ErrorCode::AuthenticationFailed,"peer certificate rejected");return;}handshake_=true;Queue(local_);}
+  else if(error!=SSL_ERROR_WANT_READ&&error!=SSL_ERROR_WANT_WRITE){Fail(ErrorCode::AuthenticationFailed,"TLS handshake failed");return;}
+ }
+ if(handshake_){
+  // Memory BIO writes do not block on the transport. Retain a whole frame if
+  // OpenSSL requests read progress so the retry uses exactly the same bytes.
+  while(!plaintext_.empty()){auto& frame=plaintext_.front();std::size_t written=0;ERR_clear_error();const int rc=SSL_write_ex(ssl_,frame.data(),frame.size(),&written);const int error=rc==1?SSL_ERROR_NONE:SSL_get_error(ssl_,rc);
+   if(rc==1){if(written!=frame.size()){Fail(ErrorCode::NetworkLost,"partial TLS frame write");return;}plaintext_.pop_front();}
+   else if(error==SSL_ERROR_WANT_READ||error==SSL_ERROR_WANT_WRITE){write_blocked=true;break;}else{Fail(ErrorCode::NetworkLost,"TLS write failed");return;}
+  }
+  for(;;){std::array<unsigned char,16384> buf{};std::size_t size=0;ERR_clear_error();const int rc=SSL_read_ex(ssl_,buf.data(),buf.size(),&size);const int error=rc==1?SSL_ERROR_NONE:SSL_get_error(ssl_,rc);
+   if(rc!=1){if(error==SSL_ERROR_WANT_READ||error==SSL_ERROR_WANT_WRITE)break;Fail(ErrorCode::NetworkLost,"TLS channel closed");return;}
+   auto parsed=codec_.Feed({buf.data(),size});if(!parsed.ok()){Close(parsed.error());return;}
+   for(const auto& message:parsed.value()){Message(message);if(closed_)return;}
+  }
+ }
+ // Bound queued ciphertext even if the platform stops completing writes.
+ std::size_t queued=BIO_ctrl_pending(SSL_get_wbio(ssl_));for(const auto& b:ciphertext_)queued+=b.size();
+ if(queued>MaxQueued){Fail(ErrorCode::ResourceLimit,"TLS output budget");return;}
+ while(BIO_ctrl_pending(SSL_get_wbio(ssl_))){protocol::Bytes b(std::min<std::size_t>(16384,BIO_ctrl_pending(SSL_get_wbio(ssl_))));const int n=BIO_read(SSL_get_wbio(ssl_),b.data(),static_cast<int>(b.size()));if(n<=0){Fail(ErrorCode::NetworkLost,"TLS output failed");return;}b.resize(n);ciphertext_.push_back(std::move(b));}
+ Flush();Read();
+ // Messages read above may enqueue a decision after the write phase.
+ if(!write_blocked&&!plaintext_.empty()){auto weak=weak_from_this();scheduler_.Post([weak]{if(auto self=weak.lock())self->Pump();});}
+}
+void Session::Read(){
+ if(closed_||reading_)return;reading_=true;auto weak=weak_from_this();auto* scheduler=&scheduler_;
+ socket_->Read(16384,[weak,scheduler](Result<protocol::Bytes> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_)return;self->reading_=false;if(!result.ok()){self->Close(result.error());return;}if(result.value().empty()){self->Fail(ErrorCode::NetworkLost,"socket EOF");return;}if(result.value().size()>16384||BIO_ctrl_pending(SSL_get_rbio(self->ssl_))+result.value().size()>MaxQueued){self->Fail(ErrorCode::ResourceLimit,"TLS input budget");return;}if(BIO_write(SSL_get_rbio(self->ssl_),result.value().data(),static_cast<int>(result.value().size()))!=static_cast<int>(result.value().size())){self->Fail(ErrorCode::NetworkLost,"TLS input failed");return;}self->Pump();}});});
+}
+void Session::Flush(){
+ if(closed_||writing_)return;
+ if(ciphertext_.empty()){
+  if(plaintext_.empty()&&BIO_ctrl_pending(SSL_get_wbio(ssl_))==0&&decision_sent_){
+   decision_flushed_=true;
+   if(rejecting_){Fail(ErrorCode::PairingRejected,"user rejected pairing");return;}
+   MaybeConnected();
+  }
+  return;
+ }
+ writing_=true;auto weak=weak_from_this();auto* scheduler=&scheduler_;
+ auto bytes=std::move(ciphertext_.front());ciphertext_.pop_front();socket_->Write(std::move(bytes),[weak,scheduler](Result<void> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_)return;self->writing_=false;if(!result.ok()){self->Close(result.error());return;}self->Flush();}});});
+}
+void Session::Message(const protocol::Message& message){
+ if(auto* hello=std::get_if<protocol::Hello>(&message)){
+  if(hello_received_){Fail(ErrorCode::AuthenticationFailed,"duplicate Hello");return;}
+  peer_=*hello;hello_received_=true;
+  if(peer_.public_key_fingerprint!=tls_peer_fingerprint_||(expected_&&peer_.device_id!=*expected_)){Fail(ErrorCode::IdentityChanged,"Hello identity differs from authenticated peer");return;}
+  if(peer_.device_id==local_.device_id){Fail(ErrorCode::AuthenticationFailed,"self connection");return;}
+  auto match=trust_.Match(peer_.device_id,peer_.public_key_fingerprint);if(!match.ok()){Close(match.error());return;}known_=match.value();
+  if(known_&&initiator_){local_confirmed_=true;decision_sent_=true;Queue(protocol::PairDecision{true});MaybeConnected();return;}
+  if(!admission_.Pair(socket_->RemoteEndpoint(),scheduler_.Now())){Fail(ErrorCode::ResourceLimit,"pairing admission limit");return;}pair_slot_=true;request_=next_request.fetch_add(1);
+  std::array<unsigned char,32> exporter{};constexpr char label[]="EXPORTER-unishare-pairing-v1";
+  if(SSL_export_keying_material(ssl_,exporter.data(),exporter.size(),label,sizeof(label)-1,nullptr,0,0)!=1){Fail(ErrorCode::AuthenticationFailed,"TLS exporter failed");return;}
+  auto sas=Pairing::ComputeSas(exporter,initiator_?local_:peer_,initiator_?peer_:local_);if(!sas.ok()){Close(sas.error());return;}
+  Emit(SessionEvent::Kind::PairingRequested,{},sas.value());return;
+ }
+ if(auto* decision=std::get_if<protocol::PairDecision>(&message)){
+  if(!hello_received_||decision_received_||connected_){Fail(ErrorCode::AuthenticationFailed,"out of order pairing decision");return;}decision_received_=true;
+  if(!decision->confirmed){Fail(ErrorCode::PairingRejected,"peer rejected pairing");return;}peer_confirmed_=true;MaybeConnected();return;
+ }
+ // Content handoff belongs to Task 6. Until a handler is attached, reject it;
+ // unconfirmed content can never escape through a session event.
+ Fail(ErrorCode::AuthenticationFailed,"unexpected content in session negotiation");
+}
+void Session::ConfirmPairing(OperationId request,bool confirmed){
+ if(closed_||connected_||!pair_slot_||request!=request_||decision_sent_)return;
+ if(!confirmed){rejecting_=true;decision_sent_=true;Queue(protocol::PairDecision{false});Pump();return;}
+ local_confirmed_=true;decision_sent_=true;Queue(protocol::PairDecision{true});Pump();MaybeConnected();
+}
+void Session::MaybeConnected(){
+ if(closed_||connected_||rejecting_||!decision_flushed_||!hello_received_||!local_confirmed_||!peer_confirmed_||!decision_sent_)return;
+ if(!known_){auto pin=trust_.Pin(peer_.device_id,peer_.public_key_fingerprint);if(!pin.ok()){Close(pin.error());return;}}
+ connected_=true;if(deadline_){scheduler_.Cancel(deadline_);deadline_=0;}if(pair_slot_){admission_.ReleasePair();pair_slot_=false;}
+ Emit(SessionEvent::Kind::Connected);
+}
+}

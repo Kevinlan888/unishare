@@ -25,21 +25,30 @@ struct Reader {
  bool skip(unsigned w,unsigned f,unsigned depth=0){std::uint64_t v;switch(w){case 0:return varint(v);case 1:if(b.size-p<8)return false;p+=8;return true;case 2:if(!varint(v)||v>b.size-p)return false;p+=static_cast<std::size_t>(v);return true;case 5:if(b.size-p<4)return false;p+=4;return true;case 3:if(depth>=32)return false;while(p<b.size){if(!varint(v)||!(v>>3)||v>>3>0x1fffffff)return false;auto field=static_cast<unsigned>(v>>3);auto wire=unsigned(v&7);if(wire==4)return field==f;if(!skip(wire,field,depth+1))return false;}return false;default:return false;}}
 };
 }
-MessageType TypeOf(const Message& m){return std::visit([](const auto& x){using T=std::decay_t<decltype(x)>;if constexpr(std::is_same_v<T,Hello>)return MessageType::Hello;else if constexpr(std::is_same_v<T,Offer>)return MessageType::Offer;else if constexpr(std::is_same_v<T,Data>)return MessageType::Data;else if constexpr(std::is_same_v<T,Finish>)return MessageType::Finish;else return x.type;},m);}
+MessageType TypeOf(const Message& m){return std::visit([](const auto& x){using T=std::decay_t<decltype(x)>;if constexpr(std::is_same_v<T,PairDecision>)return MessageType::PairDecision;else if constexpr(std::is_same_v<T,Hello>)return MessageType::Hello;else if constexpr(std::is_same_v<T,Offer>)return MessageType::Offer;else if constexpr(std::is_same_v<T,Data>)return MessageType::Data;else if constexpr(std::is_same_v<T,Finish>)return MessageType::Finish;else return x.type;},m);}
 Bytes EncodeBody(const Message& m){
  // Preflight before allocating output, copying strings, or scanning UTF-8.
  std::visit([](const auto& x){using T=std::decay_t<decltype(x)>;ControlSize s;
-  if constexpr(std::is_same_v<T,Data>){if(x.payload.size()>MaxDataPayload)throw std::invalid_argument("data limit");}
+  if constexpr(std::is_same_v<T,PairDecision>){s.number(x.confirmed);}
+  else if constexpr(std::is_same_v<T,Data>){if(x.payload.size()>MaxDataPayload)throw std::invalid_argument("data limit");}
   else if constexpr(std::is_same_v<T,Hello>){s.bytes(16);s.number(x.protocol_major);s.number(x.protocol_minor);s.bytes(32);s.bytes(32);}
   else {s.bytes(16);if constexpr(std::is_same_v<T,Offer>){s.number(static_cast<unsigned>(x.content_type));s.bytes(x.display_name.size());s.bytes(x.mime_type.size());s.number(x.byte_count);}else if constexpr(std::is_same_v<T,Finish>){s.number(x.byte_count);s.bytes(32);}else{s.bytes(x.reason.size());}}
  },m);
  Bytes b;std::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
- if constexpr(std::is_same_v<T,Hello>){if(x.protocol_major!=1)throw std::invalid_argument("major version");blob(b,1,x.device_id.bytes);number(b,2,x.protocol_major);number(b,3,x.protocol_minor);blob(b,4,x.nonce);blob(b,5,x.public_key_fingerprint);}
- else if constexpr(std::is_same_v<T,Data>){if(x.payload.size()>MaxDataPayload)throw std::invalid_argument("data limit");b.insert(b.end(),x.transfer_id.bytes.begin(),x.transfer_id.bytes.end());for(int i=7;i>=0;--i)b.push_back(static_cast<std::uint8_t>(x.sequence>>(i*8)));b.insert(b.end(),x.payload.begin(),x.payload.end());}
+ if constexpr(std::is_same_v<T,PairDecision>){number(b,1,x.confirmed);}
+ else if constexpr(std::is_same_v<T,Hello>){if(x.protocol_major!=1)throw std::invalid_argument("major version");blob(b,1,x.device_id.bytes);number(b,2,x.protocol_major);number(b,3,x.protocol_minor);blob(b,4,x.nonce);blob(b,5,x.public_key_fingerprint);}
+ else if constexpr(std::is_same_v<T,PairDecision>){s.number(x.confirmed);}
+  else if constexpr(std::is_same_v<T,Data>){if(x.payload.size()>MaxDataPayload)throw std::invalid_argument("data limit");b.insert(b.end(),x.transfer_id.bytes.begin(),x.transfer_id.bytes.end());for(int i=7;i>=0;--i)b.push_back(static_cast<std::uint8_t>(x.sequence>>(i*8)));b.insert(b.end(),x.payload.begin(),x.payload.end());}
  else {blob(b,1,x.transfer_id.bytes);if constexpr(std::is_same_v<T,Offer>){auto t=static_cast<unsigned>(x.content_type);if(t<1||t>3||!utf8(x.display_name)||!utf8(x.mime_type))throw std::invalid_argument("offer fields");number(b,2,t);text(b,3,x.display_name);text(b,4,x.mime_type);number(b,5,x.byte_count);}else if constexpr(std::is_same_v<T,Finish>){number(b,2,x.byte_count);blob(b,3,x.sha256);}else {if(!statusType(x.type)||!utf8(x.reason))throw std::invalid_argument("status fields");text(b,2,x.reason);}}
  },m);return b;}
 Result<Message> DecodeBody(MessageType t,ByteSpan b){auto fail=[](){return Result<Message>::Failure({ErrorCode::InvalidInput,"malformed protobuf or mandatory field",{}});};
- if((b.size&&!b.data)||static_cast<unsigned>(t)<1||static_cast<unsigned>(t)>9)return fail();
+ if((b.size&&!b.data)||static_cast<unsigned>(t)<1||static_cast<unsigned>(t)>10)return fail();
+ if(t==MessageType::PairDecision){
+  if(b.size>MaxControlFrame-1)return fail(); Reader r{b}; bool seen=false,confirmed=false;
+  while(r.p<b.size){std::uint64_t key,v;if(!r.varint(key)||!(key>>3)||key>>3>0x1fffffff)return fail();auto f=static_cast<unsigned>(key>>3),w=static_cast<unsigned>(key&7);
+   if(f==1){if(w!=0||!r.varint(v)||v>1)return fail();seen=true;confirmed=v!=0;}else if(!r.skip(w,f))return fail();
+  }return seen?Result<Message>::Success(PairDecision{confirmed}):fail();
+ }
  if(t==MessageType::Data){if(b.size<24||b.size>MaxDataPayload+24)return fail();Data d;std::copy_n(b.data,16,d.transfer_id.bytes.begin());for(unsigned i=16;i<24;++i)d.sequence=(d.sequence<<8)|b.data[i];d.payload.assign(b.data+24,b.data+b.size);return Result<Message>::Success(d);}
  if(b.size>MaxControlFrame-1)return fail();
  std::array<Bytes,6> strings;std::array<std::uint64_t,6> nums{};unsigned seen=0;Reader r{b};

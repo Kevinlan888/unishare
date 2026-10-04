@@ -4,6 +4,11 @@
 using namespace unishare::protocol;
 #define CHECK(x) do { if(!(x)){std::cerr<<"check failed "<<__LINE__<<"\n"; std::exit(1);} } while(0)
 int main() {
+ auto decision=FrameCodec{}.Feed(Bytes{0,0,0,3,10,8,1}); CHECK(decision.ok()); CHECK(std::get<PairDecision>(decision.value()[0]).confirmed);
+ CHECK(FrameCodec{}.Encode(PairDecision{true})==Bytes({0,0,0,3,10,8,1}));
+ CHECK(FrameCodec{}.Encode(PairDecision{false})==Bytes({0,0,0,3,10,8,0}));
+ CHECK(!FrameCodec{}.Feed(Bytes{0,0,0,3,10,8,2}).ok());
+ CHECK(!FrameCodec{}.Feed(Bytes{0,0,0,1,11}).ok());
  Hello h; h.device_id.bytes.fill(0x11); h.nonce.fill(0x22); h.public_key_fingerprint.fill(0x33);
  FrameCodec c; auto bytes=c.Encode(h); CHECK(bytes.size()==95); CHECK(bytes[3]==91); CHECK(bytes[4]==1);
  Bytes hello={0,0,0,91,1,10,16}; hello.insert(hello.end(),16,0x11); Bytes rest={16,1,24,0,34,32}; hello.insert(hello.end(),rest.begin(),rest.end()); hello.insert(hello.end(),32,0x22); hello.insert(hello.end(),{42,32}); hello.insert(hello.end(),32,0x33); CHECK(bytes==hello);

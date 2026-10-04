@@ -41,3 +41,5 @@ atomic, durable, create-once storage contract in `IIdentityStore` and secure
 private bytes with their OS key store. Loading corrupt material fails startup;
 there is no automatic identity replacement. Certificates currently last ten
 years; certificate renewal with the same key is future lifecycle work.
+
+On Windows, the session test target stages OpenSSL 3 runtime DLLs from OPENSSL_ROOT_DIR/bin (or the discovered include prefix's bin) beside the test executables. Build the test target before running CTest; no PATH update is then needed for this configured shared OpenSSL installation. Static OpenSSL builds require no runtime DLLs.

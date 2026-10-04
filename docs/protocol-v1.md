@@ -3,7 +3,7 @@
 Inside TLS, each frame is a four-byte unsigned big-endian length followed by a
 one-byte message type and body. Length includes the type, excludes the prefix,
 and cannot be zero. IDs: Hello 1, Offer 2, Accept 3, Reject 4, Data 5, Finish 6,
-Complete 7, Failed 8, Cancel 9. Unknown types and Hello major versions other
+Complete 7, Failed 8, Cancel 9, PairDecision 10. Unknown types and Hello major versions other
 than 1 are rejected. Minor versions are accepted for additive extensions.
 
 Control frames have a maximum length of 65536 including type. The canonical
@@ -55,3 +55,63 @@ Data: transfer_id 55 × 16, sequence 0x0102030405060708, payload aa bb:
 The release-safe protocol test constructs these byte arrays independently of
 the encoder and checks byte equality. Generated-code interoperability testing
 is deferred until a Protobuf toolchain is available.
+
+## TLS and connection authorization
+
+Each endpoint requires a self-signed P-256 identity certificate and proof of its
+private key through mutual TLS 1.3. TLS 1.2, resumption and early data are disabled.
+A self-signed chain alone confers no trust. The Hello fingerprint must equal
+SHA-256 of the actual TLS peer certificate's DER SubjectPublicKeyInfo. An outgoing
+connection also verifies the Hello DeviceId equals the selected candidate ID.
+An existing DeviceId pin mismatch emits IdentityChanged and never overwrites it.
+
+After exactly one Hello each way, PairDecision (type 10) has mandatory protobuf
+field 1 `confirmed` (wire type varint, strictly 0 or 1). Its complete canonical
+frames are `00 00 00 03 0a 08 01` for acceptance and `00 00 00 03 0a 08 00` for
+rejection. Missing/invalid values, a decision before Hello, and repeated decisions
+are rejected. This was added before any v1 release; version remains 1.0.
+
+The SAS is SHA-256 over the exact 192-byte concatenation:
+
+```
+exporter[32] || initiator DeviceId[16] || initiator SPKI hash[32] || initiator nonce[32]
+             || responder DeviceId[16] || responder SPKI hash[32] || responder nonce[32]
+```
+
+Exporter label: `EXPORTER-unishare-pairing-v1`, empty context, output 32 bytes.
+Interpret the first four digest bytes as unsigned big-endian, modulo 1000000,
+then zero-pad to six digits. IDs use binary UUID bytes, not printable strings.
+Fixture: exporter 07 x32; initiator ID 01 then 15 zeroes, hash 05 x32, nonce 03 x32;
+responder ID 02 then 15 zeroes, hash 06 x32, nonce 04 x32 gives SAS `317527`.
+
+Unknown peers require explicit affirmative decisions from both users. A pinned
+initiator's explicit Connect is its consent; a pinned receiver still receives a
+PairingRequested event for this connection and must confirm. Both endpoints send
+PairDecision. Trust is pinned only after local consent, receipt of peer consent,
+and completion of the local decision's encrypted socket write. A rejection is
+sent before closing if the transport remains writable. Approval/handshake has a
+60-second monotonic deadline. No content is authorized before Connected.
+
+Durable insertion is atomic at each device, not a distributed transaction. If
+one store fails or the network drops after the other's successful insertion,
+the successful local pin remains. Reconnect checks each local pin independently;
+forgetting an existing pin is always explicit. No network error replaces a pin.
+
+SessionAdmission is shared by the SDK's sessions: at most eight live transports,
+four pending confirmations, and three requests per canonical transport source
+address in a rolling 60-second window. The source excludes ephemeral port and
+normalizes IPv4-mapped IPv6; link-local IPv6 includes its scope. Adapters supply
+this metadata via ISocket::RemoteEndpoint; Hello identity is never the rate key.
+Source history is capped at 1024 active source entries and fails closed when full.
+
+The portable core uses OpenSSL memory BIOs, one outstanding socket read/write,
+and a serialized monotonic ISessionScheduler. Socket completions may occur inline
+or on any thread; the core posts them onto that scheduler. Scheduler, admission,
+trust store, factory and callback executor must outlive their sessions and queued
+transport completions. All Session API calls must run on the same serial core
+queue. Session objects must be shared_ptr-owned. Close is terminal and idempotent;
+late callbacks are ignored. Event handlers run on the configured executor.
+
+This task implements connection negotiation. Transfer message dispatch is added
+by the transfer state machine; the current negotiation component rejects content
+messages rather than delivering any unapproved payload.

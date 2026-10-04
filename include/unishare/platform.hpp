@@ -4,7 +4,9 @@ namespace unishare {
 class IExecutor { public: virtual ~IExecutor()=default; virtual void Post(std::function<void()> task)=0; };
 class IPermissionAgent { public: virtual ~IPermissionAgent()=default; virtual void RequestLocalNetwork(ResultCallback<void>)=0; };
 class IStream { public: virtual ~IStream()=default; virtual OperationId Read(std::size_t max_bytes,ResultCallback<std::vector<std::uint8_t>>)=0; virtual OperationId Write(std::vector<std::uint8_t>,ResultCallback<void>)=0; virtual void Close()=0; virtual void AbortAndCleanup()=0; };
-class ISocket : public IStream { public: virtual void Cancel(OperationId)=0; };
+// RemoteEndpoint is a transport-derived canonical source IP, excluding port; normalize mapped IPv4. Includes IPv6 scope when applicable.
+// Read success with empty bytes is EOF. Write success means the entire buffer was sent. Each operation completes exactly once, including cancellation.
+class ISocket : public IStream { public: virtual std::string RemoteEndpoint() const=0; virtual void Cancel(OperationId)=0; };
 struct ServiceRecord { std::string instance,service_type,interface_id,srv_target; std::vector<std::uint8_t> txt_bytes; std::vector<std::pair<std::string,std::string>> txt; std::vector<std::string> addresses; std::uint16_t port=0; };
 class IDnsSd { public: virtual ~IDnsSd()=default; virtual OperationId Publish(ServiceRecord,ResultCallback<void>)=0; virtual OperationId Browse(std::string service_type,std::function<void(Result<ServiceRecord>)>)=0; virtual void Stop()=0; };
 class ISocketFactory { public: virtual ~ISocketFactory()=default; virtual OperationId Connect(std::string address,std::uint16_t port,ResultCallback<std::shared_ptr<ISocket>>)=0; virtual OperationId Listen(std::uint16_t port,std::function<void(Result<std::shared_ptr<ISocket>>)>)=0; virtual void Stop()=0; };

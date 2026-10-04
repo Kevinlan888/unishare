@@ -14,7 +14,7 @@ Result<std::vector<Message>> FrameCodec::Feed(ByteSpan input) {
  for(std::size_t p=0;p<input.size;) {
   if(buffer_.size()<4) {buffer_.push_back(input.data[p++]); if(buffer_.size()<4) continue; length_=0;for(auto b:buffer_) length_=(length_<<8)|b; if(!length_ || length_>MaxDataPayload+25) return fail(ErrorCode::InvalidInput,"invalid frame length");}
   if(buffer_.size()==4 && p==input.size) break;
-  if(buffer_.size()==4) {buffer_.push_back(input.data[p++]); auto t=buffer_[4]; if(t<1||t>9) return fail(ErrorCode::InvalidInput,"unknown message type"); if(t==5?length_<25||length_>MaxDataPayload+25:length_>MaxControlFrame) return fail(ErrorCode::InvalidInput,"type length limit");}
+  if(buffer_.size()==4) {buffer_.push_back(input.data[p++]); auto t=buffer_[4]; if(t<1||t>10) return fail(ErrorCode::InvalidInput,"unknown message type"); if(t==5?length_<25||length_>MaxDataPayload+25:length_>MaxControlFrame) return fail(ErrorCode::InvalidInput,"type length limit");}
   const auto n=std::min(input.size-p,static_cast<std::size_t>(length_+4-buffer_.size()));
   buffer_.insert(buffer_.end(),input.data+p,input.data+p+n);p+=n;
   if(buffer_.size()==length_+4) {auto r=DecodeBody(static_cast<MessageType>(buffer_[4]),{buffer_.data()+5,length_-1}); if(!r.ok()) {auto e=r.error();failed_=true;buffer_.clear();return Result<std::vector<Message>>::Failure(e);} messages.push_back(r.value());buffer_.clear();length_=0;}

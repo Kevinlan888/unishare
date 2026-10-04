@@ -41,7 +41,7 @@ Windows 平台适配器    Android 平台适配器       iOS 平台适配器
 
 ## 传输协议与数据流
 
-协议版本 `1.0`。TLS 通道内使用 `4 字节大端长度 + 1 字节消息类型 + 消息体` 帧，长度计入类型字节。控制消息体采用 Protocol Buffers，数据帧为 16 字节传输 ID、8 字节大端块序号和原始字节。消息类型固定为 `Hello=1`、`Offer=2`、`Accept=3`、`Reject=4`、`Data=5`、`Finish=6`、`Complete=7`、`Failed=8`、`Cancel=9`。控制消息的基础字段固定为：`Hello`（device_id、protocol_major、protocol_minor、nonce、public_key_fingerprint）；`Offer`（transfer_id、content_type、display_name、mime_type、byte_count）；`Accept/Reject/Cancel`（transfer_id、reason）；`Finish`（transfer_id、byte_count、sha256）；`Complete/Failed`（transfer_id、reason）。这些字段在 `.proto` 文件中使用稳定字段编号，生成的编码向量纳入跨端互通测试；平台封装不得自行定义字段。未知可选字段忽略；未知消息类型或主版本拒绝。控制帧上限 64 KiB，单个数据块上限 256 KiB，解析前检查长度。每实例最多 8 条连接、4 个待处理接收请求和 4 MiB 内存缓冲；超过限制返回 `ResourceLimit`。
+协议版本 `1.0`。TLS 通道内使用 `4 字节大端长度 + 1 字节消息类型 + 消息体` 帧，长度计入类型字节。控制消息体采用 Protocol Buffers，数据帧为 16 字节传输 ID、8 字节大端块序号和原始字节。消息类型固定为 `Hello=1`、`Offer=2`、`Accept=3`、`Reject=4`、`Data=5`、`Finish=6`、`Complete=7`、`Failed=8`、`Cancel=9`、`PairDecision=10`。控制消息的基础字段固定为：`Hello`（device_id、protocol_major、protocol_minor、nonce、public_key_fingerprint）；`Offer`（transfer_id、content_type、display_name、mime_type、byte_count）；`Accept/Reject/Cancel`（transfer_id、reason）；`Finish`（transfer_id、byte_count、sha256）；`Complete/Failed`（transfer_id、reason）。这些字段在 `.proto` 文件中使用稳定字段编号，生成的编码向量纳入跨端互通测试；平台封装不得自行定义字段。未知可选字段忽略；未知消息类型或主版本拒绝。控制帧上限 64 KiB，单个数据块上限 256 KiB，解析前检查长度。每实例最多 8 条连接、4 个待处理接收请求和 4 MiB 内存缓冲；超过限制返回 `ResourceLimit`。
 
 内容类型为 `Text`（UTF-8）、`Image`（MIME 类型 + 原始图片字节）、`File`（显示名 + 大小 + 字节流）。剪贴板不是独立的线协议类型：`IClipboardService` 在宿主显式调用时读取纯文本或图片，再交给 `ITransferService` 发送。首版剪贴板不监听、不自动发送；收到内容后宿主决定是否调用写入剪贴板。文本上限默认 8 MiB，图片 100 MiB，文件 20 GiB，且受宿主更严格的配置约束；发送方提供大小，接收方在确认前可见。
 
@@ -76,3 +76,12 @@ Windows 使用 Win32 DNS-SD API 和系统 TCP 能力；宿主负责适用的防�
 - [Apple: Local Network Privacy](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)、[Apple: UIPasteboard](https://developer.apple.com/documentation/uikit/uipasteboard)：iOS 权限与剪贴板。
 - [Android: NsdManager](https://developer.android.com/reference/android/net/nsd/NsdManager)：Android DNS-SD 与版本化权限。
 - [Microsoft: DnsServiceBrowse](https://learn.microsoft.com/en-us/windows/win32/api/windns/nf-windns-dnsservicebrowse)：Windows DNS-SD。
+
+## 2026-10-04 Task 5 控制器批准的补充
+
+尚未发布的协议 1.0 增加 PairDecision（消息类型 10），字段 1 为必须出现的
+confirmed 布尔值。双方在加密 Hello 之后发送本地确认结果；只有双方同意后才可
+持久化信任并允许内容传输。已配对发起方的显式 Connect 表示本次同意，接收方仍须
+确认。具体字段、SAS 二进制顺序、错误与断线持久化语义见 docs/protocol-v1.md。
+ISocket 增加 RemoteEndpoint()，返回传输层获得的规范源 IP（不含端口，IPv6 必要时
+含 scope），用于每来源限速，不能使用对端自报的 DeviceId 代替。
