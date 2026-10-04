@@ -8,15 +8,24 @@ class PermissionGate {
   std::mutex mutex;
   std::optional<Result<void>> result;
   std::vector<ResultCallback<void>> waiting;
+  bool abandoned=false;
   void Finish(Result<void> r){
    std::vector<ResultCallback<void>> callbacks;
-   {std::lock_guard<std::mutex> lock(mutex);if(result)return;result=r;callbacks.swap(waiting);}
+   {std::lock_guard<std::mutex> lock(mutex);if(result||abandoned)return;result=r;callbacks.swap(waiting);}
    for(auto& cb:callbacks)cb(r);
   }
   void Wait(ResultCallback<void> cb){
    std::optional<Result<void>> ready;
-   {std::lock_guard<std::mutex> lock(mutex);ready=result;if(!ready)waiting.push_back(cb);}
-   if(ready)cb(*ready);
+   bool retired=false;
+   {std::lock_guard<std::mutex> lock(mutex);retired=abandoned;ready=result;if(!ready&&!retired)waiting.push_back(cb);}
+   if(retired)cb(Result<void>::Failure({ErrorCode::Cancelled,{},ERROR_CANCELLED}));
+   else if(ready)cb(*ready);
+  }
+  void Abandon() noexcept {
+   // Core shutdown already cancelled public operations. Do not construct even
+   // empty containers/Results here: MSVC Debug allocates iterator proxies.
+   // Teardown drops internal waiters, and late readiness cannot run host policy.
+   try{std::lock_guard<std::mutex> lock(mutex);abandoned=true;waiting.clear();}catch(...){}
   }
  };
  std::mutex mutex_;
@@ -25,12 +34,20 @@ public:
  ResultCallback<void> Reset(){
   auto next=std::make_shared<Watch>();std::shared_ptr<Watch> old;
   {std::lock_guard<std::mutex> lock(mutex_);old=std::exchange(current_,next);}
-  old->Finish(Result<void>::Failure({ErrorCode::Cancelled,"network watch replaced",ERROR_CANCELLED}));
+  if(old)old->Finish(Result<void>::Failure({ErrorCode::Cancelled,"network watch replaced",ERROR_CANCELLED}));
   return [next](Result<void> r){next->Finish(std::move(r));};
+ }
+ void Abandon() noexcept {
+  try {
+   std::shared_ptr<Watch> old;
+   {std::lock_guard<std::mutex> lock(mutex_);old=std::move(current_);}
+   if(old)old->Abandon();
+  }catch(...){}
  }
  void Wait(ResultCallback<void> cb){
   std::shared_ptr<Watch> watch;{std::lock_guard<std::mutex> lock(mutex_);watch=current_;}
-  watch->Wait(std::move(cb));
+  if(watch)watch->Wait(std::move(cb));
+  else cb(Result<void>::Failure({ErrorCode::Cancelled,{},ERROR_CANCELLED}));
  }
 };
 namespace {
@@ -90,12 +107,18 @@ public:
 WindowsPlatform::WindowsPlatform(WindowsOptions options,NativeBoundaries native)
  :permission_(std::make_shared<PermissionGate>()),dns_(std::move(native.dns)),identity_(StoragePath(std::move(options))),clipboard_(std::move(native.clipboard)),
  executor_(std::make_shared<core::SerialScheduler>()),network_(std::move(native.network)){}
-WindowsPlatform::~WindowsPlatform(){SetNetworkChangeHandler({});dns_.Stop();sockets_.Stop();}
+WindowsPlatform::~WindowsPlatform(){
+ permission_->Abandon();
+ // Each port may need to enqueue its native cancellation. Allocation failure
+ // in one submission must not skip cleanup attempts for the other ports.
+ try{network_.Stop();}catch(...){}
+ try{dns_.Stop();}catch(...){}
+ try{sockets_.Stop();}catch(...){}
+}
 void WindowsPlatform::SetNetworkChangeHandler(std::function<void()> handler){
  std::lock_guard<std::mutex> lock(watch_mutex_);
- auto ready=permission_->Reset();
- if(handler)network_.Start(std::move(handler),std::move(ready));
- else {network_.Stop();ready(Result<void>::Failure({ErrorCode::Cancelled,"network watch stopped",ERROR_CANCELLED}));}
+ if(handler)network_.Start(std::move(handler),permission_->Reset());
+ else {auto ready=permission_->Reset();network_.Stop();ready(Result<void>::Failure({ErrorCode::Cancelled,"network watch stopped",ERROR_CANCELLED}));}
 }
 std::shared_ptr<IPermissionAgent> WindowsPlatform::Permissions(std::shared_ptr<IPermissionAgent> host){return std::make_shared<PermissionPolicy>(permission_,std::move(host));}
 std::unique_ptr<IShareSdk> CreateRetainedSdk(SdkConfig c,std::shared_ptr<WindowsPlatform> p){return std::make_unique<RetainedSdk>(std::move(c),std::move(p));}

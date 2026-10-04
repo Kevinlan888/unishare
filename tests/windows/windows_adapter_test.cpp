@@ -6,6 +6,19 @@
 #include <atomic>
 #include <iostream>
 #include <filesystem>
+#include <new>
+
+#include <cstdlib>
+// Fail allocations only on the teardown thread; native worker queues stay real.
+thread_local bool failTeardownAllocations=false;
+thread_local bool failNextTeardownAllocation=false;
+void* operator new(std::size_t size){
+ if(failNextTeardownAllocation){failNextTeardownAllocation=false;throw std::bad_alloc();}
+ if(failTeardownAllocations)throw std::bad_alloc();
+ if(auto p=std::malloc(size?size:1))return p;throw std::bad_alloc();
+}
+void operator delete(void* p) noexcept{std::free(p);}
+void operator delete(void* p,std::size_t) noexcept{std::free(p);}
 using namespace unishare;
 #define CHECK(x) do {if(!(x)){std::cerr<<"CHECK failed: " #x<<" at "<<__LINE__<<std::endl;std::exit(1);}} while(0)
 template<class T> struct Completion {
@@ -13,13 +26,15 @@ template<class T> struct Completion {
  auto Callback(){return [this](Result<T> r){p.set_value(std::move(r));};}
  auto Get(){CHECK(f.wait_for(std::chrono::seconds(10))==std::future_status::ready);return f.get();}
 };
+void ActivePortsTeardown();
+void AllocationFailureTeardown();
 void AbiStartStop();
 void ConcurrentPlatformWatch();
 void AssembledTransfer();
 void StartGates();
 void PublicAbi();
 void WatchFailure();
-int main(){AbiStartStop();ConcurrentPlatformWatch();AssembledTransfer();StartGates();PublicAbi();WatchFailure();
+int main(){std::set_terminate([]{std::_Exit(86);});AllocationFailureTeardown();ActivePortsTeardown();AbiStartStop();ConcurrentPlatformWatch();AssembledTransfer();StartGates();PublicAbi();WatchFailure();
  auto root=std::filesystem::current_path()/("adapter-test-"+std::to_string(GetCurrentProcessId()));
  WindowsOptions options;options.identity_directory=root;
  auto platform=std::make_shared<windows::WindowsPlatform>(options);
@@ -200,4 +215,45 @@ void AbiStartStop(){
  CHECK(usdk_create(handle,&config,callback,&initialized,&sdk,&operation).code==0);CHECK(usdk_platform_release(handle).code==0);platform.reset();wait(init);
  std::promise<usdk_error> started;auto start=started.get_future();CHECK(usdk_start(sdk,callback,&started,&operation).code==0);wait(start);CHECK(dns->port!=0);
  std::promise<usdk_error> stopped;auto stop=stopped.get_future();CHECK(usdk_stop(sdk,callback,&stopped,&operation).code==0);wait(stop);CHECK(usdk_destroy(sdk).code==0);
+}
+void AllocationFailureTeardown(){
+ WindowsOptions options;options.identity_directory=std::filesystem::current_path()/"teardown-identity";
+ auto platform=std::make_unique<windows::WindowsPlatform>(options);
+ auto permission=platform->Permissions();
+ failTeardownAllocations=true;
+ platform.reset(); // No gate allocation is needed to retire an unused platform.
+ failTeardownAllocations=false;
+ Completion<void> retired;permission->RequestLocalNetwork(retired.Callback());
+ auto result=retired.Get();CHECK(!result.ok());CHECK(result.error().code==ErrorCode::Cancelled);
+}
+
+struct TeardownDns : TestDns {
+ std::atomic<int> deregistered{0};
+ DWORD Deregister(DNS_SERVICE_REGISTER_REQUEST*) override{++deregistered;return 0;}
+};
+struct TeardownNetwork : DelayedNetwork {
+ std::atomic<int> cancelled{0};
+ DWORD Cancel(HANDLE) override{++cancelled;return 0;}
+};
+void ActivePortsTeardown(){
+ auto dns=std::make_shared<TeardownDns>();auto network=std::make_shared<TeardownNetwork>();windows::NativeBoundaries native;native.dns=dns;native.network=network;
+ WindowsOptions options;options.identity_directory=std::filesystem::current_path()/"throwing-teardown";
+ auto platform=std::make_unique<windows::WindowsPlatform>(options,native);
+  auto entered=network->entered.get_future();platform->SetNetworkChangeHandler([]{});
+ CHECK(entered.wait_for(std::chrono::seconds(3))==std::future_status::ready);
+ auto permission=platform->Permissions();std::atomic<bool> called{false};
+ permission->RequestLocalNetwork([&](auto){called=true;});
+
+ ServiceRecord record;record.instance="teardown";record.service_type="_share._tcp.local.";record.port=1234;
+ Completion<void> published;platform->DnsSd().Publish(record,published.Callback());CHECK(published.Get().ok());
+ Completion<uint16_t> bound;Completion<std::shared_ptr<ISocket>> accepted,connected;
+ platform->Sockets().ListenBound(0,bound.Callback(),[&](auto r){if(r.ok())accepted.Callback()(r);});auto port=bound.Get();CHECK(port.ok());
+ platform->Sockets().Connect("127.0.0.1",port.value(),connected.Callback());auto client=connected.Get();CHECK(client.ok());auto socket=accepted.Get();CHECK(socket.ok());
+ Completion<std::vector<uint8_t>> pending;socket.value()->Read(1,pending.Callback());
+  // Fail native-watch cancellation submission, then let the blocked registration
+ // finish: its stopped branch drains its own handle. Other ports must still stop.
+ failNextTeardownAllocation=true;platform.reset();CHECK(!failNextTeardownAllocation);CHECK(!called);
+ network->release.set_value();
+ auto result=pending.Get();CHECK(!result.ok());CHECK(result.error().code==ErrorCode::Cancelled);
+ Eventually([&]{return dns->deregistered==1&&network->cancelled==1;});CHECK(!called);
 }
