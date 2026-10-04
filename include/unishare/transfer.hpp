@@ -7,6 +7,13 @@ struct TransferSource {
     std::uint64_t byte_count = 0;
     std::shared_ptr<IStream> stream;
 };
+// Read returns at most the requested bytes; empty is EOF. Write consumes all
+// bytes before success. Callbacks complete once, on any thread. Close stops I/O
+// without deleting source data; sink Close seals successful staging. All
+// fallible persistence belongs in Write. AbortAndCleanup invalidates/removes
+// staging even while an operation is pending; buffers live through completion.
+struct ContentSource { ContentType type=ContentType::File; TransferSource content; };
+using ContentSink = std::shared_ptr<IStream>;
 struct IncomingOffer {
     RequestId request_id;
     TransferId transfer_id;

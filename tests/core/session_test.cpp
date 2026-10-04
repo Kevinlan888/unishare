@@ -249,6 +249,7 @@ void CloseObserverReleasesLastOwner(){
 }
 
 int main(){
+ {SessionAdmission a;CHECK(a.AcquireOffer(1));CHECK(!a.AcquireOffer(1));a.ReleaseOffer();CHECK(a.AcquireOffer(4));CHECK(a.AcquireOffer(4));CHECK(a.AcquireOffer(4));CHECK(a.AcquireOffer(4));CHECK(!a.AcquireOffer(99));for(int i=0;i<4;++i)a.ReleaseOffer();}
  CloseObserverReleasesLastOwner();
  ContentRacesLocalPairingFlush();
  EveryContentTypeAndConsumerFailure();
@@ -262,11 +263,14 @@ int main(){
  CHECK(p.ae.size()==1&&p.be.size()==1);
  CHECK(p.ae[0].kind==SessionEvent::Kind::PairingRequested&&p.be[0].kind==SessionEvent::Kind::PairingRequested);
  CHECK(p.ae[0].sas==p.be[0].sas&&p.ae[0].sas.size()==6);
+ CHECK(!p.a->PeerDevice()&&!p.b->PeerDevice());
  CHECK(!p.a->Connected()&&!p.b->Connected());p.ConfirmA();CHECK(p.a_store.trust.empty()&&p.b_store.trust.empty());p.ConfirmB();
  CHECK(p.a->Connected()&&p.b->Connected());CHECK(p.a_store.trust.size()==1&&p.b_store.trust.size()==1);
+ CHECK(p.a->PeerDevice()==p.b_id.material.id&&p.b->PeerDevice()==p.a_id.material.id);
  CHECK(p.ax->observed.size()>100); // Real TLS records, not plaintext Hello.
  CHECK(p.ax->observed[0]==22&&p.ax->observed[1]==3);
  p.Close();CHECK(p.ae.back().kind==SessionEvent::Kind::Disconnected);
+ CHECK(!p.a->PeerDevice()&&!p.b->PeerDevice());
  // Reconnect still requires receiver consent. Initiator is preauthorized by Connect.
  p.Start();CHECK(!p.a->Connected()&&!p.b->Connected());CHECK(p.ae.empty()&&p.be.size()==1);p.ConfirmB();CHECK(p.a->Connected()&&p.b->Connected());p.Close();
  // A new valid certificate/key claiming the old pinned DeviceId is rejected.

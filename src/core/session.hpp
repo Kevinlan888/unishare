@@ -20,7 +20,7 @@ public:
 // One instance shared by all sessions belonging to an SDK, never per socket.
 class SessionAdmission {
  std::map<std::string,std::deque<ISessionScheduler::Time>> attempts_;
- std::size_t pending_=0,connections_=0;
+ std::size_t pending_=0,connections_=0,offers_=0;
  std::shared_ptr<ByteBudget> buffers_;
 public:
  explicit SessionAdmission(std::shared_ptr<ByteBudget> buffers = {})
@@ -28,6 +28,9 @@ public:
  ByteBudget& Buffers() { return *buffers_; }
  bool Open(); void Closed();
  bool Pair(const std::string&,ISessionScheduler::Time); void ReleasePair();
+ // Pending content decisions share this instance-wide admission owner.
+ bool AcquireOffer(std::size_t limit) {if(offers_>=4||offers_>=limit)return false;++offers_;return true;}
+ void ReleaseOffer() {if(offers_)--offers_;}
 };
 struct SessionEvent {
  enum class Kind { PairingRequested,Connected,IdentityChanged,Disconnected };
@@ -46,6 +49,8 @@ public:
  void ConfirmPairing(OperationId,bool);
  void Close(ShareError);
  bool Connected() const {return connected_;}
+ // The identity bound by this TLS session, available only after both gates.
+ std::optional<DeviceId> PeerDevice() const {return connected_?std::optional<DeviceId>(peer_.device_id):std::nullopt;}
  // Internal core-queue port; these callbacks run on the serial scheduler, NOT
  // the public application executor. The engine posts its own public events.
  // One pending send per Session. Success means all encrypted socket writes
