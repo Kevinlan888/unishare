@@ -25,10 +25,10 @@ struct Socket : ISocket, std::enable_shared_from_this<Socket> {
  Scheduler& q; std::weak_ptr<Socket> peer; std::deque<std::uint8_t> input; ResultCallback<std::vector<std::uint8_t>> reader;
  bool hold_writes=false; ResultCallback<void> held_write;
  void CompleteHeld(Result<void> result){CHECK(held_write);auto cb=std::move(held_write);q.Post([cb,result]{cb(result);});}
- std::size_t max_read=0; bool closed=false,eof=false; std::string source="192.0.2.1"; std::vector<std::uint8_t> observed;
+ std::size_t reads=0; std::size_t max_read=0; bool closed=false,eof=false; std::string source="192.0.2.1"; std::vector<std::uint8_t> observed;
  explicit Socket(Scheduler& s):q(s){} std::string RemoteEndpoint() const override{return source;}
  void Deliver(){if(!reader||(!closed&&!eof&&input.empty()))return;auto cb=std::move(reader);std::vector<std::uint8_t> b;while(!input.empty()&&b.size()<std::min<std::size_t>(max_read,37)){b.push_back(input.front());input.pop_front();}q.Post([cb,b]{cb(Result<std::vector<std::uint8_t>>::Success(b));});}
- OperationId Read(std::size_t n,ResultCallback<std::vector<std::uint8_t>> cb) override{CHECK(!reader);max_read=n;reader=std::move(cb);Deliver();return q.next++;}
+ OperationId Read(std::size_t n,ResultCallback<std::vector<std::uint8_t>> cb) override{++reads;CHECK(!reader);max_read=n;reader=std::move(cb);Deliver();return q.next++;}
  OperationId Write(std::vector<std::uint8_t> b,ResultCallback<void> cb) override{auto p=peer.lock();if(closed||!p||p->closed){q.Post([cb]{cb(Result<void>::Failure({ErrorCode::NetworkLost,"closed",{}}));});}else{observed.insert(observed.end(),b.begin(),b.end());p->input.insert(p->input.end(),b.begin(),b.end());p->Deliver();if(hold_writes){CHECK(!held_write);held_write=std::move(cb);}else q.Post([cb]{cb(Result<void>::Success());});}return q.next++;}
  void Close() override{if(held_write)CompleteHeld(Result<void>::Failure({ErrorCode::Cancelled,"cancelled write",{}}));closed=true;Deliver();if(auto p=peer.lock()){p->eof=true;p->Deliver();}}
  void AbortAndCleanup() override{Close();}void Cancel(OperationId) override{Close();}
@@ -78,7 +78,163 @@ void HeldDecisionWrite(){
   }
  }
 }
+
+// Removing authentication, serialized send admission, or consumption gating
+// must break these tests; payload expectations are independent literals.
+void ContentTransport() {
+ {
+  Pair p; p.Start(); int completed=0, delivered=0;
+  p.b->SetContentHandler([&](auto,auto ack){++delivered;ack(Result<void>::Success());},[](auto){});
+  p.a->SendContent(protocol::Data{},[&](auto r){++completed;CHECK(!r.ok()&&r.error().code==ErrorCode::AuthenticationFailed);});
+  CHECK(completed==0);p.q.Run();CHECK(completed==1&&delivered==0);
+  p.ConfirmA();p.ConfirmB();CHECK(p.a->Connected()&&p.b->Connected());p.Close();
+ }
+ {
+  Pair p;p.Start();p.ConfirmA();p.ConfirmB();
+  int received=0,sent=0,closed=0;std::function<void(Result<void>)> held_ack;
+  p.b->SetContentHandler([&](std::shared_ptr<const protocol::Message> m,auto ack){
+   ++received;auto& d=std::get<protocol::Data>(*m);CHECK(d.payload.size()==262144&&d.payload.front()==0xa5&&d.payload.back()==0xa5&&d.sequence==42);
+   held_ack=std::move(ack);
+  },[&](auto){++closed;});
+  protocol::Data d;d.sequence=42;d.payload.assign(262144,0xa5);
+  p.a->SendContent(d,[&](auto r){CHECK(r.ok());++sent;});p.q.Run();
+  CHECK(sent==1&&received==1);auto reads=p.bx->reads;
+  p.a->SendContent(d,[&](auto r){CHECK(r.ok());++sent;});p.q.Run();
+  CHECK(sent==2&&received==1&&p.bx->reads==reads);
+  auto first_ack=held_ack;held_ack(Result<void>::Success());p.q.Run();CHECK(received==2);
+  first_ack(Result<void>::Success());p.q.Run();CHECK(received==2);
+  p.b->Close({ErrorCode::Cancelled,"cancel stalled consumer",{}});p.Close();CHECK(closed==1);held_ack(Result<void>::Success());p.q.Run();CHECK(received==2&&closed==1);
+  CHECK(p.a_limit.Buffers().Used()==0&&p.b_limit.Buffers().Used()==0);
+ }
+ for(bool fail:{false,true}){
+  Pair p;p.Start();p.ConfirmA();p.ConfirmB();
+  p.b->SetContentHandler([](auto,auto ack){ack(Result<void>::Success());},[](auto){});
+  p.ax->hold_writes=true;int sent=0,rejected=0;
+  protocol::Data d;d.payload.assign(262144,0x38);
+  p.a->SendContent(d,[&](auto r){++sent;CHECK(r.ok()!=fail);if(fail)CHECK(r.error().code==ErrorCode::NetworkLost);});p.q.Run();
+  CHECK(sent==0&&p.ax->held_write);
+  auto used=p.a_limit.Buffers().Used();
+  for(int i=0;i<50;++i)p.a->SendContent(d,[&](auto r){++rejected;CHECK(!r.ok()&&r.error().code==ErrorCode::ResourceLimit);});
+  p.q.Run();CHECK(sent==0&&rejected==50&&p.a_limit.Buffers().Used()==used);
+  if(fail)p.ax->CompleteHeld(Result<void>::Failure({ErrorCode::NetworkLost,"fault",{}}));
+  else {p.ax->hold_writes=false;p.ax->CompleteHeld(Result<void>::Success());}
+  p.q.Run();CHECK(sent==1);p.Close();CHECK(sent==1&&p.a_limit.Buffers().Used()==0);
+ }
+ {
+  Pair p;p.Start();p.ConfirmA();p.ConfirmB();int completed=0;
+  p.a->SendContent(protocol::Hello{},[&](auto r){++completed;CHECK(!r.ok()&&r.error().code==ErrorCode::InvalidInput);});
+  p.q.Run();CHECK(completed==1&&p.a->Connected());p.Close();
+ }
+}
+void SharedByteBudget(){
+ auto budget=std::make_shared<ByteBudget>(100);
+ auto a=budget->Reserve(60);CHECK(a&&budget->Used()==60);
+ CHECK(!budget->Reserve(41));auto b=budget->Reserve(40);CHECK(b&&budget->Used()==100);
+ a.reset();CHECK(budget->Used()==40);b.reset();CHECK(budget->Used()==0);
+ CHECK(!budget->Reserve(101));
+ SessionAdmission first(budget),second(budget);
+ auto c=first.Buffers().Reserve(80);CHECK(c&&!second.Buffers().Reserve(21));
+}
+
+
+void RejectContentBeforePairing(){
+ Pair p;p.ax=std::make_shared<Socket>(p.q);p.bx=std::make_shared<Socket>(p.q);p.ax->peer=p.bx;p.bx->peer=p.ax;
+ int delivered=0;
+ p.b=std::make_shared<Session>(p.b_id,p.b_trust,p.b_factory,p.q,p.b_limit,nullptr,[&](auto e){p.be.push_back(e);});
+ p.b->SetContentHandler([&](auto,auto){++delivered;},[](auto){});p.b->Accept(p.bx);
+ auto* ctx=SSL_CTX_new(TLS_method());CHECK(ctx);CHECK(SSL_CTX_set_min_proto_version(ctx,TLS1_3_VERSION)==1);
+ const auto* cert_bytes=p.a_id.material.certificate.data();auto* cert=d2i_X509(nullptr,&cert_bytes,static_cast<long>(p.a_id.material.certificate.size()));
+ const auto* key_bytes=p.a_id.material.private_key.data();auto* info=d2i_PKCS8_PRIV_KEY_INFO(nullptr,&key_bytes,static_cast<long>(p.a_id.material.private_key.size()));
+ CHECK(cert&&info);auto* key=EVP_PKCS82PKEY(info);CHECK(key&&SSL_CTX_use_certificate(ctx,cert)==1&&SSL_CTX_use_PrivateKey(ctx,key)==1);
+ X509_free(cert);EVP_PKEY_free(key);PKCS8_PRIV_KEY_INFO_free(info);
+ auto* ssl=SSL_new(ctx);auto* in=BIO_new(BIO_s_mem());auto* out=BIO_new(BIO_s_mem());CHECK(ssl&&in&&out);BIO_set_mem_eof_return(in,-1);SSL_set_bio(ssl,in,out);SSL_set_connect_state(ssl);
+ bool sent=false;
+ for(int n=0;n<100&&p.be.empty();++n){
+  const int ready=SSL_do_handshake(ssl);
+  if(ready==1&&!sent){protocol::FrameCodec codec;protocol::Data data;data.payload={1,2,3};auto encoded=codec.Encode(data);std::size_t written=0;CHECK(SSL_write_ex(ssl,encoded.data(),encoded.size(),&written)==1&&written==encoded.size());sent=true;}
+  while(BIO_ctrl_pending(out)){std::vector<std::uint8_t> bytes(BIO_ctrl_pending(out));int size=BIO_read(out,bytes.data(),static_cast<int>(bytes.size()));CHECK(size>0);bytes.resize(size);p.ax->Write(std::move(bytes),[](auto){});}
+  p.q.Run();
+  if(!p.ax->input.empty()){std::vector<std::uint8_t> bytes(p.ax->input.begin(),p.ax->input.end());p.ax->input.clear();CHECK(BIO_write(in,bytes.data(),static_cast<int>(bytes.size()))==bytes.size());}
+ }
+ CHECK(sent&&delivered==0&&!p.be.empty()&&p.be.back().error->code==ErrorCode::AuthenticationFailed);
+ CHECK(p.b_store.trust.empty()&&p.b_limit.Buffers().Used()==0);SSL_free(ssl);SSL_CTX_free(ctx);
+}
+void SharedSessionBudget(){
+ auto budget=std::make_shared<ByteBudget>();SessionAdmission shared(budget);
+ std::vector<std::unique_ptr<Pair>> pairs;
+ for(int i=0;i<3;++i){auto p=std::make_unique<Pair>();p->external_b_limit=&shared;p->source="192.0.2."+std::to_string(i+1);p->Start();p->ConfirmA();p->ConfirmB();CHECK(p->b->Connected());pairs.push_back(std::move(p));}
+ std::vector<Session::ContentAck> held;int rejected=0;
+ for(auto& p:pairs)p->b->SetContentHandler([&](auto,auto ack){held.push_back(std::move(ack));},[&](auto e){if(e.code==ErrorCode::ResourceLimit)++rejected;});
+ protocol::Data data;data.payload.assign(262144,0x99);
+ for(auto& p:pairs){p->a->SendContent(data,[](auto){});p->q.Run();CHECK(budget->Used()<=4194304);}
+ CHECK(held.size()==2&&rejected==1);CHECK(pairs[0]->b->Connected()&&pairs[1]->b->Connected()&&!pairs[2]->b->Connected());
+ for(auto& p:pairs){p->b->Close({ErrorCode::Cancelled,"shutdown",{}});p->Close();}
+ CHECK(budget->Used()==0);for(auto& ack:held)ack(Result<void>::Success());for(auto& p:pairs)p->q.Run();CHECK(budget->Used()==0);
+}
+void ContentTerminalRaces(){
+ // Close must complete a held send exactly once, even if its socket callback
+ // was already posted. A retained incoming message must retain its charge.
+ Pair p;p.Start();p.ConfirmA();p.ConfirmB();
+ std::shared_ptr<const protocol::Message> retained;Session::ContentAck ack;int closed=0,completed=0;
+ p.b->SetContentHandler([&](auto m,auto a){retained=std::move(m);ack=std::move(a);},[&](auto e){++closed;CHECK(e.code==ErrorCode::Cancelled);});
+ protocol::Data data;data.payload={4,5,6};
+ p.a->SendContent(data,[](auto r){CHECK(r.ok());});p.q.Run();CHECK(retained&&ack);
+ p.b->Close({ErrorCode::Cancelled,"cancel",{}});p.q.Run();CHECK(closed==1&&p.b_limit.Buffers().Used()>0);
+ retained.reset();CHECK(p.b_limit.Buffers().Used()==0);ack(Result<void>::Success());ack(Result<void>::Failure({ErrorCode::StorageFailed,"late",{}}));p.q.Run();CHECK(closed==1);
+ p.Close();
+ Pair r;r.Start();r.ConfirmA();r.ConfirmB();r.ax->hold_writes=true;
+ r.b->SetContentHandler([](auto,auto a){a(Result<void>::Success());},[](auto){});
+ r.a->SendContent(data,[&](auto result){++completed;CHECK(!result.ok()&&result.error().code==ErrorCode::Cancelled);});r.q.Run();CHECK(completed==0&&r.ax->held_write);
+ r.ax->CompleteHeld(Result<void>::Success());r.a->Close({ErrorCode::Cancelled,"cancel before posted write",{}});r.q.Run();CHECK(completed==1&&r.a_limit.Buffers().Used()==0);r.Close();CHECK(completed==1);
+ // TCP FIN behind a paused read is observed once consumption resumes.
+ Pair t;t.Start();t.ConfirmA();t.ConfirmB();int peer_closed=0;Session::ContentAck resume;
+ t.b->SetContentHandler([&](auto,auto a){resume=std::move(a);},[&](auto e){CHECK(e.code==ErrorCode::NetworkLost);++peer_closed;});
+ t.a->SendContent(data,[](auto r){CHECK(r.ok());});t.q.Run();t.Close();CHECK(peer_closed==0);
+ resume(Result<void>::Success());t.q.Run();CHECK(peer_closed==1&&t.b_limit.Buffers().Used()==0);
+}
+
+
+void EveryContentTypeAndConsumerFailure(){
+ Pair p;p.Start();p.ConfirmA();p.ConfirmB();
+ std::vector<protocol::MessageType> received;int closed=0;
+ p.b->SetContentHandler([&](auto message,auto ack){received.push_back(protocol::TypeOf(*message));ack(Result<void>::Success());},[&](auto){++closed;});
+ std::vector<protocol::Message> messages{protocol::Offer{},protocol::Status{protocol::MessageType::Accept,{},{}},protocol::Status{protocol::MessageType::Reject,{},{}},protocol::Data{},protocol::Finish{},protocol::Status{protocol::MessageType::Complete,{},{}},protocol::Status{protocol::MessageType::Failed,{},{}},protocol::Status{protocol::MessageType::Cancel,{},{}}};
+ int sent=0;for(const auto& m:messages){p.a->SendContent(m,[&](auto r){CHECK(r.ok());++sent;});p.q.Run();}
+ CHECK(sent==8&&received==std::vector<protocol::MessageType>({protocol::MessageType::Offer,protocol::MessageType::Accept,protocol::MessageType::Reject,protocol::MessageType::Data,protocol::MessageType::Finish,protocol::MessageType::Complete,protocol::MessageType::Failed,protocol::MessageType::Cancel}));p.Close();CHECK(closed==1);
+ Pair r;r.Start();r.ConfirmA();r.ConfirmB();int failed=0;
+ r.b->SetContentHandler([](auto,auto ack){ack(Result<void>::Failure({ErrorCode::StorageFailed,"consumer failure",42}));},[&](auto e){++failed;CHECK(e.code==ErrorCode::StorageFailed&&e.platform_error==42);});
+ r.a->SendContent(protocol::Data{},[](auto){});r.q.Run();CHECK(failed==1&&!r.b->Connected()&&r.b_limit.Buffers().Used()==0);r.Close();CHECK(failed==1);
+ // Destruction owns cancellation, independent of the caller retaining a Session.
+ Pair t;t.Start();t.ConfirmA();t.ConfirmB();t.ax->hold_writes=true;int cancelled=0;
+ t.b->SetContentHandler([](auto,auto ack){ack(Result<void>::Success());},[](auto){});
+ t.a->SendContent(protocol::Data{},[&](auto result){++cancelled;CHECK(!result.ok()&&result.error().code==ErrorCode::Cancelled);});t.q.Run();CHECK(cancelled==0);
+ t.a.reset();t.q.Run();CHECK(cancelled==1&&t.a_limit.Buffers().Used()==0);
+}
+
+
+void ContentRacesLocalPairingFlush(){
+ for(int outcome=0;outcome<4;++outcome){
+ Pair p;p.Start();int delivered=0;
+ p.b->SetContentHandler([&](auto,auto ack){++delivered;ack(Result<void>::Success());},[](auto){});
+ p.ConfirmA();p.bx->hold_writes=true;p.ConfirmB();CHECK(p.a->Connected()&&!p.b->Connected());
+ p.a->SendContent(protocol::Data{},[](auto result){CHECK(result.ok());});p.q.Run();
+ CHECK(delivered==0&&p.b_store.trust.empty()&&p.be.size()==1&&p.bx->held_write);
+ p.bx->hold_writes=false;
+ if(outcome==1)p.bx->CompleteHeld(Result<void>::Failure({ErrorCode::NetworkLost,"decision write failed",{}}));
+ else if(outcome==2)p.b->Close({ErrorCode::Cancelled,"cancel held decision",{}});
+ else {if(outcome==3)p.b_store.fail=true;p.bx->CompleteHeld(Result<void>::Success());}
+ p.q.Run();
+ if(outcome==0)CHECK(p.b->Connected()&&delivered==1&&p.b_store.trust.size()==1);
+ else CHECK(!p.b->Connected()&&delivered==0&&p.b_store.trust.empty()&&p.b_limit.Buffers().Used()==0);
+ p.Close();
+ }
+}
+
 int main(){
+ ContentRacesLocalPairingFlush();
+ EveryContentTypeAndConsumerFailure();
+ RejectContentBeforePairing();SharedSessionBudget();ContentTerminalRaces();
+ SharedByteBudget();ContentTransport();
  {Pair p;p.Start(true);CHECK(p.ae.size()==1&&p.ae.front().kind==SessionEvent::Kind::PairingRequested);CHECK(p.be.size()==1&&p.be.front().kind==SessionEvent::Kind::PairingRequested);p.ConfirmA();p.ConfirmB();CHECK(p.a->Connected()&&p.b->Connected());p.Close();}
  {Pair p;auto s=std::make_shared<Session>(p.a_id,p.a_trust,p.a_factory,p.q,p.a_limit,nullptr,[&p](auto e){p.ae.push_back(e);});s->Close({ErrorCode::Cancelled,"close before start",{}});CHECK(p.ae.empty());p.q.Run();CHECK(p.ae.size()==1&&p.ae[0].error->code==ErrorCode::Cancelled);s->Close({ErrorCode::Cancelled,"repeat",{}});p.q.Run();CHECK(p.ae.size()==1);}
  HeldDecisionWrite();

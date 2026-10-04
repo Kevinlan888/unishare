@@ -4,13 +4,29 @@
 #include <openssl/x509.h>
 #include <atomic>
 #include <algorithm>
+#include <stdexcept>
 namespace unishare::core {
 namespace {
 std::atomic<OperationId> next_request{1};
 constexpr std::size_t MaxQueued=256*1024;
+// Negotiation has bounded input/output BIOs plus two transport callbacks.
+// Once connected, frame-specific reservations cover parser/encoding copies,
+// ciphertext and in-flight writes; this base covers TLS record/read staging.
+constexpr std::size_t NegotiationCharge=2*MaxQueued+64*1024;
+// Covers two retained <=32 KiB BIOs, two TLS records, and posted read copies.
+constexpr std::size_t ConnectedCharge=160*1024;
 // TLS proves possession. After handshake VerifyPeer enforces a valid self-signed
 // leaf; trust is established only by the persisted SPKI binding or bilateral SAS.
 int OnCertificate(int,X509_STORE_CTX*){return 1;}
+// BIO_reset does not free retained capacity. Replace an empty large memory
+// buffer before releasing the frame charge that paid for its allocation.
+bool TrimBio(BIO* bio){
+ if(BIO_ctrl_pending(bio))return true;
+ BUF_MEM* buffer=nullptr;BIO_get_mem_ptr(bio,&buffer);
+ if(!buffer||buffer->max<=32*1024)return true;
+ auto* replacement=BUF_MEM_new();if(!replacement)return false;
+ BIO_set_mem_buf(bio,replacement,BIO_CLOSE);return true;
+}
 }
 bool SessionAdmission::Open(){if(connections_==8)return false;++connections_;return true;}
 void SessionAdmission::Closed(){if(connections_)--connections_;}
@@ -23,7 +39,7 @@ bool SessionAdmission::Pair(const std::string& source,ISessionScheduler::Time no
 void SessionAdmission::ReleasePair(){if(pending_)--pending_;}
 Session::Session(LocalIdentity i,TrustStore& t,ISocketFactory& f,ISessionScheduler& s,SessionAdmission& a,std::shared_ptr<IExecutor> e,Handler h)
  :identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(e?std::move(e):std::shared_ptr<IExecutor>(&s,[](IExecutor*){})),handler_(std::move(h)){}
-Session::~Session(){if(deadline_)scheduler_.Cancel(deadline_);if(socket_)socket_->Close();if(pair_slot_)admission_.ReleasePair();if(admitted_)admission_.Closed();SSL_free(ssl_);SSL_CTX_free(ctx_);}
+Session::~Session(){if(!closed_)Close({ErrorCode::Cancelled,"session destroyed",{}});if(deadline_)scheduler_.Cancel(deadline_);if(socket_)socket_->Close();if(pair_slot_)admission_.ReleasePair();if(admitted_)admission_.Closed();SSL_free(ssl_);SSL_CTX_free(ctx_);}
 void Session::Emit(SessionEvent::Kind kind,std::optional<ShareError> error,std::string sas){
  SessionEvent event{kind,request_,hello_received_?peer_.device_id:expected_.value_or(DeviceId{}),std::move(sas),std::move(error)};
  auto handler=handler_;if(handler)executor_->Post([handler,event]{handler(event);});
@@ -35,6 +51,15 @@ void Session::Close(ShareError error){
  if(socket_)socket_->Close();
  if(pair_slot_){admission_.ReleasePair();pair_slot_=false;}if(admitted_){admission_.Closed();admitted_=false;}
  plaintext_.clear();ciphertext_.clear();
+ protocol::Bytes{}.swap(read_frame_); codec_=protocol::FrameCodec{};
+ delivery_.reset(); ++delivery_generation_; read_charge_.reset();
+ // Clear BIO staging before releasing its reservation. Socket::Close completes
+ // outstanding writes; their callbacks retain their own send charge meanwhile.
+ SSL_free(ssl_);ssl_=nullptr;SSL_CTX_free(ctx_);ctx_=nullptr;
+ io_charge_.reset();
+ CompleteSend(Result<void>::Failure(error));
+ auto closed=std::move(content_closed_);content_handler_={};
+ if(closed)closed(error);
  if(error.code==ErrorCode::IdentityChanged)Emit(SessionEvent::Kind::IdentityChanged,error);
  Emit(SessionEvent::Kind::Disconnected,error);
 }
@@ -68,6 +93,8 @@ void Session::Begin(SocketHandle socket){
  if(!socket_){Fail(ErrorCode::InvalidInput,"null socket");return;}
  if(!admission_.Open()){Fail(ErrorCode::ResourceLimit,"connection limit");return;}admitted_=true;
  auto weak=weak_from_this();if(!deadline_)deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
+ io_charge_=admission_.Buffers().Reserve(NegotiationCharge);
+ if(!io_charge_){Fail(ErrorCode::ResourceLimit,"session buffer budget");return;}
  if(!InitTls()){Fail(ErrorCode::AuthenticationFailed,"TLS initialization failed");return;}Pump();
 }
 bool Session::VerifyPeer(){
@@ -77,9 +104,102 @@ bool Session::VerifyPeer(){
  const bool valid=key&&EVP_PKEY_is_a(key,"EC")&&EVP_PKEY_get_bits(key)==256&&X509_verify(cert,key)==1&&X509_cmp_current_time(X509_get0_notBefore(cert))<0&&X509_cmp_current_time(X509_get0_notAfter(cert))>0&&size>0&&EVP_Digest(encoded,size,fp.data(),&digest_size,EVP_sha256(),nullptr)==1&&digest_size==32;
  OPENSSL_free(encoded);EVP_PKEY_free(key);X509_free(cert);if(valid)tls_peer_fingerprint_=fp;return valid;
 }
+void Session::PostResult(ResultCallback<void> callback,Result<void> result){
+ if(callback)scheduler_.Post([callback=std::move(callback),result]{callback(result);});
+}
+void Session::CompleteSend(Result<void> result){
+ auto done=std::move(send_done_);send_charge_.reset();PostResult(std::move(done),result);
+}
+void Session::SetContentHandler(ContentHandler handler,std::function<void(ShareError)> closed){
+ if(content_handler_||content_closed_)throw std::logic_error("content handler already attached");
+ if(closed_){if(closed)scheduler_.Post([closed]{closed({ErrorCode::NetworkLost,"session already closed",{}});});return;}
+ content_handler_=std::move(handler);content_closed_=std::move(closed);
+}
+void Session::SendContent(const protocol::Message& message,ResultCallback<void> done){
+ auto reject=[&](ErrorCode code,const char* why){PostResult(std::move(done),Result<void>::Failure({code,why,{}}));};
+ if(!connected_||closed_){reject(ErrorCode::AuthenticationFailed,"content requires authenticated connection");return;}
+ const auto type=protocol::TypeOf(message);
+ if(type<protocol::MessageType::Offer||type>protocol::MessageType::Cancel){reject(ErrorCode::InvalidInput,"not a content message");return;}
+ if(send_charge_){reject(ErrorCode::ResourceLimit,"one pending content send");return;}
+ // Controls are capped at 64 KiB by the codec; data has a fixed 29-byte
+ // envelope. Four frame sizes cover encoding temporaries, retained plaintext,
+ // encrypted output, and the in-flight socket buffer without double spending.
+ std::size_t frame=protocol::MaxControlFrame+4;
+ if(auto* data=std::get_if<protocol::Data>(&message)){
+  if(data->payload.size()>protocol::MaxDataPayload){reject(ErrorCode::InvalidInput,"data limit");return;}
+  frame=data->payload.size()+29;
+ }
+ auto charge=admission_.Buffers().Reserve(4*frame+64*1024);
+ if(!charge){reject(ErrorCode::ResourceLimit,"content send buffer budget");return;}
+ protocol::Bytes encoded;
+ try{encoded=codec_.Encode(message);}catch(const std::invalid_argument& e){reject(ErrorCode::InvalidInput,e.what());return;}
+ send_charge_=std::move(charge);send_done_=std::move(done);plaintext_.push_back(std::move(encoded));Pump();
+}
 void Session::Queue(protocol::Message message){plaintext_.push_back(codec_.Encode(message));}
+void Session::Deliver(const protocol::Message& message,std::shared_ptr<ByteBudget::Reservation> charge){
+ // The peer may receive our affirmative decision before the platform reports
+ // its write complete. Hold one charged frame until that existing pin gate
+ // succeeds, but never admit content while either consent is missing.
+ const bool awaiting_flush=hello_received_&&local_confirmed_&&peer_confirmed_&&decision_sent_&&!rejecting_;
+ if(!content_handler_||(!connected_&&!awaiting_flush)){Fail(ErrorCode::AuthenticationFailed,"content before authenticated handler");return;}
+ delivery_=std::make_shared<Delivery>(Delivery{message,std::move(charge)});
+ ++delivery_generation_;
+ if(connected_)DispatchDelivery();
+}
+void Session::DispatchDelivery(){
+ const auto generation=delivery_generation_;
+ std::shared_ptr<const protocol::Message> view(delivery_,&delivery_->message);
+ auto weak=weak_from_this();auto* queue=&scheduler_;
+ ContentAck ack=[weak,queue,generation](Result<void> result){queue->Post([weak,generation,result]{
+  if(auto self=weak.lock()){
+   if(self->closed_||!self->delivery_||self->delivery_generation_!=generation)return;
+   self->delivery_.reset();
+   if(!result.ok()){self->Close(result.error());return;}
+   self->Pump();
+  }
+ });};
+ // Always defer delivery; callbacks cannot reenter the OpenSSL pump.
+ auto handler=content_handler_;
+ scheduler_.Post([weak,generation,handler,view=std::move(view),ack=std::move(ack)]{
+  if(auto self=weak.lock())if(!self->closed_&&self->delivery_generation_==generation)handler(view,ack);
+ });
+}
+void Session::ReadFrames(){
+ while(!closed_&&!delivery_){
+  auto* destination=header_size_<4?frame_header_.data()+header_size_:read_frame_.data()+frame_size_;
+  const auto remaining=header_size_<4?4-header_size_:read_frame_.size()-frame_size_;
+  std::size_t count=0;ERR_clear_error();
+  const int rc=SSL_read_ex(ssl_,destination,std::min<std::size_t>(remaining,16384),&count);
+  const int error=rc==1?SSL_ERROR_NONE:SSL_get_error(ssl_,rc);
+  if(rc!=1){if(error==SSL_ERROR_WANT_READ||error==SSL_ERROR_WANT_WRITE)return;Fail(ErrorCode::NetworkLost,"TLS channel closed");return;}
+  if(header_size_<4){
+   header_size_+=count;if(header_size_<4)continue;
+   std::uint32_t length=0;for(auto byte:frame_header_)length=(length<<8)|byte;
+   if(!length||length>protocol::MaxDataPayload+25){Fail(ErrorCode::InvalidInput,"invalid frame length");return;}
+   // Includes incoming encoded frame, codec vector growth, decoded copies,
+   // immutable delivery, and bounded record staging. Charge BEFORE allocation.
+   read_charge_=admission_.Buffers().Reserve(6*(std::size_t(length)+4)+64*1024);
+   if(!read_charge_){Fail(ErrorCode::ResourceLimit,"content receive buffer budget");return;}
+   read_frame_.resize(std::size_t(length)+4);
+   std::copy(frame_header_.begin(),frame_header_.end(),read_frame_.begin());frame_size_=4;
+   continue;
+  }
+  frame_size_+=count;if(frame_size_!=read_frame_.size())continue;
+  auto parsed=codec_.Feed(read_frame_);
+  // Release retained parser/encoded capacities before the next frame.
+  codec_=protocol::FrameCodec{};protocol::Bytes{}.swap(read_frame_);header_size_=frame_size_=0;
+  if(!parsed.ok()){Close(parsed.error());return;}
+  if(parsed.value().size()!=1){Fail(ErrorCode::InvalidInput,"invalid frame count");return;}
+  auto charge=std::move(read_charge_);
+  const auto& message=parsed.value().front();
+  const auto type=protocol::TypeOf(message);
+  if(type>=protocol::MessageType::Offer&&type<=protocol::MessageType::Cancel)Deliver(message,std::move(charge));
+  else Message(message);
+ }
+}
 void Session::Pump(){
- if(closed_)return;
+ if(closed_||pumping_)return;
+ pumping_=true;struct PumpGuard {bool& flag;~PumpGuard(){flag=false;}} guard{pumping_};
  bool write_blocked=false;
  if(!handshake_){ERR_clear_error();const int rc=SSL_do_handshake(ssl_);const int error=rc==1?SSL_ERROR_NONE:SSL_get_error(ssl_,rc);
   if(rc==1){if(!VerifyPeer()){Fail(ErrorCode::AuthenticationFailed,"peer certificate rejected");return;}handshake_=true;Queue(local_);}
@@ -92,23 +212,20 @@ void Session::Pump(){
    if(rc==1){if(written!=frame.size()){Fail(ErrorCode::NetworkLost,"partial TLS frame write");return;}plaintext_.pop_front();}
    else if(error==SSL_ERROR_WANT_READ||error==SSL_ERROR_WANT_WRITE){write_blocked=true;break;}else{Fail(ErrorCode::NetworkLost,"TLS write failed");return;}
   }
-  for(;;){std::array<unsigned char,16384> buf{};std::size_t size=0;ERR_clear_error();const int rc=SSL_read_ex(ssl_,buf.data(),buf.size(),&size);const int error=rc==1?SSL_ERROR_NONE:SSL_get_error(ssl_,rc);
-   if(rc!=1){if(error==SSL_ERROR_WANT_READ||error==SSL_ERROR_WANT_WRITE)break;Fail(ErrorCode::NetworkLost,"TLS channel closed");return;}
-   auto parsed=codec_.Feed({buf.data(),size});if(!parsed.ok()){Close(parsed.error());return;}
-   for(const auto& message:parsed.value()){Message(message);if(closed_)return;}
-  }
+  ReadFrames();if(closed_)return;
  }
  // Bound queued ciphertext even if the platform stops completing writes.
  std::size_t queued=BIO_ctrl_pending(SSL_get_wbio(ssl_));for(const auto& b:ciphertext_)queued+=b.size();
- if(queued>MaxQueued){Fail(ErrorCode::ResourceLimit,"TLS output budget");return;}
+ if(queued>(send_charge_?protocol::MaxDataPayload+64*1024:MaxQueued)){Fail(ErrorCode::ResourceLimit,"TLS output budget");return;}
  while(BIO_ctrl_pending(SSL_get_wbio(ssl_))){protocol::Bytes b(std::min<std::size_t>(16384,BIO_ctrl_pending(SSL_get_wbio(ssl_))));const int n=BIO_read(SSL_get_wbio(ssl_),b.data(),static_cast<int>(b.size()));if(n<=0){Fail(ErrorCode::NetworkLost,"TLS output failed");return;}b.resize(n);ciphertext_.push_back(std::move(b));}
+ if(!TrimBio(SSL_get_wbio(ssl_))||!TrimBio(SSL_get_rbio(ssl_))){Fail(ErrorCode::ResourceLimit,"TLS buffer trim failed");return;}
  Flush();Read();
  // Messages read above may enqueue a decision after the write phase.
  if(!write_blocked&&!plaintext_.empty()){auto weak=weak_from_this();scheduler_.Post([weak]{if(auto self=weak.lock())self->Pump();});}
 }
 void Session::Read(){
- if(closed_||reading_)return;reading_=true;auto weak=weak_from_this();auto* scheduler=&scheduler_;
- socket_->Read(16384,[weak,scheduler](Result<protocol::Bytes> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_)return;self->reading_=false;if(!result.ok()){self->Close(result.error());return;}if(result.value().empty()){self->Fail(ErrorCode::NetworkLost,"socket EOF");return;}if(result.value().size()>16384||BIO_ctrl_pending(SSL_get_rbio(self->ssl_))+result.value().size()>MaxQueued){self->Fail(ErrorCode::ResourceLimit,"TLS input budget");return;}if(BIO_write(SSL_get_rbio(self->ssl_),result.value().data(),static_cast<int>(result.value().size()))!=static_cast<int>(result.value().size())){self->Fail(ErrorCode::NetworkLost,"TLS input failed");return;}self->Pump();}});});
+ if(closed_||reading_||delivery_)return;reading_=true;auto weak=weak_from_this();auto* scheduler=&scheduler_;
+ socket_->Read(16384,[weak,scheduler,charge=io_charge_](Result<protocol::Bytes> result){scheduler->Post([weak,result,charge]{if(auto self=weak.lock()){if(self->closed_)return;self->reading_=false;if(!result.ok()){self->Close(result.error());return;}if(result.value().empty()){self->Fail(ErrorCode::NetworkLost,"socket EOF");return;}if(result.value().size()>16384||BIO_ctrl_pending(SSL_get_rbio(self->ssl_))+result.value().size()>MaxQueued){self->Fail(ErrorCode::ResourceLimit,"TLS input budget");return;}if(BIO_write(SSL_get_rbio(self->ssl_),result.value().data(),static_cast<int>(result.value().size()))!=static_cast<int>(result.value().size())){self->Fail(ErrorCode::NetworkLost,"TLS input failed");return;}self->Pump();}});});
 }
 void Session::Flush(){
  if(closed_||writing_)return;
@@ -116,12 +233,13 @@ void Session::Flush(){
   if(plaintext_.empty()&&BIO_ctrl_pending(SSL_get_wbio(ssl_))==0&&decision_sent_){
    decision_flushed_=true;
    if(rejecting_){Fail(ErrorCode::PairingRejected,"user rejected pairing");return;}
-   MaybeConnected();
+   MaybeConnected();if(closed_)return;
   }
+  if(send_charge_&&plaintext_.empty()&&BIO_ctrl_pending(SSL_get_wbio(ssl_))==0)CompleteSend(Result<void>::Success());
   return;
  }
  writing_=true;auto weak=weak_from_this();auto* scheduler=&scheduler_;
- auto bytes=std::move(ciphertext_.front());ciphertext_.pop_front();socket_->Write(std::move(bytes),[weak,scheduler](Result<void> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_)return;self->writing_=false;if(!result.ok()){self->Close(result.error());return;}self->Flush();}});});
+ auto bytes=std::move(ciphertext_.front());ciphertext_.pop_front();socket_->Write(std::move(bytes),[weak,scheduler,charge=send_charge_?send_charge_:io_charge_](Result<void> result){scheduler->Post([weak,result,charge]{if(auto self=weak.lock()){if(self->closed_)return;self->writing_=false;if(!result.ok()){self->Close(result.error());return;}self->Flush();}});});
 }
 void Session::Message(const protocol::Message& message){
  if(auto* hello=std::get_if<protocol::Hello>(&message)){
@@ -141,8 +259,7 @@ void Session::Message(const protocol::Message& message){
   if(!hello_received_||decision_received_||connected_){Fail(ErrorCode::AuthenticationFailed,"out of order pairing decision");return;}decision_received_=true;
   if(!decision->confirmed){Fail(ErrorCode::PairingRejected,"peer rejected pairing");return;}peer_confirmed_=true;MaybeConnected();return;
  }
- // Content handoff belongs to Task 6. Until a handler is attached, reject it;
- // unconfirmed content can never escape through a session event.
+ // Content frames use Deliver; only negotiation messages belong here.
  Fail(ErrorCode::AuthenticationFailed,"unexpected content in session negotiation");
 }
 void Session::ConfirmPairing(OperationId request,bool confirmed){
@@ -153,7 +270,8 @@ void Session::ConfirmPairing(OperationId request,bool confirmed){
 void Session::MaybeConnected(){
  if(closed_||connected_||rejecting_||!decision_flushed_||!hello_received_||!local_confirmed_||!peer_confirmed_||!decision_sent_)return;
  if(!known_){auto pin=trust_.Pin(peer_.device_id,peer_.public_key_fingerprint);if(!pin.ok()){Close(pin.error());return;}}
- connected_=true;if(deadline_){scheduler_.Cancel(deadline_);deadline_=0;}if(pair_slot_){admission_.ReleasePair();pair_slot_=false;}
+ connected_=true;if(io_charge_)io_charge_->Shrink(ConnectedCharge);if(deadline_){scheduler_.Cancel(deadline_);deadline_=0;}if(pair_slot_){admission_.ReleasePair();pair_slot_=false;}
  Emit(SessionEvent::Kind::Connected);
+ if(delivery_)DispatchDelivery();
 }
 }
