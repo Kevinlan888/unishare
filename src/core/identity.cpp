@@ -32,7 +32,10 @@ Result<LocalIdentity> Validate(const IdentityMaterial& material) {
     X509_NAME_cmp(X509_get_subject_name(cert.get()),X509_get_issuer_name(cert.get()))!=0 ||
     X509_verify(cert.get(),key.get())!=1) return Result<LocalIdentity>::Failure(Invalid());
  Handle<EVP_PKEY_CTX,EVP_PKEY_CTX_free> ctx(EVP_PKEY_CTX_new_from_pkey(nullptr,key.get(),nullptr),EVP_PKEY_CTX_free);
- if(!ctx || EVP_PKEY_private_check(ctx.get())!=1) return Result<LocalIdentity>::Failure(Invalid());
+ // A valid scalar and matching certificate public point are insufficient:
+ // verify that the stored private scalar actually produces that public point.
+ if(!ctx || EVP_PKEY_private_check(ctx.get())!=1 || EVP_PKEY_pairwise_check(ctx.get())!=1)
+  return Result<LocalIdentity>::Failure(Invalid());
  LocalIdentity identity{material,{}};
  unsigned int size=0;
  // Hash the complete DER SubjectPublicKeyInfo (algorithm plus public key).

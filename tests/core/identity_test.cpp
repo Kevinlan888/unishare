@@ -4,6 +4,7 @@
 #include <iostream>
 #include <openssl/x509.h>
 #include <openssl/evp.h>
+#include <openssl/core_names.h>
 using namespace unishare;
 using namespace unishare::core;
 void Check(bool ok, int line) { if (!ok) { std::cerr << "Check failed at line " << line << '\n'; std::exit(1); } }
@@ -12,15 +13,51 @@ void Check(bool ok, int line) { if (!ok) { std::cerr << "Check failed at line " 
 struct Store : IIdentityStore {
  std::optional<IdentityMaterial> identity;
  std::vector<TrustedDevice> trust;
- bool fail_read=false, fail_write=false;
+ bool fail_read=false, fail_write=false, stale_absent_once=false;
  int identity_writes=0;
  ShareError error{ErrorCode::StorageFailed,"secure store unavailable",42};
- Result<std::optional<IdentityMaterial>> LoadIdentity() override { return fail_read ? Result<std::optional<IdentityMaterial>>::Failure(error) : Result<std::optional<IdentityMaterial>>::Success(identity); }
- Result<void> SaveIdentity(const IdentityMaterial& value) override { ++identity_writes; if(fail_write) return Result<void>::Failure(error); identity=value; return Result<void>::Success(); }
+ Result<std::optional<IdentityMaterial>> LoadIdentity() override { if(stale_absent_once) { stale_absent_once=false; return Result<std::optional<IdentityMaterial>>::Success(std::nullopt); } return fail_read ? Result<std::optional<IdentityMaterial>>::Failure(error) : Result<std::optional<IdentityMaterial>>::Success(identity); }
+ Result<void> SaveIdentity(const IdentityMaterial& value) override { ++identity_writes; if(fail_write || identity) return Result<void>::Failure(error); identity=value; return Result<void>::Success(); }
  Result<std::vector<TrustedDevice>> LoadTrust() override { return fail_read ? Result<std::vector<TrustedDevice>>::Failure(error) : Result<std::vector<TrustedDevice>>::Success(trust); }
  Result<void> SaveTrust(const TrustedDevice& value) override { if(fail_write) return Result<void>::Failure(error); for(auto& t:trust) if(t.id==value.id) return t.public_key_fingerprint==value.public_key_fingerprint ? Result<void>::Success() : Result<void>::Failure({ErrorCode::IdentityChanged,"changed",{}}); trust.push_back(value); return Result<void>::Success(); }
  Result<void> RemoveTrust(DeviceId id) override { if(fail_write) return Result<void>::Failure(error); trust.erase(std::remove_if(trust.begin(),trust.end(),[&](auto& t){return t.id==id;}),trust.end()); return Result<void>::Success(); }
 };
+void RejectInconsistentKey(const IdentityMaterial& original) {
+ Store corrupt;
+ corrupt.identity=original;
+ const auto* bytes=original.private_key.data();
+ auto* info=d2i_PKCS8_PRIV_KEY_INFO(nullptr,&bytes,static_cast<long>(original.private_key.size()));
+ CHECK(info);
+ auto* key=EVP_PKCS82PKEY(info);
+ CHECK(key);
+ BIGNUM* scalar=nullptr;
+ CHECK(EVP_PKEY_get_bn_param(key,OSSL_PKEY_PARAM_PRIV_KEY,&scalar)==1);
+ std::array<unsigned char,32> encoded_scalar{};
+ CHECK(BN_bn2binpad(scalar,encoded_scalar.data(),32)==32);
+ const unsigned char replacement=BN_is_one(scalar) ? 2 : 1;
+ BN_clear_free(scalar); EVP_PKEY_free(key); PKCS8_PRIV_KEY_INFO_free(info);
+ // Change only the scalar bytes in PKCS#8, retaining its public point and the
+ // original certificate. One and two are valid in-range P-256 scalars.
+ auto& der=corrupt.identity->private_key;
+ auto position=std::search(der.begin(),der.end(),encoded_scalar.begin(),encoded_scalar.end());
+ CHECK(position!=der.end());
+ CHECK(std::search(position+32,der.end(),encoded_scalar.begin(),encoded_scalar.end())==der.end());
+ std::fill(position,position+32,0); *(position+31)=replacement;
+ bytes=der.data();
+ info=d2i_PKCS8_PRIV_KEY_INFO(nullptr,&bytes,static_cast<long>(der.size()));
+ CHECK(info && bytes==der.data()+der.size());
+ key=EVP_PKCS82PKEY(info);
+ auto* ctx=EVP_PKEY_CTX_new_from_pkey(nullptr,key,nullptr);
+ CHECK(ctx && EVP_PKEY_private_check(ctx)==1 && EVP_PKEY_pairwise_check(ctx)==0);
+ const auto* cert_bytes=original.certificate.data();
+ auto* cert=d2i_X509(nullptr,&cert_bytes,static_cast<long>(original.certificate.size()));
+ CHECK(cert && X509_check_private_key(cert,key)==1);
+ X509_free(cert); EVP_PKEY_CTX_free(ctx); EVP_PKEY_free(key); PKCS8_PRIV_KEY_INFO_free(info);
+ const auto before=der;
+ const auto result=IdentityManager::LoadOrCreate(corrupt);
+ CHECK(!result.ok() && result.error().code==ErrorCode::StorageFailed);
+ CHECK(corrupt.identity_writes==0 && corrupt.identity->private_key==before);
+}
 int main() {
  Store store;
  auto first=IdentityManager::LoadOrCreate(store);
@@ -48,6 +85,16 @@ int main() {
  CHECK(second.value().material.certificate==first.value().material.certificate);
  CHECK(second.value().public_key_fingerprint==first.value().public_key_fingerprint);
  CHECK(store.identity_writes==1);
+ RejectInconsistentKey(first.value().material);
+ // Another SDK wins creation after this SDK observed absence. The losing
+ // initialization must surface the atomic write failure and preserve the winner.
+ Store racing;
+ racing.identity=first.value().material; racing.stale_absent_once=true;
+ auto loser=IdentityManager::LoadOrCreate(racing);
+ CHECK(!loser.ok() && loser.error().platform_error==42);
+ auto winner=IdentityManager::LoadOrCreate(racing);
+ CHECK(winner.ok() && winner.value().material.id==first.value().material.id);
+ CHECK(winner.value().material.private_key==first.value().material.private_key && racing.identity_writes==1);
  Store fresh;
  auto other=IdentityManager::LoadOrCreate(fresh);
  CHECK(other.ok() && other.value().material.id!=first.value().material.id);
