@@ -5,41 +5,60 @@ namespace unishare::abi::detail {
 void Emit(const std::weak_ptr<State> &weak, uint64_t generation,
           const usdk_event &event) {
   if (auto s = weak.lock()) {
-    std::lock_guard<std::recursive_mutex> l(s->gate);
-    if (s->alive && s->generation == generation && s->handler) {
-      try {
-        s->handler(s->context, &event);
-      } catch (...) {
-      }
+    std::lock_guard<std::recursive_mutex> delivery(s->callbacks);
+    usdk_event_handler handler;
+    void *context;
+    {
+      std::lock_guard<std::mutex> l(s->gate);
+      if (!s->alive || s->generation != generation || !s->handler)
+        return;
+      handler = s->handler;
+      context = s->context;
+    }
+    try {
+      handler(context, &event);
+    } catch (...) {
     }
   }
 }
 void InstallEvents(const std::shared_ptr<State> &s) {
-  std::lock_guard<std::recursive_mutex> l(s->gate);
-  if (!s->alive || !s->discovery)
-    return;
+  // Serialize registration changes, but do not hold the state mutex across
+  // synchronous core-queue setters. Command submission needs only that mutex.
+  std::lock_guard<std::recursive_mutex> delivery(s->callbacks);
+  std::shared_ptr<IDeviceDiscovery> discovery;
+  std::shared_ptr<IConnectionManager> connections;
+  std::shared_ptr<ITransferService> transfers;
+  uint64_t g;
+  {
+    std::lock_guard<std::mutex> l(s->gate);
+    if (!s->alive || !s->discovery)
+      return;
+    discovery = s->discovery;
+    connections = s->connections;
+    transfers = s->transfers;
+    g = s->generation;
+  }
   auto weak = std::weak_ptr<State>(s);
-  auto g = s->generation;
-  s->discovery->SetEventHandler([weak, g](DiscoveryEvent e) {
+  discovery->SetEventHandler([weak, g](DiscoveryEvent e) {
     DeviceView d(e.device);
     usdk_event v{};
     v.kind = 1 + static_cast<uint32_t>(e.kind);
     v.device = d.value;
     Emit(weak, g, v);
   });
-  s->discovery->SetErrorHandler([weak, g](ShareError e) {
+  discovery->SetErrorHandler([weak, g](ShareError e) {
     usdk_event v{};
     v.kind = USDK_EVENT_DISCOVERY_ERROR;
     v.error = Error(e);
     Emit(weak, g, v);
   });
-  s->discovery->SetStateHandler([weak, g](DiscoveryState e) {
+  discovery->SetStateHandler([weak, g](DiscoveryState e) {
     usdk_event v{};
     v.kind = USDK_EVENT_DISCOVERY_STATE;
     v.state = static_cast<uint32_t>(e);
     Emit(weak, g, v);
   });
-  s->connections->SetConnectionHandler([weak, g](ConnectionEvent e) {
+  connections->SetConnectionHandler([weak, g](ConnectionEvent e) {
     usdk_event v{};
     v.kind = USDK_EVENT_CONNECTION;
     v.device.id = View(e.device);
@@ -48,7 +67,7 @@ void InstallEvents(const std::shared_ptr<State> &s) {
       v.error = Error(*e.error);
     Emit(weak, g, v);
   });
-  s->connections->SetPairingRequestHandler([weak, g](PairingRequest e) {
+  connections->SetPairingRequestHandler([weak, g](PairingRequest e) {
     DeviceView d(e.device);
     usdk_event v{};
     v.kind = USDK_EVENT_PAIRING_REQUEST;
@@ -57,7 +76,7 @@ void InstallEvents(const std::shared_ptr<State> &s) {
     v.verification_code = View(e.verification_code);
     Emit(weak, g, v);
   });
-  s->connections->SetPairingResultHandler([weak, g](PairingResult e) {
+  connections->SetPairingResultHandler([weak, g](PairingResult e) {
     usdk_event v{};
     v.kind = USDK_EVENT_PAIRING_RESULT;
     v.request = e.id;
@@ -66,13 +85,13 @@ void InstallEvents(const std::shared_ptr<State> &s) {
       v.error = Error(e.result.error());
     Emit(weak, g, v);
   });
-  s->connections->SetIdentityChangedHandler([weak, g](DeviceId e) {
+  connections->SetIdentityChangedHandler([weak, g](DeviceId e) {
     usdk_event v{};
     v.kind = USDK_EVENT_IDENTITY_CHANGED;
     v.device.id = View(e);
     Emit(weak, g, v);
   });
-  s->transfers->SetIncomingOfferHandler([weak, g](IncomingOffer e) {
+  transfers->SetIncomingOfferHandler([weak, g](IncomingOffer e) {
     usdk_event v{};
     v.kind = USDK_EVENT_INCOMING_OFFER;
     v.request = e.request_id;
@@ -84,7 +103,7 @@ void InstallEvents(const std::shared_ptr<State> &s) {
     v.byte_count = e.byte_count;
     Emit(weak, g, v);
   });
-  s->transfers->SetProgressHandler([weak, g](TransferProgress e) {
+  transfers->SetProgressHandler([weak, g](TransferProgress e) {
     usdk_event v{};
     v.kind = USDK_EVENT_PROGRESS;
     v.transfer = View(e.id);
@@ -92,7 +111,7 @@ void InstallEvents(const std::shared_ptr<State> &s) {
     v.byte_count = e.total;
     Emit(weak, g, v);
   });
-  s->transfers->SetResultHandler([weak, g](TransferResult e) {
+  transfers->SetResultHandler([weak, g](TransferResult e) {
     usdk_event v{};
     v.kind = USDK_EVENT_TRANSFER_RESULT;
     v.transfer = View(e.id);
@@ -136,12 +155,15 @@ usdk_error USDK_CALL usdk_set_event_handler(usdk_handle h,
   return Boundary([&] {
     auto s = Registry<State>::Get(h);
     auto sdk = s->Core();
-    std::lock_guard<std::recursive_mutex> l(s->gate);
-    Require(s->alive);
-    Require(s->generation != UINT64_MAX, USDK_RESOURCE_LIMIT);
-    ++s->generation;
-    s->handler = cb;
-    s->context = ctx;
+    std::lock_guard<std::recursive_mutex> delivery(s->callbacks);
+    {
+      std::lock_guard<std::mutex> l(s->gate);
+      Require(s->alive);
+      Require(s->generation != UINT64_MAX, USDK_RESOURCE_LIMIT);
+      ++s->generation;
+      s->handler = cb;
+      s->context = ctx;
+    }
     InstallEvents(s);
   });
 }

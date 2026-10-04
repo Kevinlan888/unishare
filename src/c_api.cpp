@@ -150,7 +150,7 @@ usdk_error USDK_CALL usdk_create(usdk_platform_handle p, const usdk_config *c,
               auto t = sdk->Transfers();
               auto b = sdk->Clipboard();
               {
-                std::lock_guard<std::recursive_mutex> l(s->gate);
+                std::lock_guard<std::mutex> l(s->gate);
                 if (!s->alive)
                   return;
                 s->discovery = d;
@@ -195,11 +195,16 @@ usdk_error USDK_CALL usdk_destroy(usdk_handle h) {
     auto s = Registry<State>::Remove(h);
     std::shared_ptr<core::ShareSdk> sdk;
     {
-      std::lock_guard<std::recursive_mutex> l(s->gate);
+      std::lock_guard<std::mutex> l(s->gate);
       s->alive = false;
       s->handler = nullptr;
       s->context = nullptr;
       sdk = std::move(s->sdk);
+    }
+    // Invalidate first, then wait without blocking command-state access.
+    // Recursive acquisition permits destruction from the current callback.
+    {
+      std::lock_guard<std::recursive_mutex> delivery(s->callbacks);
     }
     sdk.reset();
   });

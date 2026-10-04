@@ -111,7 +111,10 @@ typedef struct usdk_device {
   uint64_t address_count;
 } usdk_device;
 /* Snapshot roots and all nested storage remain valid until usdk_free(root).
- * Only pass the root to free; free(NULL) succeeds; unknown/double free fails.
+ * Only pass a live root to free; free(NULL) succeeds. After free, the root and
+ * all nested pointers are invalid and must never be used or freed again.
+ * Detection of stale pointers is not guaranteed: allocator addresses may be
+ * reused. A pointer absent from the live allocation registry is rejected.
  */
 typedef struct usdk_devices {
   const usdk_device *items;

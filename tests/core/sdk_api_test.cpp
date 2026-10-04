@@ -1,8 +1,10 @@
 #include "unishare/c_api.h"
 #include "unishare/c_api_bridge.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <iostream>
 #include <system_error>
 #include <thread>
@@ -78,7 +80,8 @@ void Lifecycle() {
   CHECK(!usdk_get_devices(sdk, &devices).code);
   CHECK(devices && devices->count == 0);
   CHECK(!usdk_free(devices).code);
-  CHECK(usdk_free(devices).code == USDK_INVALID_INPUT);
+  int unregistered = 0;
+  CHECK(usdk_free(&unregistered).code == USDK_INVALID_INPUT);
   Completion start;
   CHECK(!usdk_start(sdk, &Completion::Done, &start, &op).code);
   Drain(q, [&] { return start.calls == 1; });
@@ -482,11 +485,110 @@ void StopAndWrite() {
   a.q->Drain();
   CHECK(read.calls == 1);
 }
+
+struct HeldCallback {
+  std::promise<void> entered, release;
+  std::shared_future<void> released = release.get_future().share();
+  std::atomic<int> calls{0};
+  void Hold() {
+    if (calls.fetch_add(1) == 0)
+      entered.set_value();
+    released.wait();
+  }
+  static void Result(void *ctx, const usdk_result *) {
+    static_cast<HeldCallback *>(ctx)->Hold();
+  }
+  static void Event(void *ctx, const usdk_event *) {
+    static_cast<HeldCallback *>(ctx)->Hold();
+  }
+};
+// A callback waiting for a submitting thread must not prevent that thread from
+// obtaining operation IDs, for either lifecycle or service commands.
+void ConcurrentSubmission(bool event) {
+  ApiPeer a;
+  HeldCallback held;
+  Completion trigger;
+  if (event) {
+    CHECK(!usdk_set_event_handler(a.sdk, HeldCallback::Event, &held).code);
+    CHECK(!usdk_stop(a.sdk, Completion::Done, &trigger, &a.op).code);
+  } else {
+    CHECK(!usdk_start(a.sdk, HeldCallback::Result, &held, &a.op).code);
+  }
+  a.Barrier();
+  auto entered = held.entered.get_future();
+  std::thread delivery([&] { a.q->Drain(); });
+  CHECK(entered.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  Completion start, read;
+  uint64_t start_id = 0, read_id = 0;
+  auto submitted = std::async(std::launch::async, [&] {
+    CHECK(!usdk_start(a.sdk, Completion::Done, &start, &start_id).code);
+    CHECK(!usdk_clipboard_read(a.sdk, Completion::Done, &read, &read_id).code);
+  });
+  CHECK(submitted.wait_for(std::chrono::seconds(2)) ==
+        std::future_status::ready);
+  submitted.get();
+  CHECK(start_id && read_id && start_id != read_id);
+  held.release.set_value();
+  delivery.join();
+  CHECK(!usdk_set_event_handler(a.sdk, nullptr, nullptr).code);
+  a.Barrier();
+  a.p->read(Result<ShareContent>::Success({}));
+  Drain(a.q, [&] { return start.calls && read.calls; });
+  CHECK(start.calls == 1 && read.calls == 1);
+}
+// Destroy/unregister must wait for active callback contexts while allowing
+// unrelated command submission. On return, further queued delivery is
+// suppressed.
+void ConcurrentRetirement(bool destroy) {
+  ApiPeer a;
+  HeldCallback held;
+  CHECK(!usdk_set_event_handler(a.sdk, HeldCallback::Event, &held).code);
+  Completion stopped;
+  CHECK(!usdk_stop(a.sdk, Completion::Done, &stopped, &a.op).code);
+  a.Barrier();
+  auto entered = held.entered.get_future();
+  std::thread delivery([&] { a.q->Drain(); });
+  CHECK(entered.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  std::promise<void> retiring;
+  auto began = retiring.get_future();
+  auto retired = std::async(std::launch::async, [&] {
+    retiring.set_value();
+    return destroy ? usdk_destroy(a.sdk)
+                   : usdk_set_event_handler(a.sdk, nullptr, nullptr);
+  });
+  began.wait();
+  CHECK(retired.wait_for(std::chrono::milliseconds(100)) ==
+        std::future_status::timeout);
+  held.release.set_value();
+  CHECK(retired.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  CHECK(!retired.get().code);
+  delivery.join();
+  CHECK(held.calls == 1);
+  if (destroy)
+    a.sdk = 0;
+  else {
+    Completion started;
+    CHECK(!usdk_start(a.sdk, Completion::Done, &started, &a.op).code);
+    Drain(a.q, [&] { return started.calls; });
+    CHECK(held.calls == 1);
+  }
+}
 int main(int argc, char **argv) {
   if (argc > 1 && std::string(argv[1]) == "exceptions") {
     Exceptions();
     return 0;
   }
+  if (argc > 1 && std::string(argv[1]) == "concurrent") {
+    ConcurrentSubmission(false);
+    ConcurrentSubmission(true);
+    ConcurrentRetirement(false);
+    ConcurrentRetirement(true);
+    return 0;
+  }
+  ConcurrentSubmission(false);
+  ConcurrentSubmission(true);
+  ConcurrentRetirement(false);
+  ConcurrentRetirement(true);
   Lifecycle();
   TlsFlow();
   Exceptions();

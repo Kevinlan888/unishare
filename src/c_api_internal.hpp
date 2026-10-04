@@ -69,7 +69,10 @@ struct PlatformOwner {
   std::shared_ptr<IPermissionAgent> permissions;
 };
 struct State {
-  std::recursive_mutex gate;
+  // Commands only take gate briefly. Application code runs under callbacks,
+  // never gate, so another thread may submit while a callback waits for it.
+  std::mutex gate;
+  std::recursive_mutex callbacks;
   bool alive = true;
   uint64_t generation = 0;
   usdk_event_handler handler = nullptr;
@@ -81,7 +84,7 @@ struct State {
   std::shared_ptr<ITransferService> transfers;
   std::shared_ptr<IClipboardService> clipboard;
   std::shared_ptr<core::ShareSdk> Core() {
-    std::lock_guard<std::recursive_mutex> l(gate);
+    std::lock_guard<std::mutex> l(gate);
     Require(alive);
     return sdk;
   }
@@ -157,9 +160,12 @@ ResultCallback<T> Callback(const std::shared_ptr<State> &s, uint64_t id,
     auto owner = weak.lock();
     if (!owner)
       return;
-    std::lock_guard<std::recursive_mutex> lock(owner->gate);
-    if (!owner->alive)
-      return;
+    std::lock_guard<std::recursive_mutex> delivery(owner->callbacks);
+    {
+      std::lock_guard<std::mutex> lock(owner->gate);
+      if (!owner->alive)
+        return;
+    }
     usdk_result out{};
     out.operation = id;
     if (!r.ok())
@@ -189,7 +195,7 @@ usdk_error Command(usdk_handle h, usdk_completion cb, void *ctx, uint64_t *out,
 template <class T>
 std::shared_ptr<T> Service(const std::shared_ptr<State> &s,
                            std::shared_ptr<T> State::*member) {
-  std::lock_guard<std::recursive_mutex> lock(s->gate);
+  std::lock_guard<std::mutex> lock(s->gate);
   Require(s->alive);
   auto value = s.get()->*member;
   Require(bool(value));
