@@ -1,5 +1,8 @@
 #pragma once
 #include "platform.hpp"
+#include "connection.hpp"
+#include "transfer.hpp"
+#include "clipboard.hpp"
 
 namespace unishare {
 enum class SdkState { Uninitialized, Initialized, Running, Stopped };
@@ -20,5 +23,9 @@ public:
     // are generated after shutdown; already queued callbacks may still execute.
     virtual OperationId Stop(ResultCallback<void>) = 0;
     virtual SdkState GetState() const = 0;
+    virtual std::shared_ptr<IDeviceDiscovery> Discovery() const = 0;
+    virtual std::shared_ptr<IConnectionManager> Connections() const = 0;
+    virtual std::shared_ptr<ITransferService> Transfers() const = 0;
+    virtual std::shared_ptr<IClipboardService> Clipboard() const = 0;
 };
 }

@@ -36,7 +36,7 @@ std::optional<DeviceInfo> Parse(const ServiceRecord& r) {
 bool Same(const DeviceInfo& a,const DeviceInfo& b){return a.id==b.id&&a.name==b.name&&a.platform==b.platform&&a.protocol.major==b.protocol.major&&a.protocol.minor==b.protocol.minor&&a.port==b.port&&a.addresses==b.addresses;}
 DeviceInfo Aggregate(const std::map<ServiceInstanceId,DeviceInfo>& records, DeviceInfo selected){std::set<std::string> addresses;for(auto& p:records)if(p.second.port==selected.port)addresses.insert(p.second.addresses.begin(),p.second.addresses.end());selected.addresses.assign(addresses.begin(),addresses.end());return selected;}
 }
-DeviceCatalog::DeviceCatalog(DeviceId self,std::function<TimePoint()> clock):self_(self),clock_(std::move(clock)){}
+DeviceCatalog::DeviceCatalog(DeviceId self,std::function<TimePoint()> clock,std::chrono::seconds debounce):self_(self),clock_(std::move(clock)),debounce_(debounce){}
 std::vector<DeviceEvent> DeviceCatalog::Apply(ServiceRecord record) {
  const auto now = clock_();
  const ServiceInstanceId key{record.instance, record.interface_id};
@@ -63,7 +63,8 @@ std::vector<DeviceEvent> DeviceCatalog::Apply(ServiceRecord record) {
  entry.visible = visible;
  return events;
 }
-std::vector<DeviceEvent> DeviceCatalog::Remove(ServiceInstanceId key,TimePoint now){std::vector<DeviceEvent> events;for(auto& p:devices_){auto& e=p.second;if(!e.records.erase(key))continue;if(e.records.empty())e.deadline=now+std::chrono::seconds(5);else {auto d=Aggregate(e.records,e.records.begin()->second);if(!Same(e.visible,d))events.push_back({DiscoveryEventKind::Updated,d});e.visible=d;}}return events;}
+std::vector<DeviceEvent> DeviceCatalog::Remove(ServiceInstanceId key,TimePoint now){std::vector<DeviceEvent> events;for(auto& p:devices_){auto& e=p.second;if(!e.records.erase(key))continue;if(e.records.empty())e.deadline=now+debounce_;else {auto d=Aggregate(e.records,e.records.begin()->second);if(!Same(e.visible,d))events.push_back({DiscoveryEventKind::Updated,d});e.visible=d;}}return events;}
+void DeviceCatalog::InvalidateNetwork(TimePoint now){for(auto& p:devices_){p.second.records.clear();if(!p.second.deadline)p.second.deadline=now+debounce_;}}
 std::vector<DeviceEvent> DeviceCatalog::Expire(TimePoint now){std::vector<DeviceEvent> events;for(auto i=devices_.begin();i!=devices_.end();)if(i->second.deadline&&now>=*i->second.deadline){events.push_back({DiscoveryEventKind::Offline,i->second.visible});i=devices_.erase(i);}else ++i;return events;}
 std::vector<DeviceInfo> DeviceCatalog::Snapshot()const{std::vector<DeviceInfo> out;for(auto& p:devices_)out.push_back(p.second.visible);return out;}
 }

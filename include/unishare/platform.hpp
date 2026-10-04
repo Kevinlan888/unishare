@@ -1,5 +1,6 @@
 #pragma once
 #include "types.hpp"
+#include "discovery.hpp"
 namespace unishare {
 class IExecutor { public: virtual ~IExecutor()=default; virtual void Post(std::function<void()> task)=0; };
 class IPermissionAgent { public: virtual ~IPermissionAgent()=default; virtual void RequestLocalNetwork(ResultCallback<void>)=0; };
@@ -8,8 +9,15 @@ class IStream { public: virtual ~IStream()=default; virtual OperationId Read(std
 // Read success with empty bytes is EOF. Write success means the entire buffer was sent. Each operation completes exactly once, including cancellation.
 class ISocket : public IStream { public: virtual std::string RemoteEndpoint() const=0; virtual void Cancel(OperationId)=0; };
 struct ServiceRecord { std::string instance,service_type,interface_id,srv_target; std::vector<std::uint8_t> txt_bytes; std::vector<std::pair<std::string,std::string>> txt; std::vector<std::string> addresses; std::uint16_t port=0; };
-class IDnsSd { public: virtual ~IDnsSd()=default; virtual OperationId Publish(ServiceRecord,ResultCallback<void>)=0; virtual OperationId Browse(std::string service_type,std::function<void(Result<ServiceRecord>)>)=0; virtual void Stop()=0; };
-class ISocketFactory { public: virtual ~ISocketFactory()=default; virtual OperationId Connect(std::string address,std::uint16_t port,ResultCallback<std::shared_ptr<ISocket>>)=0; virtual OperationId Listen(std::uint16_t port,std::function<void(Result<std::shared_ptr<ISocket>>)>)=0; virtual void Stop()=0; };
+class IDnsSd { public: virtual ~IDnsSd()=default; virtual OperationId Publish(ServiceRecord,ResultCallback<void>)=0; virtual OperationId Browse(std::string service_type,std::function<void(Result<ServiceRecord>)>)=0; virtual void Stop()=0;
+ // Adapters must implement removals, scoped to the original interface.
+ virtual OperationId BrowseEvents(std::string,std::function<void(Result<ServiceRecord>)> found,std::function<void(ServiceInstanceId)>) {found(Result<ServiceRecord>::Failure({ErrorCode::DiscoveryFailed,"DNS-SD removal notifications unsupported",{}}));return 0;}
+};
+class ISocketFactory { public: virtual ~ISocketFactory()=default; virtual OperationId Connect(std::string address,std::uint16_t port,ResultCallback<std::shared_ptr<ISocket>>)=0; virtual OperationId Listen(std::uint16_t port,std::function<void(Result<std::shared_ptr<ISocket>>)>)=0; virtual void Stop()=0;
+ // ready completes once after binding (0 requests an OS-selected port), before
+ // accepted sockets. Stop closes listeners and cancels outstanding adapter I/O.
+ virtual OperationId ListenBound(std::uint16_t,ResultCallback<std::uint16_t> ready,std::function<void(Result<std::shared_ptr<ISocket>>)>) {ready(Result<std::uint16_t>::Failure({ErrorCode::NetworkLost,"bound listener unsupported",{}}));return 0;}
+};
 // DER PKCS#8 private key and DER X.509 certificate. Private bytes are sensitive:
 // adapters protect them with DPAPI/Keystore/Keychain and never log them.
 struct IdentityMaterial { DeviceId id; std::vector<std::uint8_t> private_key,certificate; };
@@ -25,5 +33,10 @@ struct TrustedDevice { DeviceId id; std::array<std::uint8_t,32> public_key_finge
 class IIdentityStore { public: virtual ~IIdentityStore()=default; virtual Result<std::optional<IdentityMaterial>> LoadIdentity()=0; virtual Result<void> SaveIdentity(const IdentityMaterial&)=0; virtual Result<std::vector<TrustedDevice>> LoadTrust()=0; virtual Result<void> SaveTrust(const TrustedDevice&)=0; virtual Result<void> RemoveTrust(DeviceId)=0; };
 class IStreamFactory { public: virtual ~IStreamFactory()=default; virtual Result<std::shared_ptr<IStream>> OpenSource(std::string opaque_handle)=0; virtual Result<std::shared_ptr<IStream>> OpenDestination(std::string opaque_handle)=0; };
 class IPlatformClipboard { public: virtual ~IPlatformClipboard()=default; virtual OperationId Read(ResultCallback<ShareContent>)=0; virtual OperationId Write(ShareContent,ResultCallback<void>)=0; };
-class IPlatform { public: virtual ~IPlatform()=default; virtual IDnsSd& DnsSd()=0; virtual ISocketFactory& Sockets()=0; virtual IIdentityStore& IdentityStore()=0; virtual IStreamFactory& Streams()=0; virtual IPlatformClipboard& Clipboard()=0; virtual std::shared_ptr<IExecutor> DefaultExecutor()=0; };
+class IPlatform { public: virtual ~IPlatform()=default; virtual IDnsSd& DnsSd()=0; virtual ISocketFactory& Sockets()=0; virtual IIdentityStore& IdentityStore()=0; virtual IStreamFactory& Streams()=0; virtual IPlatformClipboard& Clipboard()=0; virtual std::shared_ptr<IExecutor> DefaultExecutor()=0;
+ virtual Platform PlatformKind() const=0;
+ // Thread-safe notification registration. An empty handler unregisters it;
+ // already in-flight callbacks may arrive and are ignored by the SDK generation.
+ virtual void SetNetworkChangeHandler(std::function<void()>)=0;
+};
 }
