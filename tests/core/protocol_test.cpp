@@ -33,4 +33,3 @@ int main() {
  Status limit{MessageType::Accept,o.transfer_id,std::string(65513,'x')};CHECK(c.Encode(limit).size()==MaxControlFrame+4);CHECK(bad(c.Encode(limit)).ok());limit.reason.push_back('x');threw=false;try{c.Encode(limit);}catch(const std::invalid_argument&){threw=true;}CHECK(threw);
  for(auto type:{1,2,3,4,6,7,8,9})CHECK(!bad(Bytes{0,0,0,1,static_cast<std::uint8_t>(type)}).ok());
 }
-

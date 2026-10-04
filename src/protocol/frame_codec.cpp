@@ -22,4 +22,3 @@ Result<std::vector<Message>> FrameCodec::Feed(ByteSpan input) {
  return Result<std::vector<Message>>::Success(std::move(messages));
 }
 }
-
