@@ -37,12 +37,31 @@ bool Same(const DeviceInfo& a,const DeviceInfo& b){return a.id==b.id&&a.name==b.
 DeviceInfo Aggregate(const std::map<ServiceInstanceId,DeviceInfo>& records, DeviceInfo selected){std::set<std::string> addresses;for(auto& p:records)if(p.second.port==selected.port)addresses.insert(p.second.addresses.begin(),p.second.addresses.end());selected.addresses.assign(addresses.begin(),addresses.end());return selected;}
 }
 DeviceCatalog::DeviceCatalog(DeviceId self,std::function<TimePoint()> clock):self_(self),clock_(std::move(clock)){}
-std::vector<DeviceEvent> DeviceCatalog::Apply(ServiceRecord r){
- auto parsed=Parse(r);if(!parsed||parsed->id==self_)return {}; auto now=clock_();parsed->last_seen=now;ServiceInstanceId key{r.instance,r.interface_id};
- // A service instance can change UUID; retain the old device during debounce.
- std::vector<DeviceEvent> events;for(auto& p:devices_)if(p.first!=parsed->id.ToString()&&p.second.records.erase(key)&&p.second.records.empty())p.second.deadline=now+std::chrono::seconds(5);
- auto inserted=devices_.try_emplace(parsed->id.ToString());auto& entry=inserted.first->second;entry.records[key]=*parsed;entry.deadline.reset();auto visible=Aggregate(entry.records,*parsed);
- if(inserted.second)events.push_back({DiscoveryEventKind::Online,visible});else if(!Same(entry.visible,visible))events.push_back({DiscoveryEventKind::Updated,visible});entry.visible=visible;return events;
+std::vector<DeviceEvent> DeviceCatalog::Apply(ServiceRecord record) {
+ const auto now = clock_();
+ const ServiceInstanceId key{record.instance, record.interface_id};
+ auto parsed = Parse(record);
+ if (!parsed || parsed->id == self_) return Remove(key, now);
+ parsed->last_seen = now;
+ const auto device_key = parsed->id.ToString();
+ std::vector<DeviceEvent> events;
+ // A replacement retires the old owner's reference through the normal removal
+ // path, including its surviving address update or final-reference debounce.
+ for (const auto& device : devices_) {
+  if (device.first != device_key && device.second.records.count(key)) {
+   events = Remove(key, now);
+   break;
+  }
+ }
+ auto inserted = devices_.try_emplace(device_key);
+ auto& entry = inserted.first->second;
+ entry.records[key] = *parsed;
+ entry.deadline.reset();
+ auto visible = Aggregate(entry.records, *parsed);
+ if (inserted.second) events.push_back({DiscoveryEventKind::Online, visible});
+ else if (!Same(entry.visible, visible)) events.push_back({DiscoveryEventKind::Updated, visible});
+ entry.visible = visible;
+ return events;
 }
 std::vector<DeviceEvent> DeviceCatalog::Remove(ServiceInstanceId key,TimePoint now){std::vector<DeviceEvent> events;for(auto& p:devices_){auto& e=p.second;if(!e.records.erase(key))continue;if(e.records.empty())e.deadline=now+std::chrono::seconds(5);else {auto d=Aggregate(e.records,e.records.begin()->second);if(!Same(e.visible,d))events.push_back({DiscoveryEventKind::Updated,d});e.visible=d;}}return events;}
 std::vector<DeviceEvent> DeviceCatalog::Expire(TimePoint now){std::vector<DeviceEvent> events;for(auto i=devices_.begin();i!=devices_.end();)if(i->second.deadline&&now>=*i->second.deadline){events.push_back({DiscoveryEventKind::Offline,i->second.visible});i=devices_.erase(i);}else ++i;return events;}
