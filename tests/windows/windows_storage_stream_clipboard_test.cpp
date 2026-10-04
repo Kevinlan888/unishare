@@ -18,6 +18,26 @@ struct MemoryClipboard : windows::ClipboardBoundary {
  Result<void> Write(std::vector<windows::ClipboardData> d) override {if(denied)return Result<void>::Failure({ErrorCode::PermissionDenied,"clipboard busy",ERROR_ACCESS_DENIED});data=std::move(d);return Result<void>::Success();}
 };
 template<class T,class F> Result<T> Await(F start){std::promise<Result<T>> p;auto f=p.get_future();start([&](auto r){p.set_value(std::move(r));});CHECK(f.wait_for(std::chrono::seconds(5))==std::future_status::ready);return f.get();}
+// Emulates an OS request whose submission is delayed until after Cancel(nullptr).
+// A specific cancellation is the only event that completes the submitted request.
+struct DelayedSubmission final : windows::OverlappedFileIo {
+ std::promise<void> entering,proceed,cancelled;
+ std::shared_future<void> proceedFuture=proceed.get_future().share();
+ std::shared_future<void> cancelFuture=cancelled.get_future().share();
+ std::atomic<bool> submitted{false},completedAfterCancel{false};
+ std::atomic<int> specificCancels{0};
+ BOOL Submit(){entering.set_value();proceedFuture.wait();submitted=true;SetLastError(ERROR_IO_PENDING);return FALSE;}
+ BOOL Read(HANDLE,void*,DWORD,DWORD*,OVERLAPPED*) override{return Submit();}
+ BOOL Write(HANDLE,const void*,DWORD,DWORD*,OVERLAPPED*) override{return Submit();}
+ BOOL Cancel(HANDLE,OVERLAPPED* ov) override {
+  if(submitted&&ov){++specificCancels;cancelled.set_value();return TRUE;}
+  SetLastError(ERROR_NOT_FOUND);return FALSE;
+ }
+ BOOL Complete(HANDLE,OVERLAPPED*,DWORD* bytes) override {
+  completedAfterCancel=cancelFuture.wait_for(std::chrono::milliseconds(500))==std::future_status::ready;
+  *bytes=0;SetLastError(completedAfterCancel?ERROR_OPERATION_ABORTED:ERROR_TIMEOUT);return FALSE;
+ }
+};
 int main(){try {
  auto root=fs::current_path()/ ("windows-port-test-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));
  CHECK(!fs::exists(root)); fs::create_directory(root);
@@ -53,6 +73,21 @@ int main(){try {
  blocked=CreateFileW((root/L"identity"/L"state.dpapi").c_str(),GENERIC_READ,0,nullptr,OPEN_EXISTING,0,nullptr);CHECK(blocked!=INVALID_HANDLE_VALUE);auto deniedRead=store.LoadIdentity();CHECK(!deniedRead.ok());CHECK(deniedRead.error().platform_error==ERROR_SHARING_VIOLATION);CloseHandle(blocked);
  {HANDLE corruptFile=CreateFileW((root/L"identity"/L"state.dpapi").c_str(),GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);CHECK(corruptFile!=INVALID_HANDLE_VALUE);DWORD n=0;CHECK(WriteFile(corruptFile,"not a DPAPI blob",16,&n,nullptr));CHECK(SetEndOfFile(corruptFile));CloseHandle(corruptFile);}
  auto corrupt=store.LoadIdentity();CHECK(!corrupt.ok());CHECK(corrupt.error().platform_error.has_value());CHECK(!store.LoadTrust().ok());CHECK(!store.SaveIdentity(m).ok());
+ for(bool destination:{false,true}){
+  auto native=std::make_shared<DelayedSubmission>();windows::StreamFactory raceFiles(native);
+  auto racePath=root/(destination?L"abort-submit-write.bin":L"abort-submit-read.bin");
+  HANDLE fd=CreateFileW(racePath.c_str(),GENERIC_READ|GENERIC_WRITE|DELETE,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,CREATE_NEW,0,nullptr);CHECK(fd!=INVALID_HANDLE_VALUE);
+  auto registration=destination?raceFiles.RegisterDestination(fd):raceFiles.RegisterSource(fd);CloseHandle(fd);CHECK(registration.ok());
+  auto stream=destination?raceFiles.OpenDestination(registration.value()).value():raceFiles.OpenSource(registration.value()).value();
+  auto entered=native->entering.get_future();std::promise<void> callback;auto finished=callback.get_future();std::atomic<int> calls{0};std::atomic<bool> wasCancelled{false};
+  if(destination)stream->Write({42},[&](auto result){++calls;wasCancelled=!result.ok()&&result.error().code==ErrorCode::Cancelled;callback.set_value();});
+  else stream->Read(1,[&](auto result){++calls;wasCancelled=!result.ok()&&result.error().code==ErrorCode::Cancelled;callback.set_value();});
+  CHECK(entered.wait_for(std::chrono::seconds(5))==std::future_status::ready);
+  stream->AbortAndCleanup();native->proceed.set_value();
+  CHECK(finished.wait_for(std::chrono::seconds(5))==std::future_status::ready);
+  CHECK(native->completedAfterCancel);CHECK(native->specificCancels==1);CHECK(calls==1);CHECK(wasCancelled);
+  CHECK(fs::exists(racePath)!=destination);
+ }
  windows::StreamFactory files;
  CHECK(!files.OpenDestination("../../escape.txt").ok());
  auto stage=root/L"stage.bin";
@@ -63,6 +98,13 @@ int main(){try {
  stream->Write({0,1,2,255},[&](auto r){wrote.set_value(r);});CHECK(writeFuture.wait_for(std::chrono::seconds(5))==std::future_status::ready);CHECK(writeFuture.get().ok());stream->Close();
  {std::ifstream in(stage,std::ios::binary);std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)),{});CHECK(bytes==std::vector<unsigned char>({0,1,2,255}));}
  h=CreateFileW(stage.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);CHECK(h!=INVALID_HANDLE_VALUE);
+ windows::StreamFactory foreignA,foreignB;
+ auto foreignTokenA=foreignA.RegisterSource(h),foreignTokenB=foreignB.RegisterSource(h);
+ CHECK(foreignTokenA.ok()&&foreignTokenB.ok());
+ CHECK(!foreignB.OpenSource(foreignTokenA.value()).ok());
+ CHECK(!foreignA.OpenSource(foreignTokenB.value()).ok());
+ CHECK(foreignA.OpenSource(foreignTokenA.value()).ok());
+ CHECK(foreignB.OpenSource(foreignTokenB.value()).ok());
  auto sourceToken=files.RegisterSource(h);CloseHandle(h);CHECK(sourceToken.ok());auto source=files.OpenSource(sourceToken.value());CHECK(source.ok());
  std::promise<Result<std::vector<std::uint8_t>>> read;auto readFuture=read.get_future();source.value()->Read(8,[&](auto r){read.set_value(r);});CHECK(readFuture.get().value()==std::vector<std::uint8_t>({0,1,2,255}));
  std::promise<Result<std::vector<std::uint8_t>>> eof;auto eofFuture=eof.get_future();source.value()->Read(8,[&](auto r){eof.set_value(r);});CHECK(eofFuture.get().value().empty());CHECK(Await<std::vector<std::uint8_t>>([&](auto cb){source.value()->Read(5*1024*1024,cb);}).ok());source.value()->Close();
@@ -86,6 +128,11 @@ int main(){try {
  CHECK(Await<void>([&](auto cb){clipboard.Write(text,cb);}).ok());
  auto clipboardText=Await<ShareContent>([&](auto cb){clipboard.Read(cb);});CHECK(clipboardText.ok());CHECK(clipboardText.value().text==text.text);
  CHECK(memory->data.size()==1);CHECK(memory->data[0].format==windows::ClipboardFormat::UnicodeText);CHECK(memory->data[0].bytes.size()==18);
+ auto previousClipboard=memory->data[0].bytes;
+ text.text.assign(50*1024*1024,'a'); // UTF-16 plus terminator exceeds 100 MiB.
+ auto tooLargeText=Await<void>([&](auto cb){clipboard.Write(text,cb);});
+ CHECK(!tooLargeText.ok());CHECK(tooLargeText.error().code==ErrorCode::InvalidInput);
+ CHECK(memory->data[0].bytes==previousClipboard);
  text.text="\xff";CHECK(!Await<void>([&](auto cb){clipboard.Write(text,cb);}).ok());
  memory->denied=true;auto denied=Await<ShareContent>([&](auto cb){clipboard.Read(cb);});CHECK(!denied.ok());CHECK(denied.error().platform_error==ERROR_ACCESS_DENIED);memory->denied=false;
  memory->data={{windows::ClipboardFormat::UnicodeText,{65,0}}};CHECK(!Await<ShareContent>([&](auto cb){clipboard.Read(cb);}).ok());

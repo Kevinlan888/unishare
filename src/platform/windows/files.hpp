@@ -4,6 +4,16 @@
 #include <mutex>
 #include <map>
 namespace unishare::windows {
+// Native I/O boundary; OVERLAPPED and buffers remain owned by the stream until
+// Complete returns. Cancellation may race submission, and is never completion.
+class OverlappedFileIo {
+public:
+ virtual ~OverlappedFileIo()=default;
+ virtual BOOL Read(HANDLE,void*,DWORD,DWORD*,OVERLAPPED*);
+ virtual BOOL Write(HANDLE,const void*,DWORD,DWORD*,OVERLAPPED*);
+ virtual BOOL Complete(HANDLE,OVERLAPPED*,DWORD*);
+ virtual BOOL Cancel(HANDLE,OVERLAPPED*);
+};
 // Registration reopens a disk-file HANDLE into an opaque, single-use token.
 // Caller closes its original handle after registration and must not perform I/O
 // on it while the token/stream lives. Destination is an empty staging file opened
@@ -16,10 +26,12 @@ namespace unishare::windows {
 // cleanup error after all operations already completed; pending callbacks can.
 class StreamFactory final : public IStreamFactory {
  struct Entry { HANDLE handle;bool destination; };
- std::mutex mutex_;std::map<std::string,Entry> entries_;std::uint64_t next_=0;
+ std::mutex mutex_;std::map<std::string,Entry> entries_;
+ std::shared_ptr<OverlappedFileIo> io_;
  Result<std::string> Register(HANDLE,bool);
  Result<std::shared_ptr<IStream>> Open(const std::string&,bool);
 public:
+ explicit StreamFactory(std::shared_ptr<OverlappedFileIo> io = {});
  ~StreamFactory();
  Result<std::string> RegisterSource(HANDLE h){return Register(h,false);}
  Result<std::string> RegisterDestination(HANDLE h){return Register(h,true);}

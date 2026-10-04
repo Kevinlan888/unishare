@@ -44,12 +44,38 @@ Pixels DecodeDib(const Bytes& bytes){
  return p;
 }
 Bytes EncodeText(const std::string& text){
- if(text.size()>Limit||text.find('\0')!=std::string::npos)Invalid("invalid clipboard text");
- int n=text.empty()?0:MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);if(!text.empty()&&!n)Invalid("invalid UTF-8 text");std::wstring wide(n,L'\0');if(n&&!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),wide.data(),n))Invalid("invalid UTF-8 text");Bytes bytes((n+1)*sizeof(wchar_t));memcpy(bytes.data(),wide.data(),n*sizeof(wchar_t));return bytes;
+ if(text.size()>Limit||text.find('\0')!=std::string::npos)
+  Invalid("invalid clipboard text");
+ int n=text.empty()?0:MultiByteToWideChar(
+  CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);
+ if(!text.empty()&&!n)Invalid("invalid UTF-8 text");
+ // The terminator is part of the same byte limit enforced by DecodeText.
+ const auto encodedSize=(static_cast<std::size_t>(n)+1)*sizeof(wchar_t);
+ if(encodedSize>Limit)Invalid("UTF-16 clipboard text exceeds limit");
+ std::wstring wide(n,L'\0');
+ if(n&&!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),
+                           static_cast<int>(text.size()),wide.data(),n))
+  Invalid("invalid UTF-8 text");
+ Bytes bytes(encodedSize);
+ memcpy(bytes.data(),wide.data(),n*sizeof(wchar_t));
+ return bytes;
 }
 std::string DecodeText(const Bytes& bytes){
- if(bytes.size()<2||bytes.size()%2||bytes.size()>Limit)Invalid("invalid UTF-16 clipboard buffer");std::wstring wide(bytes.size()/2,L'\0');memcpy(wide.data(),bytes.data(),bytes.size());auto end=wide.find(L'\0');if(end==std::wstring::npos)Invalid("unterminated UTF-16 text");if(end==0)return {};
- int n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,wide.data(),static_cast<int>(end),nullptr,0,nullptr,nullptr);if(!n)Invalid("invalid UTF-16 text");std::string text(n,'\0');if(!WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,wide.data(),static_cast<int>(end),text.data(),n,nullptr,nullptr))Invalid("invalid UTF-16 text");return text;
+ if(bytes.size()<2||bytes.size()%2||bytes.size()>Limit)
+  Invalid("invalid UTF-16 clipboard buffer");
+ std::wstring wide(bytes.size()/2,L'\0');
+ memcpy(wide.data(),bytes.data(),bytes.size());
+ auto end=wide.find(L'\0');
+ if(end==std::wstring::npos)Invalid("unterminated UTF-16 text");
+ if(end==0)return {};
+ int n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,wide.data(),
+                           static_cast<int>(end),nullptr,0,nullptr,nullptr);
+ if(!n)Invalid("invalid UTF-16 text");
+ std::string text(n,'\0');
+ if(!WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,wide.data(),
+                         static_cast<int>(end),text.data(),n,nullptr,nullptr))
+  Invalid("invalid UTF-16 text");
+ return text;
 }
 UINT NativeFormat(ClipboardFormat f){switch(f){case ClipboardFormat::UnicodeText:return CF_UNICODETEXT;case ClipboardFormat::DibV5:return CF_DIBV5;case ClipboardFormat::Dib:return CF_DIB;case ClipboardFormat::Png:return RegisterClipboardFormatW(L"PNG");case ClipboardFormat::Jpeg:return RegisterClipboardFormatW(L"JFIF");}return 0;}
 [[noreturn]] void ClipboardError(const char* what,DWORD code=GetLastError()){throw WinError{{ErrorCode::PermissionDenied,what,code}};}

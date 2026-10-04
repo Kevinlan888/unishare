@@ -63,15 +63,45 @@ State Load(const std::filesystem::path& root){
  for(std::uint32_t i=0;i<count;i++){TrustedDevice t;r.take(t.id.bytes.data(),16);r.take(t.public_key_fingerprint.data(),32);s.trust.push_back(t);}if(r.pos!=b.size())Fail("trailing identity data",ERROR_INVALID_DATA);SecureZeroMemory(b.data(),b.size());return s;
 }
 void Save(const std::filesystem::path& root,const State& s,Security& security){
- Bytes b; // fixed version magic, followed by bounded record fields
- b={0x55,0x49,0x53,0x31};Append32(b,s.identity?1:0);
- if(s.identity){const auto& m=*s.identity;b.insert(b.end(),m.id.bytes.begin(),m.id.bytes.end());Append32(b,m.private_key.size());b.insert(b.end(),m.private_key.begin(),m.private_key.end());Append32(b,m.certificate.size());b.insert(b.end(),m.certificate.begin(),m.certificate.end());}
- Append32(b,s.trust.size());for(const auto& t:s.trust){b.insert(b.end(),t.id.bytes.begin(),t.id.bytes.end());b.insert(b.end(),t.public_key_fingerprint.begin(),t.public_key_fingerprint.end());}
- if(b.size()>MaxRecord-1024)Fail("identity record too large",ERROR_INVALID_DATA);b=Protect(std::move(b),false);
- GUID id;if(FAILED(CoCreateGuid(&id)))Fail("create temporary record name",ERROR_GEN_FAILURE);wchar_t name[40];StringFromGUID2(id,name,40);auto temp=root/(std::wstring(name)+L".tmp");
- Handle file(CreateFileW(temp.c_str(),GENERIC_WRITE,0,&security.attributes,CREATE_NEW,FILE_ATTRIBUTE_HIDDEN|FILE_FLAG_WRITE_THROUGH,nullptr));if(file.value==INVALID_HANDLE_VALUE)Fail("create identity staging file");
- try {DWORD n=0;if(!WriteFile(file.value,b.data(),static_cast<DWORD>(b.size()),&n,nullptr))Fail("write identity record");if(n!=b.size())Fail("short identity write",ERROR_WRITE_FAULT);if(!FlushFileBuffers(file.value))Fail("flush identity record");CloseHandle(file.release());if(!MoveFileExW(temp.c_str(),(root/L"state.dpapi").c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))Fail("commit identity record");}
- catch(...){CloseHandle(file.release());DeleteFileW(temp.c_str());throw;}
+ Bytes b={0x55,0x49,0x53,0x31}; // version magic, then bounded record fields
+ Append32(b,s.identity?1:0);
+ if(s.identity){
+  const auto& m=*s.identity;
+  b.insert(b.end(),m.id.bytes.begin(),m.id.bytes.end());
+  Append32(b,m.private_key.size());
+  b.insert(b.end(),m.private_key.begin(),m.private_key.end());
+  Append32(b,m.certificate.size());
+  b.insert(b.end(),m.certificate.begin(),m.certificate.end());
+ }
+ Append32(b,s.trust.size());
+ for(const auto& t:s.trust){
+  b.insert(b.end(),t.id.bytes.begin(),t.id.bytes.end());
+  b.insert(b.end(),t.public_key_fingerprint.begin(),t.public_key_fingerprint.end());
+ }
+ if(b.size()>MaxRecord-1024)Fail("identity record too large",ERROR_INVALID_DATA);
+ b=Protect(std::move(b),false);
+ GUID id;
+ if(FAILED(CoCreateGuid(&id)))Fail("create temporary record name",ERROR_GEN_FAILURE);
+ wchar_t name[40];StringFromGUID2(id,name,40);
+ auto temp=root/(std::wstring(name)+L".tmp");
+ Handle file(CreateFileW(temp.c_str(),GENERIC_WRITE,0,&security.attributes,
+                         CREATE_NEW,FILE_ATTRIBUTE_HIDDEN|FILE_FLAG_WRITE_THROUGH,nullptr));
+ if(file.value==INVALID_HANDLE_VALUE)Fail("create identity staging file");
+ try {
+  DWORD n=0;
+  if(!WriteFile(file.value,b.data(),static_cast<DWORD>(b.size()),&n,nullptr))
+   Fail("write identity record");
+  if(n!=b.size())Fail("short identity write",ERROR_WRITE_FAULT);
+  if(!FlushFileBuffers(file.value))Fail("flush identity record");
+  CloseHandle(file.release());
+  if(!MoveFileExW(temp.c_str(),(root/L"state.dpapi").c_str(),
+                   MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+   Fail("commit identity record");
+ }catch(...){
+  CloseHandle(file.release());
+  DeleteFileW(temp.c_str());
+  throw;
+ }
 }
 template<class T,class F> Result<T> Guard(F f){try{return f();}catch(const WinError& e){return Result<T>::Failure(e.error);}}
 }
