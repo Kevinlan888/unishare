@@ -1,0 +1,1 @@
+{"version":3,"configurePresets":[{"name":"default","displayName":"Default SDK build","binaryDir":"${sourceDir}/build","cacheVariables":{"BUILD_TESTING":"ON"}}],"buildPresets":[{"name":"default","configurePreset":"default","configuration":"Debug"}],"testPresets":[{"name":"default","configurePreset":"default","configuration":"Debug","output":{"outputOnFailure":true}}]}

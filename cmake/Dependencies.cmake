@@ -1,0 +1,8 @@
+find_package(OpenSSL 3 QUIET)
+if(NOT OpenSSL_FOUND)
+ message(FATAL_ERROR "UniShare requires OpenSSL >= 3. Install it and set OPENSSL_ROOT_DIR or CMAKE_PREFIX_PATH; dependencies are never downloaded automatically.")
+endif()
+find_package(Protobuf 3.21 QUIET)
+if(NOT Protobuf_FOUND)
+ message(FATAL_ERROR "UniShare requires Protobuf >= 3.21. Install it and set Protobuf_ROOT or CMAKE_PREFIX_PATH; dependencies are never downloaded automatically.")
+endif()
