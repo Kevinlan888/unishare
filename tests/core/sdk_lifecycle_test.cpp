@@ -149,6 +149,34 @@ void InitializeQueuesConcurrentConfigurations() {
  CHECK(sdk.Runtime()->callbacks==(success_a?executor_a:executor_b));
 }
 
+void LifecycleDuringInitializeUsesConfiguredExecutor() {
+ PlatformFake platform;
+ ShareSdk sdk(platform);
+ auto executor=std::make_shared<Queue>();
+ std::promise<void> reading,release;
+ auto release_future=release.get_future().share();
+ platform.store.before_load=[&]{reading.set_value();release_future.wait();};
+ SdkConfig config;config.device_name="pending initialization";config.callback_executor=executor;
+ // Mark each completion by which queue is actually draining it. The default
+ // worker is drained before the configured executor, so no marker races occur.
+ int draining=0,init_route=0,start_route=0,stop_route=0;
+ sdk.Initialize(config,[&](auto result){CHECK(result.ok());init_route=draining;});
+ reading.get_future().wait();
+ auto start=sdk.Start([&](auto result){
+  CHECK(!result.ok()&&result.error().code==ErrorCode::Cancelled);
+  start_route=draining;
+ });
+ auto stop=sdk.Stop([&](auto result){CHECK(result.ok());stop_route=draining;});
+ CHECK(start && stop && start!=stop);
+ release.set_value();
+ Barrier(sdk);
+ sdk.Runtime()->default_callbacks->Invoke([]{});
+ draining=1;
+ executor->Drain();
+ CHECK(init_route==1 && start_route==1 && stop_route==1);
+ CHECK(sdk.GetState()==SdkState::Stopped);
+}
+
 void RecoveryExpiresPeers(bool fail) {
  PlatformFake platform;
  ShareSdk sdk(platform);
@@ -189,6 +217,7 @@ int main(int argc,char** argv) {
   if(test=="init-executors")InitializePreservesRequestedExecutors();
   else if(test=="init-return")InitializeReturnsWhileStorageBlocked();
   else if(test=="init-concurrent")InitializeQueuesConcurrentConfigurations();
+  else if(test=="pending-init-lifecycle")LifecycleDuringInitializeUsesConfiguredExecutor();
   else if(test=="recovery-delayed")RecoveryExpiresPeers(false);
   else if(test=="recovery-failed")RecoveryExpiresPeers(true);
   else CHECK(false);
@@ -197,6 +226,7 @@ int main(int argc,char** argv) {
  InitializePreservesRequestedExecutors();
  InitializeReturnsWhileStorageBlocked();
  InitializeQueuesConcurrentConfigurations();
+ LifecycleDuringInitializeUsesConfiguredExecutor();
  RecoveryExpiresPeers(false);
  RecoveryExpiresPeers(true);
  PlatformFake p;auto q=std::make_shared<Queue>();SdkConfig config;config.device_name="phone";config.callback_executor=q;
