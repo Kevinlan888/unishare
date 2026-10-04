@@ -31,7 +31,7 @@ bool NumericAddress(const std::string& input,std::uint16_t port,sockaddr_storage
 }
 }
 struct SocketFactory::State : std::enable_shared_from_this<State> {
- struct ReadOp {OperationId id;std::size_t count;ResultCallback<std::vector<std::uint8_t>> callback;};
+ struct ReadOp {OperationId id;std::size_t count;ResultCallback<std::vector<std::uint8_t>> callback;std::vector<std::uint8_t> bytes;};
  struct WriteOp {OperationId id;std::vector<std::uint8_t> bytes;std::size_t offset=0;ResultCallback<void> callback;};
  struct Endpoint {
   SOCKET socket=INVALID_SOCKET;bool closed=false;std::string remote;
@@ -112,9 +112,15 @@ struct SocketFactory::State : std::enable_shared_from_this<State> {
    auto child=Make(accepted);child->remote=Address(peer);e->accepting(Result<std::shared_ptr<ISocket>>::Success(std::make_shared<Socket>(shared_from_this(),child)));return;
   }
   if(!e->reads.empty()){
-   auto& op=e->reads.front();std::vector<std::uint8_t> bytes(op.count);int count=recv(e->socket,reinterpret_cast<char*>(bytes.data()),static_cast<int>(bytes.size()),0);
+   auto& op=e->reads.front();
+   if(op.bytes.empty())op.bytes.resize(op.count);
+   int count=recv(e->socket,reinterpret_cast<char*>(op.bytes.data()),static_cast<int>(op.bytes.size()),0);
    int error=count<0?WSAGetLastError():0;
-   if(error!=WSAEWOULDBLOCK){auto cb=std::move(op.callback);e->reads.pop_front();if(error)cb(Result<std::vector<std::uint8_t>>::Failure(NetError("receive",error)));else{bytes.resize(count);cb(Result<std::vector<std::uint8_t>>::Success(std::move(bytes)));}}
+   if(error!=WSAEWOULDBLOCK){
+    auto cb=std::move(op.callback);auto bytes=std::move(op.bytes);e->reads.pop_front();
+    if(error)cb(Result<std::vector<std::uint8_t>>::Failure(NetError("receive",error)));
+    else{bytes.resize(count);cb(Result<std::vector<std::uint8_t>>::Success(std::move(bytes)));}
+   }
   }
   if(!e->writes.empty()){
    auto& op=e->writes.front();int error=0;

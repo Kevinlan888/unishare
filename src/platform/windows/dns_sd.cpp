@@ -119,7 +119,9 @@ struct DnsSd::State : std::enable_shared_from_this<State> {
   });
  }
  void Resolve(const std::shared_ptr<Context>& browser,const std::string& name,std::uint64_t revision){
-  auto c=Make(Kind::Resolve);c->browser=browser;c->interfaceIndex=browser->interfaceIndex;c->name=Wide(name);c->revision=revision;
+  std::wstring query;
+  try{query=Wide(name);}catch(const ShareError& error){browser->found(Result<ServiceRecord>::Failure(error));return;}
+  auto c=Make(Kind::Resolve);c->browser=browser;c->interfaceIndex=browser->interfaceIndex;c->name=std::move(query);c->revision=revision;
   c->resolve={DNS_QUERY_REQUEST_VERSION1,c->interfaceIndex,c->name.data(),Resolved,c.get()};
   auto status=api->Resolve(&c->resolve,&c->cancel);
   if(status!=DNS_REQUEST_PENDING){browser->found(Result<ServiceRecord>::Failure(DnsError("begin resolve",status)));Finish(c);}

@@ -20,6 +20,11 @@ struct NetworkChange::State : std::enable_shared_from_this<State> {
   if(stopped.load()){ready(Result<void>::Failure({ErrorCode::Cancelled,"network watch cancelled",ERROR_CANCELLED}));return;}
   nativeOwner=shared_from_this();auto status=api->Register(Changed,this,&handle);
   if(status){handle=nullptr;nativeOwner.reset();ready(Result<void>::Failure({ErrorCode::NetworkLost,"register interface changes",status}));return;}
+  if(stopped.load()){
+   Cancel();
+   ready(Result<void>::Failure({ErrorCode::Cancelled,"network watch cancelled",ERROR_CANCELLED}));
+   return;
+  }
   ready(Result<void>::Success());
  }
  void Cancel(){

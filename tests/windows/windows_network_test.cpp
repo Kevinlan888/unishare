@@ -9,6 +9,18 @@
 #include <iostream>
 #include <atomic>
 #include <cstdlib>
+#include <new>
+// Test-only allocation instrumentation: catch repeated large allocations while
+// the real nonblocking recv has no data, without changing the socket boundary.
+std::atomic<bool> countReadAllocations{false};
+std::atomic<int> readAllocations{0};
+void* operator new(std::size_t size){
+ if(countReadAllocations.load()&&size>=4*1024*1024&&size<=4*1024*1024+64)++readAllocations;
+ if(auto memory=std::malloc(size?size:1))return memory;
+ throw std::bad_alloc();
+}
+void operator delete(void* memory) noexcept {std::free(memory);}
+void operator delete(void* memory,std::size_t) noexcept {std::free(memory);}
 using namespace unishare;
 using namespace unishare::windows;
 #define CHECK(x) do { if(!(x)){std::cerr<<"CHECK failed: " #x<<" at "<<__LINE__<<std::endl;std::exit(1);} } while(0)
@@ -36,12 +48,15 @@ void SocketTests(){
  Completion<std::shared_ptr<ISocket>> hostname;factory.Connect("localhost",1234,hostname.Callback());CHECK(!hostname.Get().ok());
  Completion<std::uint16_t> again;factory.ListenBound(0,again.Callback(),[](auto){});CHECK(again.Get().ok());factory.Stop();
 }
+void PausedRegistrationTest();
+void PendingReadAllocationTest();
+void MalformedDnsNameTest();
 void ConcurrentWatchTest();
 void MoreSocketTests();
 void LiveDnsTests();
 void NetworkTests();
 void DnsTests();
-int main(){SocketTests();MoreSocketTests();DnsTests();NetworkTests();ConcurrentWatchTest();if(std::getenv("UNISHARE_LIVE_MDNS"))LiveDnsTests();std::cout<<"Windows network tests passed\n";}
+int main(){PausedRegistrationTest();MalformedDnsNameTest();PendingReadAllocationTest();SocketTests();MoreSocketTests();DnsTests();NetworkTests();ConcurrentWatchTest();if(std::getenv("UNISHARE_LIVE_MDNS"))LiveDnsTests();std::cout<<"Windows network tests passed\n";}
 
 struct FakeDns final : DnsApi {
  std::mutex mutex;std::condition_variable changed;
@@ -137,4 +152,49 @@ void ConcurrentWatchTest(){
  auto native=std::make_shared<Native>();NetworkChange owner(native);std::promise<void> go;auto barrier=go.get_future().share();std::vector<std::thread> threads;std::atomic<int> done{0};
  for(int i=0;i<32;++i)threads.emplace_back([&]{barrier.wait();owner.Start([]{},[&](auto){std::lock_guard<std::mutex> l(native->mutex);++done;native->cv.notify_all();});});go.set_value();for(auto& thread:threads)thread.join();owner.Stop();
  std::unique_lock<std::mutex> l(native->mutex);CHECK(native->cv.wait_for(l,std::chrono::seconds(3),[&]{return native->active.empty()&&done==32;}));
+}
+
+void PausedRegistrationTest(){
+ struct PausedApi final : NetworkChangeApi {
+  std::mutex mutex;std::condition_variable cv;bool entered=false,released=false;int registrations=0,cancelled=0;
+  DWORD Register(PIPINTERFACE_CHANGE_CALLBACK,void*,HANDLE* handle) override {
+   std::unique_lock<std::mutex> lock(mutex);auto id=++registrations;*handle=reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(id));
+   if(id==1){entered=true;cv.notify_all();cv.wait(lock,[&]{return released;});}return NO_ERROR;
+  }
+  DWORD Cancel(HANDLE) override {std::lock_guard<std::mutex> lock(mutex);++cancelled;cv.notify_all();return NO_ERROR;}
+  void WaitEntered(){std::unique_lock<std::mutex> lock(mutex);CHECK(cv.wait_for(lock,std::chrono::seconds(3),[&]{return entered;}));}
+  void Release(){std::lock_guard<std::mutex> lock(mutex);released=true;cv.notify_all();}
+  void WaitCancelled(int count){std::unique_lock<std::mutex> lock(mutex);CHECK(cv.wait_for(lock,std::chrono::seconds(3),[&]{return cancelled==count;}));}
+ };
+ for(bool replace:{false,true}){
+  auto native=std::make_shared<PausedApi>();NetworkChange owner(native);Completion<void> first,second;std::atomic<int> events{0};
+  owner.Start([&]{++events;},first.Callback());native->WaitEntered();
+  if(replace){owner.Start([&]{++events;},second.Callback());CHECK(second.Get().ok());}else owner.Stop();
+  native->Release();auto result=first.Get();CHECK(!result.ok());CHECK(result.error().code==ErrorCode::Cancelled);native->WaitCancelled(1);CHECK(events==0);
+  owner.Stop();if(replace)native->WaitCancelled(2);CHECK(first.calls==1);
+ }
+}
+void MalformedDnsNameTest(){
+ auto native=std::make_shared<FakeDns>();native->interfaces={7};DnsSd dns(native);Completion<ServiceRecord> error,valid;std::atomic<int> errors{0};
+ dns.BrowseEvents("_share._tcp.local.",[&](auto result){if(result.ok())valid.Callback()(result);else{++errors;error.Callback()(result);}},[](auto){});
+ native->Wait([&]{return native->browses.size()==1;});auto request=native->browses[0].request;
+ char malformed[]={static_cast<char>(0xc3),'(',0};DNS_RECORD record{};record.wType=DNS_TYPE_PTR;record.dwTtl=120;record.Flags.S.CharSet=DnsCharSetUtf8;record.Data.PTR.pNameHost=reinterpret_cast<wchar_t*>(malformed);
+ request.pBrowseCallback(NO_ERROR,request.pQueryContext,&record);
+ auto result=error.Get();CHECK(!result.ok());CHECK(result.error().code==ErrorCode::DiscoveryFailed);CHECK(result.error().platform_error==ERROR_NO_UNICODE_TRANSLATION);
+ {std::lock_guard<std::mutex> lock(native->mutex);CHECK(native->resolves.empty());}
+ native->Ptr(0,120);native->Wait([&]{return native->resolves.size()==1;});native->Resolved(0);CHECK(valid.Get().ok());
+ dns.Stop();native->Wait([&]{return native->cancelBrowses==1;});{std::lock_guard<std::mutex> lock(native->mutex);CHECK(native->cancelResolves==0);}CHECK(errors==1);
+}
+
+
+void PendingReadAllocationTest(){
+ SocketFactory factory;Completion<std::uint16_t> ready;Completion<std::shared_ptr<ISocket>> accepted,connected;
+ factory.ListenBound(0,ready.Callback(),[&](auto result){if(result.ok())accepted.Callback()(result);});auto port=ready.Get();CHECK(port.ok());
+ factory.Connect("127.0.0.1",port.value(),connected.Callback());auto client=connected.Get();CHECK(client.ok());auto server=accepted.Get();CHECK(server.ok());
+ Completion<std::vector<std::uint8_t>> read;readAllocations=0;countReadAllocations=true;server.value()->Read(4*1024*1024,read.Callback());
+ // Empty writes complete on the same socket worker and exercise Poll while the
+ // receive remains pending. They send no bytes that could satisfy the read.
+ for(int i=0;i<8;++i){Completion<void> marker;server.value()->Write({},marker.Callback());CHECK(marker.Get().ok());}
+ countReadAllocations=false;CHECK(readAllocations<=1);CHECK(read.calls==0);
+ Completion<void> sent;client.value()->Write({11,22,33},sent.Callback());CHECK(sent.Get().ok());auto bytes=read.Get();CHECK(bytes.ok());CHECK(bytes.value()==std::vector<std::uint8_t>({11,22,33}));factory.Stop();
 }
