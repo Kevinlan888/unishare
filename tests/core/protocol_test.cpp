@@ -32,4 +32,12 @@ int main() {
  FrameCodec partial; CHECK(partial.Feed(Bytes{0,4,0,25}).ok());CHECK(partial.BufferedBytes()==4);CHECK(partial.Feed(Bytes{5}).ok());CHECK(partial.BufferedBytes()==5);
  Status limit{MessageType::Accept,o.transfer_id,std::string(65513,'x')};CHECK(c.Encode(limit).size()==MaxControlFrame+4);CHECK(bad(c.Encode(limit)).ok());limit.reason.push_back('x');threw=false;try{c.Encode(limit);}catch(const std::invalid_argument&){threw=true;}CHECK(threw);
  for(auto type:{1,2,3,4,6,7,8,9})CHECK(!bad(Bytes{0,0,0,1,static_cast<std::uint8_t>(type)}).ok());
+ auto rejects=[](const Message& m){for(bool direct:{false,true}){bool invalid=false;try{if(direct)EncodeBody(m);else FrameCodec{}.Encode(m);}catch(const std::invalid_argument&){invalid=true;}CHECK(invalid);}};
+ rejects(limit);Offer oversize=o;oversize.display_name.assign(MaxControlFrame,'x');rejects(oversize);oversize.display_name="a";oversize.mime_type.assign(MaxControlFrame,'x');rejects(oversize);
+ // Individually bounded strings whose sum exceeds the frame budget.
+ oversize.display_name.assign(MaxControlFrame/2,'x');oversize.mime_type.assign(MaxControlFrame/2,'x');rejects(oversize);
+ CHECK(!DecodeBody(MessageType::Offer,{nullptr,static_cast<std::size_t>(-1)}).ok());
+ auto rh=std::get<Hello>(bad(hello).value()[0]);CHECK(rh.device_id==h.device_id);CHECK(rh.protocol_major==1&&rh.protocol_minor==0);CHECK(rh.nonce==h.nonce&&rh.public_key_fingerprint==h.public_key_fingerprint);
+ auto ro=std::get<Offer>(bad(offer).value()[0]);CHECK(ro.transfer_id==o.transfer_id&&ro.content_type==o.content_type);CHECK(ro.display_name==o.display_name&&ro.mime_type==o.mime_type&&ro.byte_count==o.byte_count);
+ auto rd=std::get<Data>(bad(data).value()[0]);CHECK(rd.transfer_id==d.transfer_id);CHECK(rd.sequence==0x0102030405060708ULL);CHECK(rd.payload==Bytes({0xaa,0xbb}));
 }
