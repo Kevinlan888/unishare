@@ -1,6 +1,7 @@
 #include "share_sdk.hpp"
 #include "device_catalog.hpp"
 #include "sdk_services.hpp"
+#include "exception.hpp"
 #include <algorithm>
 namespace unishare::core {
 namespace {
@@ -33,7 +34,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
    queue->Post([weak,g,f,result=std::move(result)]() mutable {
     auto s=weak.lock();
     if(s&&s->alive&&s->generation==g&&(s->starting||s->state==SdkState::Running))
-     f(*s,std::move(result));
+     try { f(*s,std::move(result)); } catch(...) { s->FailStart(CurrentException()); }
    });
   };
  }
@@ -43,14 +44,16 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  void Emit(std::vector<DeviceEvent> events){for(auto& e:events){e.device.paired=Paired(e.device.id);paired_metadata[e.device.id.ToString()]=e.device.paired;if(event_handler)runtime->callbacks->Post([f=event_handler,e=std::move(e)]{f(e);});}}
  void TrustChanged(){if(catalog)for(auto d:catalog->Snapshot())if(paired_metadata[d.id.ToString()]!=Paired(d.id))Emit({{DiscoveryEventKind::Updated,d}});}
  void FinishStart(Result<void> result) {auto pending=std::move(starters);starters.clear();for(auto& t:pending)t.Complete(result);}
- void Shutdown(ShareError reason,bool cancel,bool preserve_catalog=false) {
+ std::optional<ShareError> Shutdown(ShareError reason,bool cancel,bool preserve_catalog=false) {
+  std::optional<ShareError> failure;
+  auto attempt=[&](auto f){try{f();}catch(...){if(!failure)failure=CurrentException();}};
   ++generation;
   starting=false;
-  platform.SetNetworkChangeHandler({});
-  platform.DnsSd().Stop();
-  platform.Sockets().Stop();
-  if(runtime->stop_services)runtime->stop_services(reason);
-  if(cancel)runtime->operations->CancelAll();
+  attempt([&]{platform.SetNetworkChangeHandler({});});
+  attempt([&]{platform.DnsSd().Stop();});
+  attempt([&]{platform.Sockets().Stop();});
+  attempt([&]{if(runtime->stop_services)runtime->stop_services(reason);});
+  if(cancel)attempt([&]{runtime->operations->CancelAll();});
   starters.clear();
   if(!preserve_catalog) {
    ++expiry_generation;
@@ -60,6 +63,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
    paired_metadata.clear();
   }
   if(state!=SdkState::Uninitialized)state=SdkState::Stopped;
+  return failure;
  }
  void FailStart(ShareError error) {
   EmitError(error);
@@ -153,20 +157,24 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
   auto ticket=runtime->operations->Begin<void>(std::move(cb));
   runtime->scheduler->Post([s=shared_from_this(),ticket]{
    if(!ticket.Active())return;
+   try {
    if(!s->alive||!s->runtime->identity){ticket.Complete(Result<void>::Failure(Error(ErrorCode::InvalidInput,"SDK is not initialized")));return;}
    if(s->starting){s->starters.push_back(ticket);return;}
    if(s->state==SdkState::Running){ticket.Complete(Result<void>::Success());return;}
    s->starters.push_back(ticket);
    if(s->runtime->start_services)s->runtime->start_services();
    s->BeginNetwork();
+   } catch(...) {auto error=CurrentException();s->FailStart(error);ticket.Complete(Result<void>::Failure(error));}
   });
   return ticket.id;
  }
  OperationId Stop(ResultCallback<void> cb) override {
   auto ticket=runtime->operations->Begin<void>(std::move(cb),false);
   runtime->scheduler->Post([s=shared_from_this(),ticket]{
+   try {
    if(s->starting||s->state==SdkState::Running||s->catalog) {
-    s->Shutdown(Error(ErrorCode::Cancelled,"SDK stopped"),true);
+    auto failure=s->Shutdown(Error(ErrorCode::Cancelled,"SDK stopped"),true);
+    if(failure){ticket.Complete(Result<void>::Failure(*failure));return;}
     s->EmitState(DiscoveryState::Stopped);
    } else {
     if(s->runtime->stop_services)s->runtime->stop_services(Error(ErrorCode::Cancelled,"SDK stopped"));
@@ -174,6 +182,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
     if(s->state==SdkState::Initialized)s->state=SdkState::Stopped;
    }
    ticket.Complete(Result<void>::Success());
+   } catch(...) {auto error=CurrentException();s->Shutdown(error,true);ticket.Complete(Result<void>::Failure(error));}
   });
   return ticket.id;
  }
@@ -183,7 +192,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  void SetStateHandler(std::function<void(DiscoveryState)> f) override {runtime->scheduler->Invoke([&]{state_handler=std::move(f);});}
 };
 ShareSdk::ShareSdk(IPlatform& p):state_(std::make_shared<State>(p)){}
-ShareSdk::~ShareSdk(){auto s=state_;s->runtime->scheduler->Invoke([s]{s->Shutdown(Error(ErrorCode::Cancelled,"SDK destroyed"),true);s->alive=false;s->runtime->alive=false;});}
+ShareSdk::~ShareSdk(){auto s=state_;try{s->runtime->scheduler->Invoke([s]{s->alive=false;s->runtime->alive=false;s->Shutdown(Error(ErrorCode::Cancelled,"SDK destroyed"),true);});}catch(...) {}}
 OperationId ShareSdk::Initialize(SdkConfig config,ResultCallback<void> cb) {
  auto s=state_;
  // Capture this invocation's executor before queueing. Neither registration nor
@@ -192,6 +201,7 @@ OperationId ShareSdk::Initialize(SdkConfig config,ResultCallback<void> cb) {
  auto t=s->runtime->operations->BeginOn<void>(executor,std::move(cb));
  s->runtime->scheduler->Post([s,t,executor=std::move(executor),config=std::move(config)]() mutable {
   if(!t.Active())return;
+  try {
   if(s->state!=SdkState::Uninitialized) {
    t.Complete(Result<void>::Failure(Error(ErrorCode::InvalidInput,"SDK already initialized")));
    return;
@@ -222,6 +232,7 @@ OperationId ShareSdk::Initialize(SdkConfig config,ResultCallback<void> cb) {
   InstallServices(s->runtime,s->platform,[weak]{if(auto s=weak.lock())return s->GetDevices();return std::vector<DeviceInfo>{};},[weak]{if(auto s=weak.lock())s->TrustChanged();});
   s->state=SdkState::Initialized;
   t.Complete(Result<void>::Success());
+  } catch(...) {t.Complete(Result<void>::Failure(CurrentException()));}
  });
  return t.id;
 }

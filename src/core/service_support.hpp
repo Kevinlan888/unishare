@@ -1,5 +1,6 @@
 #pragma once
 #include "share_sdk.hpp"
+#include "exception.hpp"
 #include <map>
 namespace unishare::core {
 inline ShareError ServiceError(ErrorCode c, const char *s) { return {c, s, {}}; }
@@ -54,7 +55,8 @@ OperationId Submit(std::shared_ptr<Owner> owner, ResultCallback<T> cb, Work work
                 Result<T>::Failure(ServiceError(ErrorCode::Cancelled, "SDK destroyed")));
             return;
         }
-        work(*owner, *runtime, ticket);
+        try { work(*owner, *runtime, ticket); }
+        catch(...) { ticket.Complete(Result<T>::Failure(CurrentException())); }
     });
     return ticket.id;
 }
