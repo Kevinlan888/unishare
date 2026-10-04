@@ -1,0 +1,25 @@
+syntax = "proto3";
+package unishare.wire.v1;
+// Presence of every listed field is mandatory at the v1 semantic layer, even
+// when its value is zero/empty. optional preserves presence in generated APIs.
+message Hello {
+ optional bytes device_id = 1;
+ optional uint32 protocol_major = 2;
+ optional uint32 protocol_minor = 3;
+ optional bytes nonce = 4;
+ optional bytes public_key_fingerprint = 5;
+}
+enum ContentType { CONTENT_TYPE_UNSPECIFIED = 0; TEXT = 1; IMAGE = 2; FILE = 3; }
+message Offer {
+ optional bytes transfer_id = 1;
+ optional ContentType content_type = 2;
+ optional string display_name = 3;
+ optional string mime_type = 4;
+ optional uint64 byte_count = 5;
+}
+message Accept { optional bytes transfer_id = 1; optional string reason = 2; }
+message Reject { optional bytes transfer_id = 1; optional string reason = 2; }
+message Cancel { optional bytes transfer_id = 1; optional string reason = 2; }
+message Finish { optional bytes transfer_id = 1; optional uint64 byte_count = 2; optional bytes sha256 = 3; }
+message Complete { optional bytes transfer_id = 1; optional string reason = 2; }
+message Failed { optional bytes transfer_id = 1; optional string reason = 2; }
