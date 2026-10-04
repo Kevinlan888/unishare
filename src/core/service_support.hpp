@@ -36,9 +36,10 @@ struct ServiceState {
     std::weak_ptr<SdkRuntime> runtime;
     std::shared_ptr<SerialScheduler> queue;
     std::shared_ptr<OperationRegistry> operations;
+    std::shared_ptr<ByteBudget> buffers;
     bool enabled = true;
     explicit ServiceState(const std::shared_ptr<SdkRuntime> &r)
-        : runtime(r), queue(r->scheduler), operations(r->operations) {}
+        : runtime(r), queue(r->scheduler), operations(r->operations), buffers(r->buffers) {}
 };
 template <class T, class Owner, class Work>
 OperationId Submit(std::shared_ptr<Owner> owner, ResultCallback<T> cb, Work work,

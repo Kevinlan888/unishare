@@ -46,6 +46,10 @@ public:
     // Rejection, cancellation, timeout and transport/integrity errors complete
     // the callback with failure exactly once. The returned OperationId identifies
     // the pending send operation; progress/offer events expose its TransferId.
+    // Initial progress (0 bytes) exposes the ID before waiting for consent,
+    // so Cancel can be used while the peer is deciding. SendText retains its
+    // value in the shared SDK buffer budget; insufficient available capacity
+    // returns ResourceLimit even below the configured text size limit.
     virtual OperationId SendText(DeviceId, std::string, ResultCallback<TransferId>) = 0;
     virtual OperationId SendImage(DeviceId, TransferSource, ResultCallback<TransferId>) = 0;
     virtual OperationId SendFile(DeviceId, TransferSource, ResultCallback<TransferId>) = 0;

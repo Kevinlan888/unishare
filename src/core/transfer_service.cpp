@@ -3,11 +3,13 @@
 namespace unishare::core {
 namespace {
 class TextStream final : public IStream {
+    std::shared_ptr<ByteBudget::Reservation> charge_;
     std::string text_;
     std::size_t offset_ = 0;
 
   public:
-    explicit TextStream(std::string text) : text_(std::move(text)) {}
+    TextStream(std::string text, std::shared_ptr<ByteBudget::Reservation> charge)
+        : charge_(std::move(charge)), text_(std::move(text)) {}
     OperationId Read(std::size_t n, ResultCallback<std::vector<std::uint8_t>> cb) override {
         n = (std::min)(n, text_.size() - offset_);
         std::vector<std::uint8_t> b(text_.begin() + offset_, text_.begin() + offset_ + n);
@@ -20,7 +22,8 @@ class TextStream final : public IStream {
         return 0;
     }
     void Close() override {
-        text_.clear();
+        std::string{}.swap(text_);
+        charge_.reset();
         offset_ = 0;
     }
     void AbortAndCleanup() override { Close(); }
@@ -150,6 +153,7 @@ class TransferService final : public ITransferService,
                     s.Finish(r, key, Result<void>::Failure(*validation));
                     return;
                 }
+                PublicEvent(r, s.progress_, TransferProgress{id, 0, source.content.byte_count});
                 auto local = s.engines_.at(*c).engine->Offer(std::move(source));
                 s.offering_.reset();
                 auto i = s.transfers_.find(key);
@@ -244,6 +248,14 @@ class TransferService final : public ITransferService,
             false);
     }
     OperationId SendText(DeviceId d, std::string text, ResultCallback<TransferId> cb) override {
+        auto charge =
+            text.capacity() < buffers->Limit() ? buffers->Reserve(text.capacity() + 1) : nullptr;
+        if (!charge)
+            return Submit<TransferId>(
+                shared_from_this(), std::move(cb), [](auto &, auto &, auto t) {
+                    t.Complete(Result<TransferId>::Failure(ServiceError(
+                        ErrorCode::ResourceLimit, "text exceeds available buffer budget")));
+                });
         auto size = text.size();
         std::optional<ShareError> error;
         if (!ServiceUtf8(text))
@@ -251,7 +263,7 @@ class TransferService final : public ITransferService,
         return Send(d,
                     {ContentType::Text,
                      {"text", "text/plain;charset=utf-8", size,
-                      std::make_shared<TextStream>(std::move(text))}},
+                      std::make_shared<TextStream>(std::move(text), std::move(charge))}},
                     std::move(cb), error);
     }
     OperationId SendImage(DeviceId d, TransferSource source,

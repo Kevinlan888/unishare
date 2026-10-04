@@ -726,14 +726,150 @@ void QueuedOffersKeepTheirBudget() {
     Peer a, b;
     Connect(a, b);
     a.sdk.Transfers()->SendText(b.Id(), "queued", [](auto r) { CHECK(!r.ok()); });
-    for (int n = 0; n < 100; ++n) { Barrier(a.sdk); Barrier(b.sdk); }
+    for (int n = 0; n < 100; ++n) {
+        Barrier(a.sdk);
+        Barrier(b.sdk);
+    }
     a.sdk.Stop([](auto r) { CHECK(r.ok()); });
-    for (int n = 0; n < 100; ++n) { Barrier(a.sdk); Barrier(b.sdk); }
+    for (int n = 0; n < 100; ++n) {
+        Barrier(a.sdk);
+        Barrier(b.sdk);
+    }
     CHECK(b.sdk.Runtime()->buffers->Used() >= 16384);
     Settle(a, b);
     CHECK(b.sdk.Runtime()->buffers->Used() == 0);
 }
+void CancelBeforeConsent() {
+    Peer a, b;
+    Connect(a, b);
+    std::vector<TransferProgress> progress;
+    int done = 0, cancelled = 0;
+    a.sdk.Transfers()->SetProgressHandler([&](auto p) { progress.push_back(p); });
+    a.sdk.Transfers()->SendText(b.Id(), "pending consent", [&](auto r) {
+        CHECK(!r.ok() && r.error().code == ErrorCode::Cancelled);
+        ++done;
+    });
+    Settle(a, b);
+    CHECK(progress.size() == 1 && progress[0].transferred == 0 && progress[0].total == 15 &&
+          done == 0);
+    a.sdk.Transfers()->Cancel(progress[0].id, [&](auto r) {
+        CHECK(r.ok());
+        ++cancelled;
+    });
+    Settle(a, b);
+    CHECK(done == 1 && cancelled == 1 && a.results.size() == 1 && b.results.size() == 1);
+    CHECK(progress.size() == 1);
+}
+void RetainedContentBudget() {
+    PlatformFake p;
+    ShareSdk sdk(p);
+    auto q = std::make_shared<Queue>();
+    SdkConfig config;
+    config.device_name = "budget";
+    config.callback_executor = q;
+    config.max_buffer_bytes = 4096;
+    sdk.Initialize(config, [](auto r) { CHECK(r.ok()); });
+    Pump(sdk, q);
+    auto budget = sdk.Runtime()->buffers;
+    int failed = 0;
+    auto clipboard = sdk.Clipboard();
+    auto transfers = sdk.Transfers();
+    std::promise<void> entered, release;
+    auto ready = release.get_future().share();
+    sdk.Runtime()->scheduler->Post([&] {
+        entered.set_value();
+        ready.wait();
+    });
+    entered.get_future().wait();
+    ShareContent image;
+    image.type = ContentType::Image;
+    image.mime_type = "image/png";
+    image.image.assign(2048, 1);
+    clipboard->WriteContent(std::move(image), [](auto r) { CHECK(r.ok()); });
+    CHECK(budget->Used() >= 2048 && budget->Used() <= 4096);
+    std::string text(2048, 'x');
+    transfers->SendText({}, std::move(text), [&](auto r) {
+        CHECK(!r.ok() && r.error().code == ErrorCode::ResourceLimit);
+        ++failed;
+    });
+    release.set_value();
+    Pump(sdk, q);
+    CHECK(failed == 1 && p.writes == 1);
+    auto complete = std::move(p.write);
+    p.written = {};
+    complete(Result<void>::Success());
+    complete = {};
+    Pump(sdk, q);
+    CHECK(budget->Used() == 0);
+    clipboard->ReadShareableContent([](auto r) { CHECK(r.ok() && r.value().text.size() == 2000); });
+    Barrier(sdk);
+    ShareContent read;
+    read.text.assign(2000, 'r');
+    p.read(Result<ShareContent>::Success(std::move(read)));
+    Barrier(sdk);
+    CHECK(budget->Used() >= 2000);
+    q->Drain();
+    CHECK(budget->Used() == 0);
+    clipboard->ReadShareableContent([&](auto r) {
+        CHECK(!r.ok() && r.error().code == ErrorCode::ResourceLimit);
+        ++failed;
+    });
+    Barrier(sdk);
+    ShareContent huge;
+    huge.text.assign(5000, 'r');
+    p.read(Result<ShareContent>::Success(std::move(huge)));
+    Pump(sdk, q);
+    CHECK(failed == 2 && budget->Used() == 0);
+    ShareContent capacity;
+    capacity.text = "small";
+    capacity.text.reserve(8192);
+    clipboard->WriteContent(std::move(capacity), [&](auto r) {
+        CHECK(!r.ok() && r.error().code == ErrorCode::ResourceLimit);
+        ++failed;
+    });
+    Pump(sdk, q);
+    CHECK(failed == 3 && p.writes == 1);
+    ShareContent pending;
+    pending.text.assign(2000, 'c');
+    int cancelled = 0;
+    clipboard->WriteContent(std::move(pending), [&](auto r) {
+        CHECK(!r.ok() && r.error().code == ErrorCode::Cancelled);
+        ++cancelled;
+    });
+    Barrier(sdk);
+    clipboard->Stop([](auto r) { CHECK(r.ok()); });
+    Pump(sdk, q);
+    CHECK(cancelled == 1 && budget->Used() >= 2000);
+    auto late = std::move(p.write);
+    p.written = {};
+    late(Result<void>::Success());
+    late = {};
+    Pump(sdk, q);
+    CHECK(cancelled == 1 && budget->Used() == 0);
+    std::promise<void> entered2, release2;
+    auto ready2 = release2.get_future().share();
+    sdk.Runtime()->scheduler->Post([&] {
+        entered2.set_value();
+        ready2.wait();
+    });
+    entered2.get_future().wait();
+    transfers->SendText({}, std::string(1000, 's'), [](auto r) {
+        CHECK(!r.ok() && r.error().code == ErrorCode::AuthenticationFailed);
+    });
+    CHECK(budget->Used() >= 1000);
+    release2.set_value();
+    Pump(sdk, q);
+    CHECK(budget->Used() == 0);
+}
 int main(int argc, char **argv) {
+    if (argc > 1 && std::string(argv[1]) == "retained-budget") {
+        RetainedContentBudget();
+        return 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "cancel-consent") {
+        CancelBeforeConsent();
+        return 0;
+    }
     if (argc > 1 && std::string(argv[1]) == "offer-budget") {
         QueuedOffersKeepTheirBudget();
         return 0;
@@ -759,5 +895,7 @@ int main(int argc, char **argv) {
     LimitsAndIdentity();
     SchedulerFinalOwnerOnWorker();
     QueuedOffersKeepTheirBudget();
+    RetainedContentBudget();
+    CancelBeforeConsent();
     std::cout << "sdk services passed\n";
 }

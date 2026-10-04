@@ -18,6 +18,32 @@ std::optional<ShareError> Validate(const ShareContent &c, const SdkConfig &confi
         return ServiceError(ErrorCode::ResourceLimit, "clipboard content limit");
     return {};
 }
+struct ChargedContent {
+    std::shared_ptr<ByteBudget::Reservation> charge;
+    ShareContent content;
+};
+std::shared_ptr<ByteBudget::Reservation> Charge(const ShareContent &c, ByteBudget &budget) {
+    const auto limit = budget.Limit();
+    if (c.text.capacity() >= limit || c.mime_type.capacity() >= limit || c.image.capacity() > limit)
+        return {};
+    return budget.Reserve(c.text.capacity() + 1 + c.mime_type.capacity() + 1 + c.image.capacity());
+}
+// The operation owns this handoff until its public callback consumes the result.
+struct ReadDelivery {
+    std::mutex mutex;
+    bool delivered = false;
+    std::shared_ptr<ByteBudget::Reservation> charge;
+    void Keep(std::shared_ptr<ByteBudget::Reservation> value) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!delivered)
+            charge = std::move(value);
+    }
+    std::shared_ptr<ByteBudget::Reservation> Take() {
+        std::lock_guard<std::mutex> lock(mutex);
+        delivered = true;
+        return std::move(charge);
+    }
+};
 class ClipboardService final : public IClipboardService,
                                public ServiceState,
                                public std::enable_shared_from_this<ClipboardService> {
@@ -50,8 +76,14 @@ class ClipboardService final : public IClipboardService,
             false);
     }
     OperationId ReadShareableContent(ResultCallback<ShareContent> cb) override {
+        auto delivery = std::make_shared<ReadDelivery>();
+        auto completion = [cb = std::move(cb), delivery](Result<ShareContent> result) mutable {
+            auto charge = delivery->Take();
+            if (cb)
+                cb(std::move(result));
+        };
         return Submit<ShareContent>(
-            shared_from_this(), std::move(cb), [](auto &s, auto &r, auto t) {
+            shared_from_this(), std::move(completion), [delivery](auto &s, auto &r, auto t) {
                 if (!s.enabled) {
                     t.Complete(Result<ShareContent>::Failure(
                         ServiceError(ErrorCode::Cancelled, "clipboard stopped")));
@@ -61,48 +93,71 @@ class ClipboardService final : public IClipboardService,
                     t.Complete(Result<ShareContent>::Failure(e));
                 };
                 std::weak_ptr<ClipboardService> weak = s.shared_from_this();
-                s.port_.Read(
-                    [weak, q = s.queue, t, config = r.config](Result<ShareContent> result) {
-                        q->Post([weak, t, config, result] {
-                            auto s = weak.lock();
-                            if (!s || !s->pending_.erase(t.id) || !t.Active())
+                s.port_.Read([weak, q = s.queue, budget = s.buffers, t, config = r.config,
+                              delivery](Result<ShareContent> result) mutable {
+                    std::shared_ptr<ByteBudget::Reservation> charge;
+                    if (result.ok()) {
+                        charge = Charge(result.value(), *budget);
+                        if (!charge)
+                            result = Result<ShareContent>::Failure(
+                                ServiceError(ErrorCode::ResourceLimit,
+                                             "clipboard exceeds available buffer budget"));
+                    }
+                    struct HeldResult {
+                        std::shared_ptr<ByteBudget::Reservation> charge;
+                        Result<ShareContent> result;
+                    };
+                    auto held = std::make_shared<HeldResult>(
+                        HeldResult{std::move(charge), std::move(result)});
+                    q->Post([weak, t, config, delivery, held]() mutable {
+                        auto s = weak.lock();
+                        if (!s || !s->pending_.erase(t.id) || !t.Active())
+                            return;
+                        if (held->result.ok()) {
+                            if (auto error = Validate(held->result.value(), config)) {
+                                t.Complete(Result<ShareContent>::Failure(*error));
                                 return;
-                            if (result.ok()) {
-                                auto error = Validate(result.value(), config);
-                                if (error) {
-                                    t.Complete(Result<ShareContent>::Failure(*error));
-                                    return;
-                                }
                             }
-                            t.Complete(result);
-                        });
+                        }
+                        delivery->Keep(held->charge);
+                        t.Complete(std::move(held->result));
                     });
+                });
             });
     }
     OperationId WriteContent(ShareContent content, ResultCallback<void> cb) override {
-        return Submit<void>(shared_from_this(), std::move(cb),
-                            [content = std::move(content)](auto &s, auto &r, auto t) {
-                                if (!s.enabled) {
-                                    t.Complete(Result<void>::Failure(
-                                        ServiceError(ErrorCode::Cancelled, "clipboard stopped")));
-                                    return;
-                                }
-                                if (auto e = Validate(content, r.config)) {
-                                    t.Complete(Result<void>::Failure(*e));
-                                    return;
-                                }
-                                s.pending_[t.id] = [t](ShareError e) {
-                                    t.Complete(Result<void>::Failure(e));
-                                };
-                                std::weak_ptr<ClipboardService> weak = s.shared_from_this();
-                                s.port_.Write(content, [weak, q = s.queue, t](Result<void> result) {
-                                    q->Post([weak, t, result] {
-                                        auto s = weak.lock();
-                                        if (s && s->pending_.erase(t.id) && t.Active())
-                                            t.Complete(result);
-                                    });
-                                });
-                            });
+        auto charge = Charge(content, *buffers);
+        if (!charge)
+            return Submit<void>(shared_from_this(), std::move(cb), [](auto &, auto &, auto t) {
+                t.Complete(Result<void>::Failure(ServiceError(
+                    ErrorCode::ResourceLimit, "clipboard exceeds available buffer budget")));
+            });
+        auto held =
+            std::make_shared<ChargedContent>(ChargedContent{std::move(charge), std::move(content)});
+        return Submit<void>(shared_from_this(), std::move(cb), [held](auto &s, auto &r, auto t) {
+            if (!s.enabled) {
+                t.Complete(
+                    Result<void>::Failure(ServiceError(ErrorCode::Cancelled, "clipboard stopped")));
+                return;
+            }
+            if (auto error = Validate(held->content, r.config)) {
+                t.Complete(Result<void>::Failure(*error));
+                return;
+            }
+            s.pending_[t.id] = [t](ShareError e) { t.Complete(Result<void>::Failure(e)); };
+            std::weak_ptr<ClipboardService> weak = s.shared_from_this();
+            s.port_.Write(std::move(held->content), [weak, q = s.queue, t, charge = held->charge](
+                                                        Result<void> result) mutable {
+                // Adapter ownership ends on completion; cancellation alone cannot
+                // release a payload still retained by the platform operation.
+                charge.reset();
+                q->Post([weak, t, result] {
+                    auto s = weak.lock();
+                    if (s && s->pending_.erase(t.id) && t.Active())
+                        t.Complete(result);
+                });
+            });
+        });
     }
 };
 } // namespace
