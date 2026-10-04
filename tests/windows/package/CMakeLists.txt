@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.21)
+project(unishare_package_consumer LANGUAGES C CXX)
+find_package(unishare CONFIG REQUIRED)
+add_executable(consumer main.cpp abi.c)
+target_link_libraries(consumer PRIVATE unishare::windows)

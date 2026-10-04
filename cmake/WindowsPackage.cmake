@@ -1,0 +1,45 @@
+# Compile a self-contained DLL so every frozen C entry point is explicitly
+# exported, including units a static-library linker could otherwise discard.
+get_target_property(unishare_core_sources unishare_core SOURCES)
+get_target_property(unishare_port_sources unishare_windows_ports SOURCES)
+add_library(unishare_windows SHARED ${unishare_core_sources} ${unishare_port_sources})
+add_library(unishare::windows ALIAS unishare_windows)
+set_target_properties(unishare_windows PROPERTIES EXPORT_NAME windows OUTPUT_NAME unishare)
+target_compile_features(unishare_windows PUBLIC cxx_std_17)
+target_include_directories(unishare_windows PUBLIC
+ $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>
+ PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(unishare_windows PUBLIC USDK_SHARED PRIVATE USDK_BUILD NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _WIN32_WINNT=0x0A00)
+if(MSVC)
+ target_compile_options(unishare_windows PRIVATE /permissive- /utf-8)
+endif()
+target_link_libraries(unishare_windows PRIVATE OpenSSL::SSL OpenSSL::Crypto Threads::Threads
+ crypt32 advapi32 ole32 windowscodecs user32 ws2_32 dnsapi iphlpapi shell32)
+unishare_stage_openssl_runtime(unishare_windows)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+install(TARGETS unishare_windows EXPORT unishareTargets
+ RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY include/unishare DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES docs/integration/windows.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(EXPORT unishareTargets NAMESPACE unishare:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/unishare)
+configure_package_config_file(cmake/unishareConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/unishareConfig.cmake INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/unishare)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/unishareConfigVersion.cmake VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/unishareConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/unishareConfigVersion.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/unishare)
+file(GLOB unishare_openssl_runtime "${OPENSSL_ROOT_DIR}/bin/libcrypto-3*.dll" "${OPENSSL_ROOT_DIR}/bin/libssl-3*.dll" "${OPENSSL_INCLUDE_DIR}/../bin/libcrypto-3*.dll" "${OPENSSL_INCLUDE_DIR}/../bin/libssl-3*.dll")
+list(REMOVE_DUPLICATES unishare_openssl_runtime)
+if(unishare_openssl_runtime)
+ install(FILES ${unishare_openssl_runtime} DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+if(BUILD_TESTING)
+ add_executable(windows_smoke tests/windows/windows_smoke.cpp)
+ target_link_libraries(windows_smoke PRIVATE unishare::windows)
+ target_compile_definitions(windows_smoke PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
+if(BUILD_TESTING)
+ add_executable(windows_package_test tests/windows/package/main.cpp tests/windows/package/abi.c)
+ target_link_libraries(windows_package_test PRIVATE unishare::windows)
+ add_test(NAME windows_package COMMAND windows_package_test)
+endif()

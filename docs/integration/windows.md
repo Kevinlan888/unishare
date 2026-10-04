@@ -1,6 +1,64 @@
-# Windows local ports
+# Windows SDK integration
 
-Task 8a supplies `unishare_windows_ports`, a Windows-only internal C++ target for Windows 10 desktop and later. It contains `windows::IdentityStore`, `windows::StreamFactory`, and `windows::Clipboard`. Network discovery, sockets, the assembled `WindowsPlatform`, and the public Windows package are subsequent work.
+The package supports Windows 10+ desktop applications. `unishare.dll`, its import library, public C/C++ headers, OpenSSL runtime DLLs and a CMake package are installed together. `unishare_windows_ports` remains an internal test target; applications link `unishare::windows`.
+
+## Build and import
+
+Use an x64 MSVC developer shell with CMake 3.21+, a Windows 10 SDK, and an existing OpenSSL 3 installation. Dependencies are not downloaded by the build. Match architecture, MSVC runtime, configuration and C++ toolchain across the DLL and C++ host. The C ABI is the supported boundary for other toolchains/languages.
+
+```powershell
+cmake -S . -B build -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DOPENSSL_ROOT_DIR=C:/deps/openssl
+cmake --build build
+ctest --test-dir build --output-on-failure
+cmake --install build --prefix C:/sdk/unishare
+```
+
+The install includes `bin/unishare.dll`, `lib/unishare.lib`, `include/unishare`, and `lib/cmake/unishare`. Ship the installed `bin` DLLs beside the application and the matching Microsoft Visual C++ runtime. When redistributing OpenSSL, retain the license/notices from the OpenSSL distribution used for the build. The build copies matching runtime DLLs found under its OpenSSL prefix; a custom dependency layout must supply its runtime DLLs separately.
+
+```cmake
+find_package(unishare CONFIG REQUIRED)
+target_link_libraries(my_host PRIVATE unishare::windows)
+```
+
+Set `CMAKE_PREFIX_PATH` to the install prefix. `tests/windows/package` is a standalone installed-package C and C++ consumer; it does not include private sources or link static ports. `windows_package` CTest verifies the same public API through the build's DLL. Never link both the static core/ports and DLL into one host: their handle registries are distinct.
+
+## Factory and lifetime
+
+```cpp
+#include <unishare/windows.hpp>
+unishare::SdkConfig config;
+config.device_name = "My desktop";
+unishare::WindowsOptions options;
+options.identity_directory = L"C:/Users/me/AppData/Local/MyApp/ShareIdentity";
+auto sdk = unishare::CreateWindowsShareSdk(config, options);
+sdk->Initialize({}, [/* retain host state */](auto result) {
+    // On success, install event handlers and call Start asynchronously.
+});
+```
+
+The factory returns an **uninitialized** SDK and retains its WindowsPlatform. It performs no identity-store or network initialization. `Initialize(SdkConfig{}, callback)` selects the complete configuration saved by the factory. Any configuration differing from the exact default aggregate replaces all saved fields; no partial merging occurs. A nondefault configuration with an empty device name is rejected normally. Construction may throw `ShareError` or allocation exceptions; ordinary asynchronous failures use `Result`.
+
+The default identity location is the current user's `FOLDERID_LocalAppData/UniShare`, obtained using `SHGetKnownFolderPath`. Specify an application/installation-specific absolute directory to isolate identities. Its parent must already exist and be trusted. The adapter creates and protects the final directory during Initialize. A caller-selected directory also permits two independent test installations on one machine.
+
+WindowsPlatform owns all ports, the interface watcher, permission policy and a serial callback executor. Start waits asynchronously for interface-watcher registration before requesting any host permission policy, binding TCP, or publishing DNS. Watcher registration errors retain their native code. Windows desktop firewall access is not a consent result the SDK can grant: the host/administrator manages firewall rules. A custom `SdkConfig.permissions` may enforce host policy but does not alter firewall settings.
+
+SDK callbacks run on the owned serial executor unless `callback_executor` is supplied. A supplied executor must enqueue in order and keep draining after Stop/destruction; it must not invoke inline. Keep callback capture state alive until queued callbacks drain. Do not block callbacks waiting for other callbacks on that executor. Destroying the SDK first stops/cancels core work, then releases platform ports. Native callback contexts retain their own generations through completion and ignore late notifications. Native cancellation is asynchronous; Stop does not promise that OS deregistration has completed before its callback.
+
+For C hosts, include `unishare/windows.h`, call `usdk_windows_platform_create` with an absolute UTF-8 path (empty selects the default), then `usdk_create`. The SDK retains the platform, so `usdk_platform_release` may follow accepted creation. Use `usdk_start`, `usdk_stop`, and `usdk_destroy`; `usdk_abi_version()` is 1. All Windows C entry points catch exceptions. `usdk_windows_open_source/destination` return stream tokens usable by the frozen C ABI; release tokens after accepted submission. C++ hosts use `OpenWindowsSource/Destination(HANDLE)` and pass the returned streams to SendFile/Accept.
+
+## Network prerequisites and smoke
+
+Enable applicable application inbound TCP rules and UDP multicast DNS traffic on the selected Windows network profile. The SDK uses an OS-selected TCP port and advertises that exact port, so firewall rules should normally target the application rather than one hardcoded port. DNS-SD uses `_share._tcp.local.`; peers need multicast reachability (UDP 5353), compatible IPv4/IPv6 connectivity, and no wireless client isolation. Publication success alone does not prove discovery or inbound connectivity. VPNs and virtual interfaces may affect native interface selection. The SDK does not change firewall configuration.
+
+Run the production-port two-process harness from a built tree:
+
+```powershell
+./tests/windows/run-smoke.ps1 -BuildDirectory ./build
+```
+
+The script creates a fresh run directory and launches hidden sender/receiver processes linked to the public DLL. Both publish and browse using production DNS-SD and TCP. The explicit `--test-consent` mode compares the two SAS values through local test files before confirming both requests, accepts the two offers into host-selected HANDLE staging, sends text and a 262145-byte file, verifies received bytes, and stops. The files carry test consent only; peer discovery and content always use the shipped protocol. This harness is a test host, not a recommended application consent UI. Each process can also be launched manually using `windows_smoke sender|receiver ABSOLUTE_RUN_DIRECTORY --test-consent` with the same fresh directory. Logs name the failing stage and retain native errors. It never touches the user's desktop clipboard.
+
+On this development host (Windows 10.0.26200, WLAN plus virtual adapters), both processes initialized and completed native publication but timed out discovering the peer after 30 seconds. Pairing/text/file were therefore **not run** by the live harness. An unrestricted retry was interrupted during approval and did not execute. Deterministic assembly tests use real TCP/TLS/DPAPI/file/clipboard codecs with native DNS/clipboard seams; they are not evidence of live mDNS or physical LAN interoperability. Task 11 remains the Windows/mobile device matrix. Cross-application clipboard testing remains a manual gate.
 
 ## Identity and trust
 
@@ -60,4 +118,7 @@ Native APIs and ownership references:
 - [Register instance ownership](https://learn.microsoft.com/en-us/windows/win32/api/windns/nc-windns-dns_service_register_complete)
 - [NotifyIpInterfaceChange and callback/cancellation threading](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-notifyipinterfacechange)
 
-The ordinary windows_network CTest uses real TCP loopback, an injectable Win32 DNS boundary, and actual interface-change registration. An optional same-host native DNS check runs when UNISHARE_LIVE_MDNS=1. It advertises a uniquely named temporary service and requires native browse/resolve within 20 seconds. On the development host publication succeeded but discovery timed out; this is not a live-LAN pass. The attempted unrestricted retry was not approved/executed. Firewall, multicast environment and cross-host discovery remain integration gates, as do Task 8c SDK assembly/two-process smoke and the physical Task 11 interoperability matrix.
+The ordinary windows_network CTest uses real TCP loopback, an injectable Win32 DNS boundary, and actual interface-change registration. An optional same-host native DNS check runs when UNISHARE_LIVE_MDNS=1. It advertises a uniquely named temporary service and requires native browse/resolve within 20 seconds. On the development host publication succeeded but discovery timed out; this is not a live-LAN pass. The attempted unrestricted retry was not approved/executed. Firewall, multicast environment and cross-host discovery remain integration gates, as does the physical Task 11 interoperability matrix. Task 8c assembled SDK tests pass, while its production two-process discovery also timed out as described above.
+
+- [SHGetKnownFolderPath current-user path and memory ownership](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath)
+- [DnsServiceBrowse Windows 10 requirement and asynchronous contract](https://learn.microsoft.com/en-us/windows/win32/api/windns/nf-windns-dnsservicebrowse)
