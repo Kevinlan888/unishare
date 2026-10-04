@@ -37,7 +37,6 @@ Bytes EncodeBody(const Message& m){
  Bytes b;std::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
  if constexpr(std::is_same_v<T,PairDecision>){number(b,1,x.confirmed);}
  else if constexpr(std::is_same_v<T,Hello>){if(x.protocol_major!=1)throw std::invalid_argument("major version");blob(b,1,x.device_id.bytes);number(b,2,x.protocol_major);number(b,3,x.protocol_minor);blob(b,4,x.nonce);blob(b,5,x.public_key_fingerprint);}
- else if constexpr(std::is_same_v<T,PairDecision>){s.number(x.confirmed);}
   else if constexpr(std::is_same_v<T,Data>){if(x.payload.size()>MaxDataPayload)throw std::invalid_argument("data limit");b.insert(b.end(),x.transfer_id.bytes.begin(),x.transfer_id.bytes.end());for(int i=7;i>=0;--i)b.push_back(static_cast<std::uint8_t>(x.sequence>>(i*8)));b.insert(b.end(),x.payload.begin(),x.payload.end());}
  else {blob(b,1,x.transfer_id.bytes);if constexpr(std::is_same_v<T,Offer>){auto t=static_cast<unsigned>(x.content_type);if(t<1||t>3||!utf8(x.display_name)||!utf8(x.mime_type))throw std::invalid_argument("offer fields");number(b,2,t);text(b,3,x.display_name);text(b,4,x.mime_type);number(b,5,x.byte_count);}else if constexpr(std::is_same_v<T,Finish>){number(b,2,x.byte_count);blob(b,3,x.sha256);}else {if(!statusType(x.type)||!utf8(x.reason))throw std::invalid_argument("status fields");text(b,2,x.reason);}}
  },m);return b;}

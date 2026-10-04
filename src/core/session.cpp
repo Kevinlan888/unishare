@@ -22,7 +22,7 @@ bool SessionAdmission::Pair(const std::string& source,ISessionScheduler::Time no
 }
 void SessionAdmission::ReleasePair(){if(pending_)--pending_;}
 Session::Session(LocalIdentity i,TrustStore& t,ISocketFactory& f,ISessionScheduler& s,SessionAdmission& a,std::shared_ptr<IExecutor> e,Handler h)
- :identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(std::move(e)),handler_(std::move(h)){}
+ :identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(e?std::move(e):std::shared_ptr<IExecutor>(&s,[](IExecutor*){})),handler_(std::move(h)){}
 Session::~Session(){if(deadline_)scheduler_.Cancel(deadline_);if(socket_)socket_->Close();if(pair_slot_)admission_.ReleasePair();if(admitted_)admission_.Closed();SSL_free(ssl_);SSL_CTX_free(ctx_);}
 void Session::Emit(SessionEvent::Kind kind,std::optional<ShareError> error,std::string sas){
  SessionEvent event{kind,request_,hello_received_?peer_.device_id:expected_.value_or(DeviceId{}),std::move(sas),std::move(error)};
@@ -40,7 +40,7 @@ void Session::Close(ShareError error){
 }
 void Session::Connect(DeviceInfo device){
  if(started_||closed_)return;started_=true;initiator_=true;expected_=device.id;
- if(!executor_||device.addresses.empty()||!device.port){if(!executor_)executor_=std::shared_ptr<IExecutor>(&scheduler_,[](IExecutor*){});Fail(ErrorCode::InvalidInput,"missing connect endpoint or executor");return;}
+ if(device.addresses.empty()||!device.port){Fail(ErrorCode::InvalidInput,"missing connect endpoint");return;}
  auto weak=weak_from_this();deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
  auto* scheduler=&scheduler_;
  factory_.Connect(device.addresses.front(),device.port,[weak,scheduler](Result<SocketHandle> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_){if(result.ok())result.value()->Close();return;}if(!result.ok())self->Close(result.error());else self->Begin(result.value());}else if(result.ok())result.value()->Close();});});
@@ -64,7 +64,7 @@ bool Session::InitTls(){
  return RAND_bytes(local_.nonce.data(),static_cast<int>(local_.nonce.size()))==1;
 }
 void Session::Begin(SocketHandle socket){
- socket_=std::move(socket);if(!executor_)executor_=std::shared_ptr<IExecutor>(&scheduler_,[](IExecutor*){});
+ socket_=std::move(socket);
  if(!socket_){Fail(ErrorCode::InvalidInput,"null socket");return;}
  if(!admission_.Open()){Fail(ErrorCode::ResourceLimit,"connection limit");return;}admitted_=true;
  auto weak=weak_from_this();if(!deadline_)deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
