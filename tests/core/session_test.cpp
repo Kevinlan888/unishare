@@ -230,7 +230,26 @@ void ContentRacesLocalPairingFlush(){
  }
 }
 
+
+void CloseObserverReleasesLastOwner(){
+ Pair p;p.Start();p.ConfirmA();p.ConfirmB();
+ std::weak_ptr<Session> lifetime=p.a;int closed=0;
+ p.a->SetContentHandler([](auto,auto ack){ack(Result<void>::Success());},[&](auto error){
+  ++closed;CHECK(error.code==ErrorCode::Cancelled);
+  p.a.reset();
+  // Close still has to post its public Disconnected event after this callback.
+  // Its owner must survive until that work has finished, even on a direct call.
+  CHECK(!lifetime.expired());
+ });
+ p.a->Close({ErrorCode::Cancelled,"observer releases last owner",{}});
+ CHECK(closed==1&&!p.a&&lifetime.expired());p.q.Run();
+ CHECK(p.ae.size()==3&&p.ae.back().kind==SessionEvent::Kind::Disconnected);
+ CHECK(p.ae.back().error->code==ErrorCode::Cancelled);
+ CHECK(p.a_limit.Buffers().Used()==0&&p.b_limit.Buffers().Used()==0);
+}
+
 int main(){
+ CloseObserverReleasesLastOwner();
  ContentRacesLocalPairingFlush();
  EveryContentTypeAndConsumerFailure();
  RejectContentBeforePairing();SharedSessionBudget();ContentTerminalRaces();

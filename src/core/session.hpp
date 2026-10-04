@@ -75,7 +75,9 @@ private:
  ContentHandler content_handler_; std::function<void(ShareError)> content_closed_;
  ResultCallback<void> send_done_;
  std::shared_ptr<ByteBudget::Reservation> io_charge_, send_charge_, read_charge_;
- struct Delivery { protocol::Message message; std::shared_ptr<ByteBudget::Reservation> charge; };
+ // Members destruct in reverse order: payload storage must be released before
+ // its reservation becomes available to another session/consumer thread.
+ struct Delivery { std::shared_ptr<ByteBudget::Reservation> charge; protocol::Message message; };
  std::shared_ptr<Delivery> delivery_;
  std::uint64_t delivery_generation_=0;
  std::array<std::uint8_t,4> frame_header_{};

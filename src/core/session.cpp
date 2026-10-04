@@ -46,6 +46,10 @@ void Session::Emit(SessionEvent::Kind kind,std::optional<ShareError> error,std::
 }
 void Session::Fail(ErrorCode code,const char* why){Close({code,why,{}});}
 void Session::Close(ShareError error){
+ // The synchronous internal observer may release the caller's last owner.
+ // Retain this object through all cleanup and public event posting. During
+ // destruction weak_from_this is expired, but the destructor owns that scope.
+ auto keep_alive=weak_from_this().lock();
  if(closed_)return;closed_=true;connected_=false;
  if(deadline_){scheduler_.Cancel(deadline_);deadline_=0;}
  if(socket_)socket_->Close();
@@ -142,7 +146,7 @@ void Session::Deliver(const protocol::Message& message,std::shared_ptr<ByteBudge
  // succeeds, but never admit content while either consent is missing.
  const bool awaiting_flush=hello_received_&&local_confirmed_&&peer_confirmed_&&decision_sent_&&!rejecting_;
  if(!content_handler_||(!connected_&&!awaiting_flush)){Fail(ErrorCode::AuthenticationFailed,"content before authenticated handler");return;}
- delivery_=std::make_shared<Delivery>(Delivery{message,std::move(charge)});
+ delivery_=std::make_shared<Delivery>(Delivery{std::move(charge),message});
  ++delivery_generation_;
  if(connected_)DispatchDelivery();
 }
