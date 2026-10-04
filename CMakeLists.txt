@@ -5,7 +5,7 @@ add_library(unishare_core INTERFACE)
 add_library(unishare::core ALIAS unishare_core)
 target_compile_features(unishare_core INTERFACE cxx_std_17)
 target_include_directories(unishare_core INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(unishare_core INTERFACE OpenSSL::SSL OpenSSL::Crypto protobuf::libprotobuf)
+# External dependency links are added by their first consuming implementation task.
 include(CTest)
 if(BUILD_TESTING)
  add_executable(contracts_test tests/core/contracts_test.cpp)
