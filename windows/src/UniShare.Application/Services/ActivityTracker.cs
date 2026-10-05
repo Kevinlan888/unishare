@@ -62,7 +62,7 @@ public sealed class ActivityTracker : ITransferDrain
                 throw new ArgumentException("Preview does not match incoming activity.", nameof(preview));
             previews[activity] = preview;
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        NotifyChanged();
     }
 
     public OutgoingReservation ReserveOutgoing()
@@ -95,7 +95,7 @@ public sealed class ActivityTracker : ITransferDrain
             reservations.Remove(reservation);
             if (blocked && reservations.Count == 0) { earlyRegistrations.Clear(); earlyProgress.Clear(); }
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        NotifyChanged();
         return record;
     }
 
@@ -129,7 +129,7 @@ public sealed class ActivityTracker : ITransferDrain
     {
         ActivityRecord record;
         lock (gate) record = BeginOutgoingCore(device, operation, kind, displayName, mimeType, byteCount, origin, preview, null);
-        Changed?.Invoke(this, EventArgs.Empty);
+        NotifyChanged();
         return record;
     }
 
@@ -187,7 +187,7 @@ public sealed class ActivityTracker : ITransferDrain
             transfers.Add(offer.TransferId, record.Id);
             Save(record);
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        NotifyChanged();
         return record;
     }
 
@@ -209,7 +209,7 @@ public sealed class ActivityTracker : ITransferDrain
                 return false;
             }
         }
-        if (changed) Changed?.Invoke(this, EventArgs.Empty);
+        if (changed) NotifyChanged();
         return changed;
     }
 
@@ -217,7 +217,7 @@ public sealed class ActivityTracker : ITransferDrain
     {
         bool changed;
         lock (gate) changed = BindCore(activity, transfer);
-        if (changed) Changed?.Invoke(this, EventArgs.Empty);
+        if (changed) NotifyChanged();
         return changed;
     }
 
@@ -258,7 +258,7 @@ public sealed class ActivityTracker : ITransferDrain
             if (record.Status != ActivityStatus.Transferring && !ActivityTransition.CanTransition(record.Status, ActivityStatus.Transferring)) return false;
             Save(record with { Status = ActivityStatus.Transferring, TransferredBytes = bytes, UpdatedAt = UpdateTime(record) });
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        NotifyChanged();
         return true;
     }
 
@@ -270,7 +270,7 @@ public sealed class ActivityTracker : ITransferDrain
         if (terminal.TransferId is not { } transfer) throw new ArgumentException("A transfer ID or explicit activity ID is required.", nameof(terminal));
         bool changed;
         lock (gate) changed = transfers.TryGetValue(transfer, out var id) && CompleteCore(id, terminal, receivedFilePath);
-        if (changed) Changed?.Invoke(this, EventArgs.Empty);
+        if (changed) NotifyChanged();
         return changed;
     }
 
@@ -279,7 +279,7 @@ public sealed class ActivityTracker : ITransferDrain
         ArgumentNullException.ThrowIfNull(terminal);
         bool changed;
         lock (gate) changed = CompleteCore(activity, terminal, receivedFilePath);
-        if (changed) Changed?.Invoke(this, EventArgs.Empty);
+        if (changed) NotifyChanged();
         return changed;
     }
 
@@ -331,7 +331,7 @@ public sealed class ActivityTracker : ITransferDrain
             retry = BeginOutgoingCore(previous.DeviceId, operation, previous.Kind, previous.DisplayName, previous.MimeType,
                 previous.ByteCount, previous.Origin, preview ?? previews.GetValueOrDefault(activity), previous.Id);
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        NotifyChanged();
         return retry;
     }
 
@@ -374,7 +374,7 @@ public sealed class ActivityTracker : ITransferDrain
             if (terminal.Failure is null && activities[activity].Direction == ShareDirection.Incoming) return;
             changed = CompleteCore(activity, terminal, null);
         }
-        if (changed) Changed?.Invoke(this, EventArgs.Empty);
+        if (changed) NotifyChanged();
     }
 
     public Task LoadDeviceAsync(DeviceId device, CancellationToken cancellationToken = default) =>
@@ -483,7 +483,7 @@ public sealed class ActivityTracker : ITransferDrain
                     idle.TrySetResult();
                 }
             }
-            if (changed) Changed?.Invoke(this, EventArgs.Empty);
+            if (changed) NotifyChanged();
         }
     }
 
@@ -550,7 +550,21 @@ public sealed class ActivityTracker : ITransferDrain
         ? record : throw new ArgumentException("Activity is not known.", nameof(activity));
     private void RequireAdmission()
     {
-        if (blocked) throw new InvalidOperationException("New transfers are blocked.");
+        if (blocked) throw new AdmissionBlockedException();
+    }
+    public sealed class AdmissionBlockedException : InvalidOperationException
+    {
+        internal AdmissionBlockedException() : base("New transfers are blocked.") { }
+    }
+    private void NotifyChanged()
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+        foreach (EventHandler handler in handlers.GetInvocationList())
+        {
+            try { handler(this, EventArgs.Empty); }
+            catch { /* Observer faults cannot own transfer state or expose payloads. */ }
+        }
     }
     private void AddActive(ActivityRecord record)
     {

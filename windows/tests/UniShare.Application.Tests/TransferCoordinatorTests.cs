@@ -13,7 +13,7 @@ public sealed class TransferCoordinatorTests
     private static readonly DeviceId Device = new(Guid.NewGuid());
     private static TransferCoordinator Coordinator(Sdk sdk, ActivityTracker tracker, Files files)
     {
-        return new(sdk, tracker, files, new AppSettings { ReceiveDirectory = "configured-receive" });
+        return new(sdk, tracker, files, () => new AppSettings { ReceiveDirectory = "configured-receive" });
     }
 
     [TestMethod]
@@ -387,6 +387,153 @@ public sealed class TransferCoordinatorTests
         }
     }
 
+    [TestMethod]
+    public void BlockedIncomingOfferIsRejectedExactlyOnceWithoutActivityEvenIfRejectionFails()
+    {
+        foreach (var rejectionFails in new[] { false, true })
+        {
+            var sdk = new Sdk(); var tracker = Tracker(); var files = new Files(); var coordinator = Coordinator(sdk, tracker, files);
+            var existing = tracker.BeginOutgoing(Device, new(99), ContentKind.Text, "Text", "text/plain", 1);
+            tracker.BlockNewTransfers();
+            if (rejectionFails) sdk.Rejecting = () => throw new IOException("private rejection C:\\secret\\file");
+            var offer = Offer(ContentKind.File);
+            try
+            {
+                sdk.Emit(new ShareSdkEvent.OfferReceived(offer)); sdk.Emit(new ShareSdkEvent.OfferReceived(offer));
+                Assert.AreEqual(1, sdk.Commands.Count);
+                Assert.AreEqual("reject:" + offer.RequestId, sdk.Commands.Single());
+                Assert.AreEqual(existing.Id, tracker.GetDeviceSnapshot(Device).Single().Id);
+                Assert.IsNull(files.Receive);
+            }
+            finally { tracker.Complete(existing.Id, new(null, null)); }
+        }
+    }
+
+    [TestMethod]
+    public async Task PreparationFailureLeavesPendingDecisionAndAllowsReject()
+    {
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files { CanPrepareReceive = _ => false };
+        var coordinator = Coordinator(sdk, tracker, files); sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File)));
+        await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 1); var id = tracker.GetDeviceSnapshot(Device).Single().Id;
+        Exception? error = null;
+        try { await coordinator.AcceptAsync(id, default); } catch (Exception failure) { error = failure; }
+        Assert.AreEqual(ActivityStatus.AwaitingDecision, tracker.GetDeviceSnapshot(Device).Single().Status);
+        Assert.IsInstanceOfType<IOException>(error); Assert.IsFalse(error!.ToString().Contains("private destination"));
+        Assert.AreEqual(0, sdk.AcceptCount); Assert.IsNull(files.Receive); Assert.IsTrue(tracker.HasActiveTransfers);
+        await coordinator.RejectAsync(id, default);
+        Assert.AreEqual(ActivityStatus.Rejected, tracker.GetDeviceSnapshot(Device).Single().Status);
+        await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [TestMethod]
+    public async Task AcceptanceRetryReadsCorrectedLiveSettingsAfterPreparationFailure()
+    {
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files { CanPrepareReceive = root => root == "repaired-directory" };
+        var current = new AppSettings { ReceiveDirectory = "broken-directory" };
+        var coordinator = new TransferCoordinator(sdk, tracker, files, () => current);
+        sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File))); await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 1);
+        var id = tracker.GetDeviceSnapshot(Device).Single().Id;
+        await Assert.ThrowsAsync<IOException>(() => coordinator.AcceptAsync(id, default));
+        Assert.AreEqual(ActivityStatus.AwaitingDecision, tracker.GetDeviceSnapshot(Device).Single().Status);
+        current = current with { ReceiveDirectory = "repaired-directory" };
+        await coordinator.AcceptAsync(id, default);
+        CollectionAssert.AreEqual(new[] { "broken-directory", "repaired-directory" }, files.ReceiveRoots.ToArray());
+        Assert.AreEqual(1, sdk.AcceptCount); Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
+        Assert.IsTrue(files.Receive!.Deleted);
+    }
+
+    [TestMethod]
+    public async Task ReentrantAcceptSharesOwnershipBeforeProgressNotification()
+    {
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files(); var coordinator = Coordinator(sdk, tracker, files);
+        sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File))); await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 1);
+        var id = tracker.GetDeviceSnapshot(Device).Single().Id; var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sdk.Accept = _ => release.Task;
+        Task? reentrant = null; var entered = false;
+        tracker.Changed += (_, _) =>
+        {
+            if (!entered && tracker.GetDeviceSnapshot(Device).Single().Status == ActivityStatus.Transferring)
+            { entered = true; reentrant = coordinator.AcceptAsync(id, default); }
+        };
+        var first = coordinator.AcceptAsync(id, default);
+        try { Assert.AreSame(first, reentrant); Assert.AreEqual(1, sdk.AcceptCount); Assert.AreEqual(1, files.ReceiveRoots.Count); }
+        finally { release.SetResult(); await first; if (reentrant is not null) await reentrant; }
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
+    }
+
+    [TestMethod]
+    public async Task ReentrantRejectCannotConflictWithReservedAcceptance()
+    {
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files(); var coordinator = Coordinator(sdk, tracker, files);
+        sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File))); await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 1);
+        var id = tracker.GetDeviceSnapshot(Device).Single().Id; var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sdk.Accept = _ => release.Task; Task? rejection = null; var entered = false;
+        tracker.Changed += (_, _) =>
+        {
+            if (!entered && tracker.GetDeviceSnapshot(Device).Single().Status == ActivityStatus.Transferring)
+            { entered = true; rejection = coordinator.RejectAsync(id, default); }
+        };
+        var acceptance = coordinator.AcceptAsync(id, default);
+        try
+        {
+            Assert.IsNotNull(rejection); await Assert.ThrowsAsync<InvalidOperationException>(() => rejection);
+            Assert.AreEqual(0, sdk.Commands.Count); Assert.AreEqual(1, sdk.AcceptCount);
+        }
+        finally { release.SetResult(); await acceptance; }
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
+    }
+
+    [TestMethod]
+    public async Task ReentrantCancelCannotReleaseDrainThenSubmitAcceptance()
+    {
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files(); var coordinator = Coordinator(sdk, tracker, files);
+        var offer = Offer(ContentKind.File);
+        sdk.Cancelling = () => { sdk.Emit(new ShareSdkEvent.TransferCompleted(new(offer.TransferId, new(ShareErrorKind.Cancelled, "cancelled")))); return Task.CompletedTask; };
+        sdk.Emit(new ShareSdkEvent.OfferReceived(offer)); await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 1);
+        var id = tracker.GetDeviceSnapshot(Device).Single().Id; Task? cancellation = null; ActivityStatus? insideStatus = null; var entered = false;
+        tracker.Changed += (_, _) =>
+        {
+            if (!entered && tracker.GetDeviceSnapshot(Device).Single().Status == ActivityStatus.Transferring)
+            {
+                entered = true; cancellation = coordinator.CancelAsync(id, default);
+                insideStatus = tracker.GetDeviceSnapshot(Device).Single().Status;
+            }
+        };
+        await coordinator.AcceptAsync(id, default); if (cancellation is not null) await cancellation;
+        Assert.AreEqual(ActivityStatus.Transferring, insideStatus);
+        Assert.AreEqual(0, sdk.AcceptCount); Assert.AreEqual(ActivityStatus.Cancelled, tracker.GetDeviceSnapshot(Device).Single().Status);
+        Assert.IsTrue(files.Receive!.Deleted); await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [TestMethod]
+    public async Task ThrowingChangedHandlerCannotStrandAcceptedOutgoingOwnership()
+    {
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files(); var coordinator = Coordinator(sdk, tracker, files);
+        tracker.Changed += (_, _) => throw new IOException("private observer payload"); var observed = 0;
+        tracker.Changed += (_, _) => observed++;
+        ActivityId? id = null; Exception? error = null;
+        try { id = await coordinator.SendTextAsync(Device, "body", ShareOrigin.Direct, default); } catch (Exception failure) { error = failure; }
+        sdk.Finish(new(null, null));
+        Assert.IsNull(error); Assert.IsNotNull(id);
+        await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status); Assert.IsTrue(observed >= 2);
+    }
+
+    [TestMethod]
+    public async Task ThrowingPreviewNotificationCannotPreventIncomingTextCompletion()
+    {
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files(); var coordinator = Coordinator(sdk, tracker, files);
+        sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.Text))); await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 1);
+        var id = tracker.GetDeviceSnapshot(Device).Single().Id;
+        sdk.Accept = path => File.WriteAllTextAsync(path, "body");
+        tracker.Changed += (_, _) => { if (tracker.GetPreview(id) is not null) throw new IOException("private observer payload"); };
+        var previewObserved = false; tracker.Changed += (_, _) => previewObserved |= tracker.GetPreview(id) is not null;
+        Exception? error = null; try { await coordinator.AcceptAsync(id, default); } catch (Exception failure) { error = failure; }
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
+        Assert.IsNull(error); Assert.IsTrue(previewObserved); Assert.IsTrue(files.Destination!.Deleted);
+        await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private static bool IsFinished(ActivityStatus status) => status is ActivityStatus.Completed or ActivityStatus.Failed or ActivityStatus.Rejected or ActivityStatus.Cancelled;
 
     private static ActivityTracker Tracker(Repository? repository = null) => new(repository ?? new(), new Clock());
@@ -439,8 +586,9 @@ public sealed class TransferCoordinatorTests
     {
         public Source? Source { get; private set; } public Destination? Destination { get; private set; } public Receive? Receive { get; private set; }
         public bool FailPublish { get; set; } public TaskCompletionSource? PublishGate { get; set; }
+        public Func<string, bool>? CanPrepareReceive { get; set; } public List<string> ReceiveRoots { get; } = [];
         public TaskCompletionSource PublishEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task<PreparedReceive> CreateReceiveAsync(IncomingOffer offer, string receiveRoot, CancellationToken cancellationToken) { Receive = new(Path.GetTempFileName()); return Task.FromResult<PreparedReceive>(Receive); }
+        public Task<PreparedReceive> CreateReceiveAsync(IncomingOffer offer, string receiveRoot, CancellationToken cancellationToken) { ReceiveRoots.Add(receiveRoot); if (CanPrepareReceive is not null && !CanPrepareReceive(receiveRoot)) throw new IOException("private destination " + receiveRoot); Receive = new(Path.GetTempFileName()); return Task.FromResult<PreparedReceive>(Receive); }
         public async Task<string> PublishAsync(PreparedReceive receive, CancellationToken cancellationToken) { PublishEntered.TrySetResult(); if (PublishGate is not null) await PublishGate.Task; cancellationToken.ThrowIfCancellationRequested(); if (FailPublish) throw new IOException("private destination"); return "published.txt"; }
         public Task AbortAsync(PreparedReceive receive) => receive.DisposeAsync().AsTask();
         public Task<TransientDestination> CreateTextDestinationAsync(CancellationToken cancellationToken) { Destination = new(Path.GetTempFileName()); return Task.FromResult<TransientDestination>(Destination); }

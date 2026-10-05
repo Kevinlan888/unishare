@@ -11,14 +11,15 @@ public sealed class TransferCoordinator
     private readonly IShareSdkClient sdk;
     private readonly ActivityTracker tracker;
     private readonly ITransferFiles files;
-    private readonly AppSettings settings;
+    private readonly Func<AppSettings> settings;
     private readonly object gate = new();
     // These sources never cross the activity repository boundary.
     private readonly Dictionary<ActivityId, Outgoing> outgoing = [];
     private readonly Dictionary<ActivityId, Incoming> incoming = [];
     private readonly HashSet<TransferId> incomingTransfers = [];
+    private readonly HashSet<(RequestId Request, TransferId Transfer)> blockedOffers = [];
 
-    public TransferCoordinator(IShareSdkClient sdk, ActivityTracker tracker, ITransferFiles files, AppSettings settings)
+    public TransferCoordinator(IShareSdkClient sdk, ActivityTracker tracker, ITransferFiles files, Func<AppSettings> settings)
     {
         this.sdk = sdk ?? throw new ArgumentNullException(nameof(sdk));
         this.tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
@@ -67,12 +68,38 @@ public sealed class TransferCoordinator
     public Task AcceptAsync(ActivityId activity, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        Incoming work;
+        TaskCompletionSource completion;
         lock (gate)
         {
-            var work = RequireIncoming(activity);
+            work = RequireIncoming(activity);
             if (work.Acceptance is not null) return work.Acceptance;
             if (work.Cancelled || work.Rejecting || IsTerminal(Record(work).Status)) throw new InvalidOperationException("Offer is already finished.");
-            return work.Acceptance = ReceiveAsync(work, cancellationToken);
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            work.Acceptance = completion.Task;
+        }
+        // Install the shared owner before any destination or Changed callback
+        // can reenter; the body and notifications run outside this gate.
+        _ = RunAcceptanceAsync(work, completion, cancellationToken);
+        return completion.Task;
+    }
+
+    private async Task RunAcceptanceAsync(Incoming work, TaskCompletionSource completion, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!await ReceiveAsync(work, cancellationToken).ConfigureAwait(false))
+            {
+                lock (gate) if (work.Acceptance == completion.Task) work.Acceptance = null;
+                completion.TrySetException(new IOException("Unable to prepare incoming content. Check the receive directory."));
+                return;
+            }
+            completion.TrySetResult();
+        }
+        catch
+        {
+            tracker.Complete(work.Id, Failed(work.Offer.TransferId));
+            completion.TrySetException(new IOException("Unable to receive incoming content."));
         }
     }
 
@@ -203,12 +230,14 @@ public sealed class TransferCoordinator
         finally { if (stage is not null) try { await stage.DisposeAsync().ConfigureAwait(false); } catch { } }
     }
 
-    private async Task ReceiveAsync(Incoming work, CancellationToken cancellationToken)
+    private async Task<bool> ReceiveAsync(Incoming work, CancellationToken cancellationToken)
     {
         TransientDestination? text = null; PreparedReceive? receive = null;
         TransferTerminal terminal = new(work.Offer.TransferId, null);
         string? finalPath = null;
         ShareContent? preview = null;
+        var preparingDestination = false;
+        var preparationFailed = false;
         using var cancellation = cancellationToken.Register(() => _ = RequestCancellationAsync(work.Id));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, work.Cancellation.Token);
         var contentCancellation = linked.Token;
@@ -217,11 +246,22 @@ public sealed class TransferCoordinator
             if (work.Offer.Kind is not (ContentKind.Text or ContentKind.Image or ContentKind.File)) throw new IOException("Unsupported incoming content.");
             if (work.Offer.Kind == ContentKind.Image && (!work.Offer.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
                 work.Offer.ByteCount is 0 or > 100UL * 1024 * 1024)) throw new IOException("Invalid incoming image metadata.");
+            preparingDestination = true;
             if (work.Offer.Kind == ContentKind.Text) text = await files.CreateTextDestinationAsync(contentCancellation).ConfigureAwait(false);
-            else receive = await files.CreateReceiveAsync(work.Offer, settings.ReceiveDirectory ?? string.Empty, contentCancellation).ConfigureAwait(false);
+            else receive = await files.CreateReceiveAsync(work.Offer, settings().ReceiveDirectory ?? string.Empty, contentCancellation).ConfigureAwait(false);
+            preparingDestination = false;
             contentCancellation.ThrowIfCancellationRequested();
             tracker.ApplyProgress(new(work.Offer.TransferId, 0, work.Offer.ByteCount));
-            await sdk.AcceptAsync(work.Offer.RequestId, text?.Path ?? receive!.StagingPath, CancellationToken.None).ConfigureAwait(false);
+            Task accepted;
+            lock (gate)
+            {
+                // A reentrant cancel during progress must retire the prepared
+                // sink without submitting acceptance after the request ended.
+                contentCancellation.ThrowIfCancellationRequested();
+                if (IsTerminal(Record(work).Status)) throw new OperationCanceledException();
+                accepted = sdk.AcceptAsync(work.Offer.RequestId, text?.Path ?? receive!.StagingPath, CancellationToken.None);
+            }
+            await accepted.ConfigureAwait(false);
             lock (gate) if (work.Cancelled || IsTerminal(Record(work).Status)) throw new OperationCanceledException();
             if (text is not null)
             {
@@ -241,7 +281,11 @@ public sealed class TransferCoordinator
             }
         }
         catch (OperationCanceledException) { terminal = Cancelled(work.Offer.TransferId); }
-        catch { terminal = Failed(work.Offer.TransferId); }
+        catch
+        {
+            if (preparingDestination) preparationFailed = true;
+            else terminal = Failed(work.Offer.TransferId);
+        }
         finally
         {
             try
@@ -249,7 +293,15 @@ public sealed class TransferCoordinator
                 if (text is not null) await text.DisposeAsync().ConfigureAwait(false);
                 if (receive is not null && finalPath is null) await files.AbortAsync(receive).ConfigureAwait(false);
             }
-            catch { terminal = Failed(work.Offer.TransferId); finalPath = null; }
+            catch { preparationFailed = false; terminal = Failed(work.Offer.TransferId); finalPath = null; }
+        }
+        if (preparationFailed)
+        {
+            lock (gate)
+            {
+                if (!work.Cancelled) return false; // The native request remains pending and can be retried/rejected.
+            }
+            terminal = Cancelled(work.Offer.TransferId);
         }
         if (finalPath is not null)
         {
@@ -258,7 +310,7 @@ public sealed class TransferCoordinator
             try { if (preview is not null) tracker.PublishIncomingPreview(work.Id, preview); }
             finally { tracker.Complete(work.Id, new(work.Offer.TransferId, null), finalPath); }
             try { await receive!.DisposeAsync().ConfigureAwait(false); } catch { }
-            return;
+            return true;
         }
         if (terminal.Failure is null && preview is not null)
         {
@@ -266,6 +318,7 @@ public sealed class TransferCoordinator
             else tracker.PublishIncomingPreview(work.Id, preview);
         }
         tracker.Complete(work.Id, terminal, finalPath);
+        return true;
     }
 
     private static async Task<byte[]> ReadImageAsync(string path, ulong byteCount, CancellationToken cancellationToken)
@@ -322,6 +375,12 @@ public sealed class TransferCoordinator
             }
             if (ReceivePolicy.Decide(sdk.GetTrustedDevices().Contains(offer.DeviceId), offer.Kind) == ReceiveDecision.AutoAccept)
                 await AcceptAsync(record.Id, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (ActivityTracker.AdmissionBlockedException)
+        {
+            lock (gate) if (!blockedOffers.Add((offer.RequestId, offer.TransferId))) return;
+            try { await sdk.RejectAsync(offer.RequestId, CancellationToken.None).ConfigureAwait(false); }
+            catch { /* Rejection failure is contained without storing/logging its payload. */ }
         }
         catch { /* No exception body or destination is retained or diagnosed. */ }
     }

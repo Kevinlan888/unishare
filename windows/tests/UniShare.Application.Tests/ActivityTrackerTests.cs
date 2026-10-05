@@ -92,6 +92,26 @@ public sealed class ActivityTrackerTests
     }
 
     [TestMethod]
+    public async Task ThrowingChangedSubscriberCannotInterruptReservationCommitOrOtherObservers()
+    {
+        var repository = new Repository(); var tracker = Create(repository); var observed = 0; var notificationsOutsideGate = true;
+        tracker.Changed += (_, _) => throw new IOException("private observer payload");
+        tracker.Changed += (_, _) =>
+        {
+            observed++;
+            notificationsOutsideGate &= Task.Run(() => tracker.GetDeviceSnapshot(Device)).Wait(TimeSpan.FromSeconds(1));
+        };
+        using var reservation = tracker.ReserveOutgoing(); Exception? commitError = null;
+        try { reservation.Commit(Device, new(1), ContentKind.Text, "Text", "text/plain", 4); } catch (Exception error) { commitError = error; }
+        var record = tracker.GetDeviceSnapshot(Device).Single(); Exception? completionError = null;
+        try { tracker.Complete(record.Id, new(null, null)); } catch (Exception error) { completionError = error; }
+        Assert.IsNull(commitError); Assert.IsNull(completionError);
+        Assert.AreEqual(2, observed); Assert.IsTrue(notificationsOutsideGate);
+        await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5)); await tracker.SavePendingAsync();
+        Assert.AreEqual(ActivityStatus.Completed, repository.Records[record.Id].Status);
+    }
+
+    [TestMethod]
     public void OutgoingAndIncomingEnterTransferringBeforeCompletion()
     {
         var outgoing = Create();
