@@ -41,8 +41,8 @@ public final class PortTests extends Instrumentation {
     void dnsOwnership() throws Exception {
         class Fake implements DnsPort.Boundary {
             Events events;int advertised;int registration=-1;
-            public void publish(DnsPort.Record r,java.util.function.IntConsumer cb){advertised=r.port;cb.accept(registration);}
-            public void browse(Events e){events=e;} public void stop(){}
+            public void publish(DnsPort.Record r,DnsPort.Admission admission,java.util.function.IntConsumer cb){advertised=r.port;cb.accept(registration);}
+            public void browse(DnsPort.Admission admission,Events e){events=e;} public void stop(){}
         }
         Fake boundary=new Fake();List<byte[]> found=new ArrayList<>();DnsPort dns=new DnsPort(boundary,(id,bytes)->found.add(bytes));
         DnsPort.Record service=new DnsPort.Record();service.instance="peer";service.scope="net:42";service.port=12345;service.addresses.add("192.0.2.1");
@@ -63,8 +63,8 @@ public final class PortTests extends Instrumentation {
     static final class CatalogPorts {
         long nativeKey;final DnsPort dns;
         CatalogPorts(android.net.nsd.NsdServiceInfo info){dns=new DnsPort(new DnsPort.Boundary(){
-            public void publish(DnsPort.Record r,java.util.function.IntConsumer c){}
-            public void browse(Events e){e.found(AndroidNsd.record(info));}public void stop(){}
+            public void publish(DnsPort.Record r,DnsPort.Admission admission,java.util.function.IntConsumer c){}
+            public void browse(DnsPort.Admission admission,Events e){e.found(AndroidNsd.record(info));}public void stop(){}
         },(id,bytes)->NativeBridge.complete(nativeKey,id,bytes));}
         byte[] call(int command,byte[] data){if(command==42)dns.stop();return Packet.success(new byte[0]);}
         void start(int command,long id,byte[] data){try{dns.browse(id);}catch(Exception e){NativeBridge.complete(nativeKey,id,Packet.failure(e,2));}}
@@ -112,6 +112,57 @@ public final class PortTests extends Instrumentation {
             check(emitted.size()==(mode.equals("publish")?1:0),"retired failure cannot deliver late callback: "+mode);
         }
     }
+    void dnsStopBeforeBoundaryAdmission()throws Exception{
+        for(boolean publish:new boolean[]{true,false}){
+            Set<Object> live=java.util.concurrent.ConcurrentHashMap.newKeySet();java.util.concurrent.atomic.AtomicInteger submitted=new java.util.concurrent.atomic.AtomicInteger();
+            class Framework implements AndroidNsd.Framework {
+                public void register(android.net.nsd.NsdServiceInfo i,android.net.nsd.NsdManager.RegistrationListener l){submitted.incrementAndGet();live.add(l);l.onServiceRegistered(i);}
+                public void unregister(android.net.nsd.NsdManager.RegistrationListener l){live.remove(l);}
+                public void discover(int sdk,java.util.concurrent.Executor e,android.net.nsd.NsdManager.DiscoveryListener l){submitted.incrementAndGet();live.add(l);l.onDiscoveryStarted("_share._tcp.");}
+                public void stopDiscovery(android.net.nsd.NsdManager.DiscoveryListener l){live.remove(l);}
+                public void resolve(android.net.nsd.NsdServiceInfo i,android.net.nsd.NsdManager.ResolveListener l){}
+                public void registerUpdates(android.net.nsd.NsdServiceInfo i,java.util.concurrent.Executor e,Object c){}
+                public void unregisterUpdates(Object c){}
+            }
+            AndroidNsd nsd=new AndroidNsd(new Framework(),Runnable::run,34);
+            java.util.concurrent.CountDownLatch entering=new java.util.concurrent.CountDownLatch(1),release=new java.util.concurrent.CountDownLatch(1);
+            DnsPort.Boundary paused=new DnsPort.Boundary(){
+                void pause()throws Exception{entering.countDown();check(release.await(2,java.util.concurrent.TimeUnit.SECONDS),"admission release");}
+                public void publish(DnsPort.Record r,DnsPort.Admission admission,java.util.function.IntConsumer c)throws Exception{pause();nsd.publish(r,admission,c);}
+                public void browse(DnsPort.Admission admission,Events e)throws Exception{pause();nsd.browse(admission,e);}
+                public void stop(){nsd.stop();}
+            };
+            java.util.concurrent.ConcurrentLinkedQueue<byte[]> emitted=new java.util.concurrent.ConcurrentLinkedQueue<>();DnsPort dns=new DnsPort(paused,(id,b)->emitted.add(b));
+            java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+            Thread submit=new Thread(()->{try{if(publish){DnsPort.Record r=new DnsPort.Record();r.instance="peer";r.port=12345;dns.publish(10,r);}else dns.browse(11);}catch(Throwable e){failure.set(e);}});submit.setDaemon(true);submit.start();
+            check(entering.await(2,java.util.concurrent.TimeUnit.SECONDS),"pause before AndroidNsd generation capture");
+            try{dns.stop();release.countDown();submit.join(1000);check(!submit.isAlive()&&failure.get()==null,"retired admission must finish cleanly");
+                check(live.isEmpty(),"retired "+(publish?"publish":"browse")+" cannot leave registration live after Stop-before-admission");
+                check(submitted.get()==0,"retired pre-boundary admission never submits to framework");
+                check(emitted.size()==(publish?1:0),"retired admission preserves one-shot cancellation");
+            }finally{release.countDown();nsd.stop();}
+            if(publish){DnsPort.Record r=new DnsPort.Record();r.instance="new-peer";r.port=12345;dns.publish(12,r);}else dns.browse(13);
+            check(live.size()==1,"new-generation admission still registers after restart");dns.stop();check(live.isEmpty(),"restart cleanup");
+        }
+    }
+    void dnsStopKeepsAdmissionRetiredUntilCleanup()throws Exception{
+        java.util.concurrent.CountDownLatch firstCleaning=new java.util.concurrent.CountDownLatch(1),bothCleaning=new java.util.concurrent.CountDownLatch(2);
+        java.util.concurrent.CountDownLatch releaseFirst=new java.util.concurrent.CountDownLatch(1),releaseSecond=new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger submissions=new java.util.concurrent.atomic.AtomicInteger(),stops=new java.util.concurrent.atomic.AtomicInteger();
+        DnsPort dns=new DnsPort(new DnsPort.Boundary(){
+            public void publish(DnsPort.Record r,DnsPort.Admission a,java.util.function.IntConsumer c){submissions.incrementAndGet();c.accept(-1);}
+            public void browse(DnsPort.Admission a,Events e){submissions.incrementAndGet();}
+            public void stop(){int which=stops.incrementAndGet();if(which>2)return;firstCleaning.countDown();bothCleaning.countDown();try{check((which==1?releaseFirst:releaseSecond).await(3,java.util.concurrent.TimeUnit.SECONDS),"cleanup release");}catch(InterruptedException e){throw new AssertionError(e);}}
+        },(id,b)->{});
+        Thread first=new Thread(dns::stop),second=new Thread(dns::stop);first.setDaemon(true);second.setDaemon(true);first.start();
+        check(firstCleaning.await(2,java.util.concurrent.TimeUnit.SECONDS),"first Stop cleanup paused");second.start();check(bothCleaning.await(2,java.util.concurrent.TimeUnit.SECONDS),"both Stop cleanups paused");
+        try{for(boolean publish:new boolean[]{true,false}){boolean cancelled=false;try{if(publish){DnsPort.Record r=new DnsPort.Record();r.port=12345;dns.publish(20,r);}else dns.browse(21);}catch(PortFailure e){cancelled=e.code==8;}
+            check(cancelled,"admission during active Stop must return Cancelled");}check(submissions.get()==0,"cleanup cannot race newly submitted registrations");
+            releaseFirst.countDown();first.join(1000);check(!first.isAlive()&&second.isAlive(),"first cleanup completes while second remains paused");
+            boolean cancelled=false;try{dns.browse(23);}catch(PortFailure e){cancelled=e.code==8;}check(cancelled,"first completed Stop cannot reopen admission while another cleanup remains");
+        }finally{releaseFirst.countDown();releaseSecond.countDown();first.join(1000);second.join(1000);}
+        check(!first.isAlive()&&!second.isAlive(),"both Stop cleanups complete");dns.browse(22);check(submissions.get()==1,"restart admission reopens only after all Stop cleanup");dns.stop();
+    }
     void clipboardAndPermission() throws Exception {
         class Fake implements ClipboardPort.Boundary {android.content.ClipData data;public android.content.ClipData get(){return data;}public void set(android.content.ClipData d){data=d;}}
         Fake boundary=new Fake();ClipboardPort clipboard=new ClipboardPort(getTargetContext(),boundary);
@@ -150,15 +201,15 @@ public final class PortTests extends Instrumentation {
         Bundle result=new Bundle();
         try {
             runCase("identityRestart",1,this::identityRestart);runCase("contentStreams",2,this::contentStreams);runCase("dnsOwnership",3,this::dnsOwnership);
-            runCase("clipboardAndPermission",4,this::clipboardAndPermission);runCase("identityCorruptionAndImages",5,this::identityCorruptionAndImages);runCase("nativeBridge",6,this::nativeBridge);runCase("resolvedCatalog",7,this::resolvedCatalog);runCase("dnsStopDuringSubmissionFailure",8,this::dnsStopDuringSubmissionFailure);
-            result.putString("stream","PASS 8 internal adapter cases\n");finish(-1,result);
+            runCase("clipboardAndPermission",4,this::clipboardAndPermission);runCase("identityCorruptionAndImages",5,this::identityCorruptionAndImages);runCase("nativeBridge",6,this::nativeBridge);runCase("resolvedCatalog",7,this::resolvedCatalog);runCase("dnsStopDuringSubmissionFailure",8,this::dnsStopDuringSubmissionFailure);runCase("dnsStopBeforeBoundaryAdmission",9,this::dnsStopBeforeBoundaryAdmission);runCase("dnsStopKeepsAdmissionRetiredUntilCleanup",10,this::dnsStopKeepsAdmissionRetiredUntilCleanup);
+            result.putString("stream","PASS 10 internal adapter cases\n");finish(-1,result);
         }
         catch(Throwable e) { result.putString("stream","FAIL "+android.util.Log.getStackTraceString(e)); finish(1,result); }
     }
     interface Case {void run()throws Exception;}
     void runCase(String name,int index,Case test)throws Exception{
         Bundle status=new Bundle();status.putString("id","UniSharePortTests");status.putString("class",getClass().getName());status.putString("test",name);
-        status.putInt("current",index);status.putInt("numtests",8);sendStatus(1,status);
+        status.putInt("current",index);status.putInt("numtests",10);sendStatus(1,status);
         try{test.run();sendStatus(0,status);}catch(Throwable e){status.putString("stack",android.util.Log.getStackTraceString(e));sendStatus(-2,status);throw e;}
     }
 }

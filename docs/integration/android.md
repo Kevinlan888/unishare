@@ -160,3 +160,9 @@ those monitors. Stop retires the generation before cleanup; submissions finishin
 after Stop unregister their late registrations and cannot advance a new resolve
 queue. This lets synchronous framework submission failures race with Stop without
 holding opposing adapter monitors.
+A shared admission token spans DnsPort and AndroidNsd. Stop retires that token
+before calling framework cleanup. A delayed operation entering AndroidNsd after
+Stop cannot adopt its newer generation; callback/resolve ownership and late
+registration cleanup also check the original admission token. New operations
+capture a fresh token for restart after all active Stop cleanup has completed.
+Publish/browse attempts during that cleanup return Cancelled.
