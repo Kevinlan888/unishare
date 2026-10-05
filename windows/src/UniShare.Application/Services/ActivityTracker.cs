@@ -14,7 +14,9 @@ public sealed class ActivityTracker : ITransferDrain
     private readonly Dictionary<OperationId, TransferId> earlyRegistrations = [];
     private readonly Dictionary<TransferId, ulong> earlyProgress = [];
     private readonly Dictionary<ActivityId, ActivityId> aliases = [];
-    private readonly Dictionary<DeviceId, int> loadingDevices = [];
+    private readonly HashSet<DeviceId> loadingDevices = [];
+    private readonly Dictionary<DeviceId, Task> historyLoads = [];
+    private readonly HashSet<DeviceId> historyReady = [];
     private readonly HashSet<ActivityId> deferredIncoming = [];
     // Process-only content is deliberately separate from the repository contract.
     private readonly Dictionary<ActivityId, ShareContent> previews = [];
@@ -86,6 +88,10 @@ public sealed class ActivityTracker : ITransferDrain
     public ActivityRecord AddIncomingOffer(IncomingOffer offer, ShareOrigin origin = ShareOrigin.Direct)
     {
         ArgumentNullException.ThrowIfNull(offer);
+        // Repository upserts are by local ID and provide no targeted deletion.
+        // Establish durable transfer identity before any incoming ID is written,
+        // even when an offer arrives before the UI explicitly requests history.
+        _ = StartHistoryLoad(offer.DeviceId, refresh: false);
         ActivityRecord record;
         lock (gate)
         {
@@ -104,7 +110,7 @@ public sealed class ActivityTracker : ITransferDrain
             AddActive(record);
             // Until history returns, an offer may be a replay of an existing
             // durable transfer. Do not publish or persist its provisional ID.
-            if (loadingDevices.ContainsKey(offer.DeviceId)) deferredIncoming.Add(record.Id);
+            if (!historyReady.Contains(offer.DeviceId) || loadingDevices.Contains(offer.DeviceId)) deferredIncoming.Add(record.Id);
             transfers.Add(offer.TransferId, record.Id);
             Save(record);
         }
@@ -298,13 +304,45 @@ public sealed class ActivityTracker : ITransferDrain
         if (changed) Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public async Task LoadDeviceAsync(DeviceId device, CancellationToken cancellationToken = default)
+    public Task LoadDeviceAsync(DeviceId device, CancellationToken cancellationToken = default) =>
+        StartHistoryLoad(device, refresh: true).WaitAsync(cancellationToken);
+
+    private Task StartHistoryLoad(DeviceId device, bool refresh)
     {
-        var changed = false;
-        lock (gate) loadingDevices[device] = loadingDevices.GetValueOrDefault(device) + 1;
+        TaskCompletionSource completion;
+        lock (gate)
+        {
+            if (historyLoads.TryGetValue(device, out var loading) && !loading.IsCompleted) return loading;
+            if (!refresh && historyReady.Contains(device)) return Task.CompletedTask;
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            historyLoads[device] = completion.Task;
+            loadingDevices.Add(device);
+        }
+        // Start after releasing the gate; even synchronously completing storage
+        // cannot run under the tracker lock. Explicit loads join this same task.
+        _ = FinishHistoryLoadAsync(device, completion);
+        return completion.Task;
+    }
+
+    private async Task FinishHistoryLoadAsync(DeviceId device, TaskCompletionSource completion)
+    {
         try
         {
-            var loaded = await repository.LoadDeviceAsync(device, cancellationToken).ConfigureAwait(false);
+            await LoadHistoryAsync(device).ConfigureAwait(false);
+            completion.TrySetResult();
+        }
+        catch (Exception error) { completion.TrySetException(error); }
+    }
+
+    private async Task LoadHistoryAsync(DeviceId device)
+    {
+        var changed = false;
+        var succeeded = false;
+        try
+        {
+            // Cancelling a caller's wait cannot release unverified provisional
+            // identities into storage. Accepted hydration owns reconciliation.
+            var loaded = await repository.LoadDeviceAsync(device, CancellationToken.None).ConfigureAwait(false);
             lock (gate)
             {
                 foreach (var record in loaded)
@@ -346,15 +384,17 @@ public sealed class ActivityTracker : ITransferDrain
                     }
                     changed = true;
                 }
+                succeeded = true;
             }
         }
         finally
         {
             lock (gate)
             {
-                if (--loadingDevices[device] == 0)
+                loadingDevices.Remove(device);
+                if (succeeded)
                 {
-                    loadingDevices.Remove(device);
+                    historyReady.Add(device);
                     foreach (var id in deferredIncoming.Where(id => activities[id].DeviceId == device).ToArray())
                     {
                         deferredIncoming.Remove(id);
@@ -362,6 +402,7 @@ public sealed class ActivityTracker : ITransferDrain
                         changed = true;
                     }
                 }
+                else historyReady.Remove(device);
                 if (active.Count == 0)
                 {
                     if (blocked) operations.Clear();
@@ -395,9 +436,19 @@ public sealed class ActivityTracker : ITransferDrain
     // on later flushes; successful writes can be retired without losing failures.
     public async Task SavePendingAsync(CancellationToken cancellationToken = default)
     {
-        Task[] writes;
-        lock (gate) writes = pendingWrites.ToArray();
-        try { await Task.WhenAll(writes).WaitAsync(cancellationToken).ConfigureAwait(false); }
+        Task[] loads;
+        lock (gate) loads = deferredIncoming.Select(id => activities[id].DeviceId).Distinct()
+            .Select(device => historyLoads[device]).ToArray();
+        try
+        {
+            // Deferred incoming work was accepted before the flush too. Its
+            // canonical writes are queued only after history readiness, and a
+            // failed read must surface rather than persist a second local ID.
+            await Task.WhenAll(loads).WaitAsync(cancellationToken).ConfigureAwait(false);
+            Task[] writes;
+            lock (gate) writes = pendingWrites.ToArray();
+            await Task.WhenAll(writes).WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
         finally { lock (gate) pendingWrites.RemoveAll(value => value.IsCompletedSuccessfully); }
     }
 

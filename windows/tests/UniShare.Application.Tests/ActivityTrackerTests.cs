@@ -306,11 +306,13 @@ public sealed class ActivityTrackerTests
         var loading = tracker.LoadDeviceAsync(Device);
         var replay = tracker.AddIncomingOffer(Offer());
         Assert.IsFalse(tracker.GetDeviceSnapshot(Device).Any(value => value.Id == replay.Id));
-        await tracker.SavePendingAsync();
+        var saving = tracker.SavePendingAsync();
+        Assert.IsFalse(saving.IsCompleted);
         Assert.IsFalse(repository.Writes.Any(value => value.Id == replay.Id));
         var idle = tracker.WaitForIdleAsync(default);
         repository.Loading.SetResult(new[] { repository.Records[canonical.Id] });
         await loading;
+        await saving.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.AreEqual(1, tracker.GetDeviceSnapshot(Device).Count);
         Assert.AreEqual(canonical.Id, tracker.GetDeviceSnapshot(Device).Single().Id);
         Assert.IsFalse(tracker.GetDeviceSnapshot(Device).Any(value => value.Id == replay.Id));
@@ -350,6 +352,87 @@ public sealed class ActivityTrackerTests
         Assert.IsFalse(repository.Writes.Any(value => value.Id == replay.Id));
         Assert.AreEqual(1, repository.Records.Count);
         Assert.AreEqual(0, tracker.ActiveCount);
+    }
+
+    [TestMethod]
+    public async Task OfferBeforeExplicitLoadCannotPersistASecondDurableIdentity()
+    {
+        var repository = new Repository();
+        var original = Create(repository);
+        var canonical = original.AddIncomingOffer(Offer());
+        original.Complete(canonical.Id, new(Transfer, null), "C:\\Downloads\\report.txt");
+        await original.SavePendingAsync();
+        var tracker = Create(repository);
+        var offered = tracker.AddIncomingOffer(Offer());
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(1, repository.Records.Count);
+        await tracker.LoadDeviceAsync(Device);
+        var snapshot = tracker.GetDeviceSnapshot(Device);
+        Assert.AreEqual(1, snapshot.Count);
+        Assert.AreEqual(canonical.Id, snapshot.Single().Id);
+        Assert.AreEqual(ActivityStatus.Completed, snapshot.Single().Status);
+        Assert.AreEqual("C:\\Downloads\\report.txt", snapshot.Single().ReceivedFilePath);
+        Assert.AreEqual(0, tracker.ActiveCount);
+        Assert.IsFalse(tracker.HasActiveTransfers);
+        await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsFalse(tracker.Complete(offered.Id, Failure(ShareErrorKind.StorageFailed, Transfer)));
+        Assert.AreEqual(canonical.Id, tracker.AddIncomingOffer(Offer()).Id);
+        Assert.AreEqual(1, repository.Records.Count);
+    }
+
+    [TestMethod]
+    public async Task OfferStartsHistoryReadinessBeforePersistenceAndExplicitLoadJoinsIt()
+    {
+        var repository = new Repository();
+        var original = Create(repository);
+        var canonical = original.AddIncomingOffer(Offer());
+        original.Complete(canonical.Id, new(Transfer, null), "C:\\Downloads\\report.txt");
+        await original.SavePendingAsync();
+        var before = repository.LoadCalls;
+        repository.Loading = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tracker = Create(repository);
+        var provisional = tracker.AddIncomingOffer(Offer());
+        Assert.AreEqual(before + 1, repository.LoadCalls);
+        Assert.AreEqual(0, tracker.GetDeviceSnapshot(Device).Count);
+        var idle = tracker.WaitForIdleAsync(default);
+        var saving = tracker.SavePendingAsync();
+        Assert.IsFalse(saving.IsCompleted);
+        Assert.IsFalse(repository.Writes.Any(value => value.Id == provisional.Id));
+        var loading = tracker.LoadDeviceAsync(Device);
+        Assert.AreEqual(before + 1, repository.LoadCalls);
+        repository.Loading.SetResult(new[] { repository.Records[canonical.Id] });
+        await Task.WhenAll(saving, loading, idle).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(canonical.Id, tracker.GetDeviceSnapshot(Device).Single().Id);
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
+        Assert.AreEqual(0, tracker.ActiveCount);
+        Assert.IsFalse(tracker.Complete(provisional.Id, new(Transfer, null), "C:\\Downloads\\duplicate.txt"));
+        Assert.IsFalse(repository.Writes.Any(value => value.Id == provisional.Id));
+        Assert.AreEqual(1, repository.Records.Count);
+    }
+
+    [TestMethod]
+    public async Task FailedHistoryReadCannotPersistProvisionalIdentityAndCanRetrySafely()
+    {
+        var repository = new Repository();
+        var original = Create(repository);
+        var canonical = original.AddIncomingOffer(Offer());
+        original.Complete(canonical.Id, new(Transfer, null));
+        await original.SavePendingAsync();
+        repository.Loading = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        repository.Loading.SetException(new IOException("history unavailable"));
+        var tracker = Create(repository);
+        var provisional = tracker.AddIncomingOffer(Offer());
+        await Assert.ThrowsAsync<IOException>(() => tracker.SavePendingAsync());
+        Assert.AreEqual(0, tracker.GetDeviceSnapshot(Device).Count);
+        Assert.IsFalse(repository.Writes.Any(value => value.Id == provisional.Id));
+        Assert.AreEqual(1, repository.Records.Count);
+        repository.Loading = null;
+        await tracker.LoadDeviceAsync(Device);
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(canonical.Id, tracker.GetDeviceSnapshot(Device).Single().Id);
+        Assert.IsFalse(tracker.Complete(provisional.Id, Failure(ShareErrorKind.StorageFailed, Transfer)));
+        Assert.AreEqual(0, tracker.ActiveCount);
+        Assert.AreEqual(1, repository.Records.Count);
     }
 
     [TestMethod]
@@ -555,6 +638,7 @@ public sealed class ActivityTrackerTests
         public TaskCompletionSource? Release { get; set; }
         public TaskCompletionSource<IReadOnlyList<ActivityRecord>>? Loading { get; set; }
         public bool FailFirstWrite { get; set; }
+        public int LoadCalls { get; private set; }
         public int MaxConcurrentWrites { get; private set; }
         private int concurrentWrites;
         private int writeAttempts;
@@ -572,8 +656,11 @@ public sealed class ActivityTrackerTests
             }
             finally { Interlocked.Decrement(ref concurrentWrites); }
         }
-        public Task<IReadOnlyList<ActivityRecord>> LoadDeviceAsync(DeviceId device, CancellationToken cancellationToken) =>
-            Loading?.Task ?? Task.FromResult<IReadOnlyList<ActivityRecord>>(Records.Values.Where(value => value.DeviceId == device).ToArray());
+        public Task<IReadOnlyList<ActivityRecord>> LoadDeviceAsync(DeviceId device, CancellationToken cancellationToken)
+        {
+            LoadCalls++;
+            return Loading?.Task ?? Task.FromResult<IReadOnlyList<ActivityRecord>>(Records.Values.Where(value => value.DeviceId == device).ToArray());
+        }
         public Task<IReadOnlyList<ActivityRecord>> SearchAsync(ActivityQuery query, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<ActivityRecord>>(Records.Values.ToArray());
         public Task PruneAsync(DateTimeOffset now, int maxPerDevice, TimeSpan maxAge, CancellationToken cancellationToken) => Task.CompletedTask;
