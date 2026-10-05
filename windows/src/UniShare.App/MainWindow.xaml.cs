@@ -17,7 +17,11 @@ public sealed partial class MainWindow : Window, IWindowPlatform
     private PairingDialog? pairingDialog;
     private bool shuttingDown;
     private readonly TaskCompletionSource rootReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public void RebuildShell() => ShellHost.Content = new ShellPage(model);
+    public void RebuildShell()
+    {
+        (ShellHost.Content as IDisposable)?.Dispose();
+        ShellHost.Content = new ShellPage(model);
+    }
     public void AttachLifecycle(AppLifecycleCoordinator lifecycle, PairingViewModel pairing)
     {
         this.lifecycle = lifecycle; this.pairing = pairing;
@@ -45,7 +49,7 @@ public sealed partial class MainWindow : Window, IWindowPlatform
     {
         if (shuttingDown) return; shuttingDown = true;
         if (pairing is not null) pairing.PropertyChanged -= OnPairingChanged;
-        pairingDialog?.Hide(); ShellHost.Content = null; Close();
+        pairingDialog?.Hide(); (ShellHost.Content as IDisposable)?.Dispose(); ShellHost.Content = null; Close();
     }
     public MainWindow(ShellProjection model)
     {

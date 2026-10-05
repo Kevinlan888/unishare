@@ -1,10 +1,13 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using UniShare.App.Presentation;
 namespace UniShare.App.Features.Share;
-public sealed partial class DeviceDetailsPane : UserControl
+public sealed partial class DeviceDetailsPane : UserControl, IDisposable
 {
     private readonly ShellProjection model;
-    public DeviceDetailsPane(ShellProjection model) { InitializeComponent(); this.model = model; DataContext = model; model.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(model.SelectedDevice)) Refresh(); }; Refresh(); }
+    private readonly ViewSubscriptions subscriptions;
+    public DeviceDetailsPane(ShellProjection model) { InitializeComponent(); this.model = model; DataContext = model; subscriptions = new(model, property => { if (property == nameof(model.SelectedDevice)) Refresh(); }); Refresh(); }
+    public void Dispose() { subscriptions.Dispose(); DataContext = null; }
     private void Refresh() { DeviceStatus.Text = model.SelectedDevice is null ? Strings.Get("NoSelection") : Strings.Get(model.CanSend ? "Online" : "Offline"); TrustValue.Text = Strings.Get(model.SelectedDevice?.Trusted == true ? "Yes" : "No"); HeroOnlineDot.Visibility = model.CanSend ? Visibility.Visible : Visibility.Collapsed; }
     private void TextClick(object sender, RoutedEventArgs e)
     {

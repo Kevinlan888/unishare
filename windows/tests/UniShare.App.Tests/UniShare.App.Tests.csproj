@@ -7,6 +7,8 @@
     <ProjectReference Include="../../src/UniShare.Application/UniShare.Application.csproj" />
     <Compile Include="../../src/UniShare.App/Presentation/PropertyChangedSubscription.cs" Link="Production/PropertyChangedSubscription.cs" />
     <Compile Include="../../src/UniShare.App/Presentation/PresentationState.cs" Link="Production/PresentationState.cs" />
+    <Compile Include="../../src/UniShare.App/Presentation/RuntimeProjectionAdapter.cs" Link="Production/RuntimeProjectionAdapter.cs" />
+    <Compile Include="../../src/UniShare.App/Presentation/ViewSubscriptions.cs" Link="Production/ViewSubscriptions.cs" />
     <Compile Include="../../src/UniShare.App/Services/NotificationPayload.cs" Link="Production/NotificationPayload.cs" />
     <Compile Include="../../src/UniShare.App/Services/TrayIconService.cs" Link="Production/TrayIconService.cs" />
     <Compile Include="../../src/UniShare.App/Services/StartupTaskService.cs" Link="Production/StartupTaskService.cs" />

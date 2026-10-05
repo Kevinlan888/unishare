@@ -74,6 +74,48 @@ public sealed class AppLifecycleCoordinatorTests
     }
 
     [TestMethod]
+    public async Task PauseAcceptedBehindDelayedResumeNeverAllowsNewTransfers()
+    {
+        var x = await CreateAsync(); await x.Coordinator.PauseAsync();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        x.Sdk.Starting = () => release.Task;
+        var resume = x.Coordinator.ResumeAsync(); x.Drain.Calls.Clear();
+        var pause = x.Coordinator.PauseAsync();
+        Assert.IsFalse(x.Drain.NewTransfersAllowed);
+        release.SetResult(); await Task.WhenAll(resume, pause);
+        Assert.IsFalse(x.Drain.Calls.Contains("allow"));
+        Assert.AreEqual(SessionState.Paused, x.Session.State);
+        Assert.AreEqual(TrayState.Paused, x.Presence.State);
+        await x.Coordinator.ExitAsync();
+    }
+
+    [TestMethod]
+    public async Task PauseBeforeInitializationRemainsIntentWhenAutomaticStartupRuns()
+    {
+        var sdk = new FakeShareSdkClient(); var drain = new FakeTransferDrain(); var presence = new Presence();
+        var session = new ShareSession(sdk, drain); var coordinator = new AppLifecycleCoordinator(session, presence);
+        await coordinator.PauseAsync();
+        await session.InitializeAsync(new()); await session.StartAsync();
+        Assert.AreEqual(SessionState.Paused, session.State);
+        Assert.IsFalse(drain.NewTransfersAllowed); Assert.IsFalse(sdk.Calls.Contains("start"));
+        await coordinator.ResumeAsync();
+        Assert.AreEqual(SessionState.Running, session.State); Assert.IsTrue(drain.NewTransfersAllowed);
+        await coordinator.ExitAsync();
+    }
+
+    [TestMethod]
+    public async Task DiscoveryFailureFaultsAndBlocksBeforeWarningResumeRestartsSameSdk()
+    {
+        var x = await CreateAsync();
+        x.Sdk.Emit(new ShareSdkEvent.DiscoveryFailed(new(ShareErrorKind.DiscoveryFailed, "private diagnostic")));
+        Assert.AreEqual(SessionState.Faulted, x.Session.State); Assert.IsFalse(x.Drain.NewTransfersAllowed);
+        await x.Coordinator.ResumeAsync();
+        Assert.AreEqual(SessionState.Running, x.Session.State);
+        CollectionAssert.AreEqual(new[] { "initialize", "start", "stop", "start" }, x.Sdk.Calls);
+        await x.Coordinator.ExitAsync();
+    }
+
+    [TestMethod]
     public async Task ExitQueuedDuringResumeDoesNotRepaintTrayAsRunning()
     {
         var x = await CreateAsync(); await x.Coordinator.PauseAsync();

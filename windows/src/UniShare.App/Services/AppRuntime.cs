@@ -6,11 +6,12 @@ using UniShare.Application.ViewModels;
 using UniShare.Infrastructure.Files;
 using UniShare.Infrastructure.Storage;
 using UniShare.Native;
+using UniShare.App.Presentation;
 
 namespace UniShare.App.Services;
 
 // The host owns this one composition for the process, never a feature page.
-public sealed class AppRuntime : IDisposable
+public sealed class AppRuntime : IDisposable, IRuntimeProjection
 {
     private readonly IShareSdkClient sdk;
     private readonly ActivityTracker tracker;
@@ -22,6 +23,7 @@ public sealed class AppRuntime : IDisposable
     private readonly ShellProjection model;
     private readonly AppNotificationService notifications;
     private readonly AppEventBridge bridge;
+    private readonly RuntimeProjectionAdapter projection;
     private AppSettings settings = new();
     private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool disposed;
@@ -54,10 +56,11 @@ public sealed class AppRuntime : IDisposable
         });
         var presence = new WindowController(window, tray, request => { if (settings.NotificationsEnabled) notifications.Show(request); },
             Dispatch, exit, Dispose);
-        Lifecycle = lifecycle = new(Session, presence);
+        Lifecycle = lifecycle = new(Session, presence, new TransferShutdown(transfers, tracker));
         bridge = new(sdk, Session, tracker, transfers, presence);
         model.Runtime = this;
-        tracker.Changed += OnChanged; sdk.EventReceived += OnSdkEvent;
+        projection = new(tracker, this, Dispatch);
+        sdk.EventReceived += OnSdkEvent;
         window.AttachLifecycle(Lifecycle, Pairing);
     }
     public async Task InitializeAsync()
@@ -68,7 +71,7 @@ public sealed class AppRuntime : IDisposable
             await Session.InitializeAsync(new() { DeviceName = settings.DeviceName });
             await Session.StartAsync();
             if (settings.StartupEnabled && Startup.Available) await Startup.SetEnabledAsync(true);
-            Refresh();
+            projection.Refresh();
         }
         catch { model.Notice = Strings.Get("Notification.SdkFailure"); bridge.NotifySdkFailure(); }
         finally { ready.TrySetResult(); }
@@ -90,14 +93,16 @@ public sealed class AppRuntime : IDisposable
         // FIFO order and notification actions never reenter a native callback.
         if (!dispatcher.TryEnqueue(() => { action(); model.NotifyRuntimeState(); })) throw new InvalidOperationException("Application dispatcher is unavailable.");
     }
-    private void OnChanged(object? sender, EventArgs args) => Dispatch(Refresh);
     private void OnSdkEvent(object? sender, ShareSdkEvent value) => Dispatch(() =>
     {
-        Refresh();
+        projection.Refresh();
         if (value is ShareSdkEvent.PairingCompleted { Failure: null } completed) SelectDevice(completed.Device);
         if (value is ShareSdkEvent.PairingCompleted { Failure: not null }) model.Notice = Strings.Get("Pairing.ConfirmFailed");
     });
-    private void Refresh()
+    DeviceId? IRuntimeProjection.SelectedDeviceId => model.SelectedDevice?.Id;
+    void IRuntimeProjection.RefreshDevices() => RefreshDevices();
+    void IRuntimeProjection.RenderActivities(DeviceId device) => RenderActivities(device);
+    private void RefreshDevices()
     {
         if (disposed || model.IsDemo) return;
         var selected = model.SelectedDevice?.Id;
@@ -185,12 +190,12 @@ public sealed class AppRuntime : IDisposable
         var vm = CurrentSession(); if (vm is null) return;
         await work(vm);
         if (vm.ErrorResourceKey is { } key) model.Notice = Strings.Get(key);
-        Refresh();
+        projection.Refresh();
     }
     public void Dispose()
     {
         if (disposed) return; disposed = true;
-        tracker.Changed -= OnChanged; sdk.EventReceived -= OnSdkEvent;
+        projection.Dispose(); sdk.EventReceived -= OnSdkEvent;
         foreach (var vm in sessionModels.Values) vm.Dispose(); sessionModels.Clear();
         bridge.Dispose(); Pairing.Dispose(); notifications.Dispose(); model.Runtime = null;
     }

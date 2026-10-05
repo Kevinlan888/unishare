@@ -13,6 +13,7 @@ public sealed class ShareSession : IAsyncDisposable
     private readonly SemaphoreSlim lifecycle = new(1, 1);
     private readonly object admission = new();
     private bool exitRequested;
+    private bool pauseRequested;
     private int state = (int)SessionState.Paused;
     private bool initialized;
     private bool hasStarted;
@@ -67,7 +68,7 @@ public sealed class ShareSession : IAsyncDisposable
         {
             RequireAlive();
             // Reopening a window must not undo an explicit tray pause.
-            if (hasStarted) return;
+            lock (admission) if (hasStarted || pauseRequested) return;
             RequireInitialized();
             cancellationToken.ThrowIfCancellationRequested();
             await StartCoreAsync(SessionState.Faulted).ConfigureAwait(false);
@@ -77,13 +78,16 @@ public sealed class ShareSession : IAsyncDisposable
 
     public async Task PauseAsync(CancellationToken cancellationToken = default)
     {
-        await lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (admission)
+        {
+            RequireAlive(); pauseRequested = true; transfers.BlockNewTransfers();
+        }
+        await lifecycle.WaitAsync().ConfigureAwait(false);
         try
         {
             RequireAlive();
             if (State == SessionState.Paused) return;
-            cancellationToken.ThrowIfCancellationRequested();
-            transfers.BlockNewTransfers();
             SetState(SessionState.Pausing);
             try
             {
@@ -98,6 +102,8 @@ public sealed class ShareSession : IAsyncDisposable
 
     public async Task ResumeAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (admission) if (!exitRequested) pauseRequested = false;
         await lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -128,7 +134,11 @@ public sealed class ShareSession : IAsyncDisposable
             Devices.Refresh();
             hasStarted = true;
             SetState(SessionState.Running);
-            lock (admission) if (!exitRequested) transfers.AllowNewTransfers();
+            lock (admission)
+            {
+                if (pauseRequested) SetState(SessionState.Pausing);
+                else if (!exitRequested) transfers.AllowNewTransfers();
+            }
         }
         catch
         {
@@ -174,6 +184,12 @@ public sealed class ShareSession : IAsyncDisposable
 
     private void OnSdkEvent(object? sender, ShareSdkEvent value)
     {
+        if (value is ShareSdkEvent.DiscoveryFailed)
+        {
+            lock (admission)
+                if (!exitRequested && !pauseRequested && State == SessionState.Running)
+                { transfers.BlockNewTransfers(); SetState(SessionState.Faulted); }
+        }
         if (value is ShareSdkEvent.DiscoveryStateChanged { State: DiscoveryState.Stopped })
             _ = ObserveStoppedAsync(Volatile.Read(ref generation));
     }
