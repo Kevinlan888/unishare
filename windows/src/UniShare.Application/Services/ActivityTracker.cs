@@ -21,6 +21,7 @@ public sealed class ActivityTracker : ITransferDrain
     // Process-only content is deliberately separate from the repository contract.
     private readonly Dictionary<ActivityId, ShareContent> previews = [];
     private readonly HashSet<ActivityId> active = [];
+    private readonly HashSet<OutgoingReservation> reservations = [];
     private readonly List<Task> pendingWrites = [];
     private Task writeTail = Task.CompletedTask;
     private TaskCompletionSource idle = NewIdle();
@@ -36,7 +37,7 @@ public sealed class ActivityTracker : ITransferDrain
     // Notifications signal that readers should obtain a fresh snapshot. No UI
     // collection or dispatcher is owned here, and callbacks run outside the gate.
     public event EventHandler? Changed;
-    public int ActiveCount { get { lock (gate) return active.Count; } }
+    public int ActiveCount { get { lock (gate) return active.Count + reservations.Count; } }
     public bool HasActiveTransfers => ActiveCount != 0;
 
     public IReadOnlyList<ActivityRecord> GetDeviceSnapshot(DeviceId device)
@@ -47,7 +48,79 @@ public sealed class ActivityTracker : ITransferDrain
 
     public ShareContent? GetPreview(ActivityId activity)
     {
-        lock (gate) return previews.GetValueOrDefault(activity);
+        lock (gate) return previews.GetValueOrDefault(ResolveActivity(activity));
+    }
+
+    public void PublishIncomingPreview(ActivityId activity, ShareContent preview)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        lock (gate)
+        {
+            activity = ResolveActivity(activity);
+            var record = RequireActivity(activity);
+            if (record.Direction != ShareDirection.Incoming || preview.Kind != record.Kind)
+                throw new ArgumentException("Preview does not match incoming activity.", nameof(preview));
+            previews[activity] = preview;
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public OutgoingReservation ReserveOutgoing()
+    {
+        lock (gate)
+        {
+            RequireAdmission();
+            if (active.Count == 0 && reservations.Count == 0) idle = NewIdle();
+            var reservation = new OutgoingReservation(this);
+            reservations.Add(reservation);
+            return reservation;
+        }
+    }
+
+    private ActivityRecord CommitReservation(OutgoingReservation reservation, DeviceId device, OperationId operation,
+        ContentKind kind, string name, string mime, ulong bytes, ShareOrigin origin, ShareContent? preview, ActivityId? retryOf)
+    {
+        ActivityRecord record;
+        lock (gate)
+        {
+            if (!reservations.Contains(reservation)) throw new InvalidOperationException("Outgoing reservation is already released.");
+            if (retryOf is { } previousId)
+            {
+                var previous = RequireActivity(previousId);
+                if (!ActivityTransition.IsRetryable(previous)) throw new InvalidOperationException("Activity is not retryable.");
+                record = BeginOutgoingCore(previous.DeviceId, operation, previous.Kind, previous.DisplayName, previous.MimeType,
+                    previous.ByteCount, previous.Origin, preview ?? previews.GetValueOrDefault(previousId), previous.Id, reserved: true);
+            }
+            else record = BeginOutgoingCore(device, operation, kind, name, mime, bytes, origin, preview, null, reserved: true);
+            reservations.Remove(reservation);
+            if (blocked && reservations.Count == 0) { earlyRegistrations.Clear(); earlyProgress.Clear(); }
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+        return record;
+    }
+
+    private void AbortReservation(OutgoingReservation reservation)
+    {
+        lock (gate)
+        {
+            if (!reservations.Remove(reservation)) return;
+            if (blocked && reservations.Count == 0) { earlyRegistrations.Clear(); earlyProgress.Clear(); }
+            if (active.Count == 0 && reservations.Count == 0)
+            {
+                if (blocked) operations.Clear();
+                idle.TrySetResult();
+            }
+        }
+    }
+
+    public sealed class OutgoingReservation : IDisposable
+    {
+        private readonly ActivityTracker owner;
+        internal OutgoingReservation(ActivityTracker owner) => this.owner = owner;
+        public ActivityRecord Commit(DeviceId device, OperationId operation, ContentKind kind, string displayName, string mimeType,
+            ulong byteCount, ShareOrigin origin = ShareOrigin.Direct, ShareContent? preview = null, ActivityId? retryOf = null) =>
+            owner.CommitReservation(this, device, operation, kind, displayName, mimeType, byteCount, origin, preview, retryOf);
+        public void Dispose() => owner.AbortReservation(this);
     }
 
     public ActivityRecord BeginOutgoing(DeviceId device, OperationId operation, ContentKind kind,
@@ -61,9 +134,9 @@ public sealed class ActivityTracker : ITransferDrain
     }
 
     private ActivityRecord BeginOutgoingCore(DeviceId device, OperationId operation, ContentKind kind,
-        string displayName, string mimeType, ulong byteCount, ShareOrigin origin, ShareContent? preview, ActivityId? retryOf)
+        string displayName, string mimeType, ulong byteCount, ShareOrigin origin, ShareContent? preview, ActivityId? retryOf, bool reserved = false)
     {
-        RequireAdmission();
+        if (!reserved) RequireAdmission();
         if (operation.Value == 0) throw new ArgumentOutOfRangeException(nameof(operation));
         if (operations.ContainsKey(operation)) throw new InvalidOperationException("Operation is already tracked.");
         if (preview is not null && preview.Kind != kind) throw new ArgumentException("Preview kind does not match activity.", nameof(preview));
@@ -127,7 +200,7 @@ public sealed class ActivityTracker : ITransferDrain
             else
             {
                 if (operation.Value == 0) throw new ArgumentOutOfRangeException(nameof(operation));
-                if (blocked) return false;
+                if (blocked && reservations.Count == 0) return false;
                 if (transfers.ContainsKey(transfer) ||
                     (earlyRegistrations.TryGetValue(operation, out var existing) && existing != transfer) ||
                     earlyRegistrations.Any(value => value.Key != operation && value.Value == transfer))
@@ -235,7 +308,7 @@ public sealed class ActivityTracker : ITransferDrain
         });
         active.Remove(activity);
         if (record.OperationId is { } operation) earlyRegistrations.Remove(operation);
-        if (active.Count == 0)
+        if (active.Count == 0 && reservations.Count == 0)
         {
             if (blocked) operations.Clear();
             idle.TrySetResult();
@@ -371,6 +444,7 @@ public sealed class ActivityTracker : ITransferDrain
                             ReceivedFilePath = replay.ReceivedFilePath
                         };
                         activities.Add(canonical.Id, canonical);
+                        if (previews.Remove(owner, out var preview)) previews[canonical.Id] = preview;
                         deferredIncoming.Add(canonical.Id);
                         transfers[transfer] = canonical.Id;
                         if (wasActive && !ActivityTransition.IsTerminal(canonical.Status)) active.Add(canonical.Id);
@@ -403,7 +477,7 @@ public sealed class ActivityTracker : ITransferDrain
                     }
                 }
                 else historyReady.Remove(device);
-                if (active.Count == 0)
+                if (active.Count == 0 && reservations.Count == 0)
                 {
                     if (blocked) operations.Clear();
                     idle.TrySetResult();
@@ -418,11 +492,10 @@ public sealed class ActivityTracker : ITransferDrain
         lock (gate)
         {
             blocked = true;
-            earlyRegistrations.Clear();
-            earlyProgress.Clear();
+            if (reservations.Count == 0) { earlyRegistrations.Clear(); earlyProgress.Clear(); }
             // Explicit SDK Stop suppresses its event generation. Session pause
             // therefore retires operation mappings through block-and-drain too.
-            if (active.Count == 0) operations.Clear();
+            if (active.Count == 0 && reservations.Count == 0) operations.Clear();
         }
     }
     public void AllowNewTransfers() { lock (gate) blocked = false; }
@@ -481,7 +554,7 @@ public sealed class ActivityTracker : ITransferDrain
     }
     private void AddActive(ActivityRecord record)
     {
-        if (active.Count == 0) idle = NewIdle();
+        if (active.Count == 0 && reservations.Count == 0) idle = NewIdle();
         activities.Add(record.Id, record);
         active.Add(record.Id);
     }

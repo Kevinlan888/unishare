@@ -21,6 +21,77 @@ public sealed class ActivityTrackerTests
     private static TransferTerminal Failure(ShareErrorKind kind, TransferId? transfer = null) => new(transfer, new(kind, "private payload C:\\private\\secret.txt"));
 
     [TestMethod]
+    public async Task IncomingPreviewPublicationIsProcessOnlyAndValidatesKind()
+    {
+        var repository = new Repository(); var tracker = Create(repository);
+        var offer = Offer() with { Kind = ContentKind.Text };
+        var record = tracker.AddIncomingOffer(offer);
+        var setter = typeof(ActivityTracker).GetMethod("PublishIncomingPreview");
+        Assert.IsNotNull(setter, "Incoming preview publication is missing.");
+        var changes = 0; tracker.Changed += (_, _) => { changes++; Assert.IsNotNull(tracker.GetPreview(record.Id)); };
+        setter.Invoke(tracker, [record.Id, new ShareContent(ContentKind.Text, "private body", "text/plain", [])]);
+        Assert.AreEqual("private body", tracker.GetPreview(record.Id)!.Text);
+        Assert.AreEqual(1, changes);
+        await tracker.SavePendingAsync();
+        Assert.IsFalse(repository.Records[record.Id].ToString().Contains("private body"));
+        var wrong = Assert.Throws<System.Reflection.TargetInvocationException>(() => setter.Invoke(tracker, [record.Id, new ShareContent(ContentKind.Image, null, "image/png", [])]));
+        Assert.IsInstanceOfType<ArgumentException>(wrong.InnerException);
+        var unknown = Assert.Throws<System.Reflection.TargetInvocationException>(() => setter.Invoke(tracker, [new ActivityId(Guid.NewGuid()), new ShareContent(ContentKind.Text, "body", "text/plain", [])]));
+        Assert.IsInstanceOfType<ArgumentException>(unknown.InnerException);
+    }
+
+    private static dynamic Reserve(ActivityTracker tracker)
+    {
+        var method = typeof(ActivityTracker).GetMethod("ReserveOutgoing");
+        Assert.IsNotNull(method, "Outgoing admission reservation is missing.");
+        return method.Invoke(tracker, null)!;
+    }
+
+    [TestMethod]
+    public async Task OutgoingReservationHoldsDrainCommitsAfterBlockAndRejectsDoubleCommit()
+    {
+        var tracker = Create(); dynamic reservation = Reserve(tracker);
+        Assert.IsTrue(tracker.HasActiveTransfers);
+        var idle = tracker.WaitForIdleAsync(default); Assert.IsFalse(idle.IsCompleted);
+        tracker.BlockNewTransfers();
+        Assert.Throws<InvalidOperationException>(() => Begin(tracker));
+        tracker.BindTransfer(new OperationId(12), Transfer);
+        ActivityRecord record = reservation.Commit(Device, new OperationId(12), ContentKind.Text, "Text", "text/plain", 3UL, ShareOrigin.Direct, null, null);
+        Assert.AreEqual(Transfer, record.TransferId);
+        Assert.IsFalse(idle.IsCompleted);
+        Assert.Throws<InvalidOperationException>(() => reservation.Commit(Device, new OperationId(13), ContentKind.Text, "Text", "text/plain", 3UL, ShareOrigin.Direct, null, null));
+        reservation.Dispose();
+        tracker.Complete(record.Id, new TransferTerminal(Transfer, null));
+        await idle.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsFalse(tracker.HasActiveTransfers);
+    }
+
+    [TestMethod]
+    public async Task AbortedReservationReleasesDrainOnceAndCannotCommit()
+    {
+        var tracker = Create(); dynamic reservation = Reserve(tracker);
+        var idle = tracker.WaitForIdleAsync(default);
+        tracker.BlockNewTransfers(); reservation.Dispose(); reservation.Dispose();
+        await idle.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(0, tracker.GetDeviceSnapshot(Device).Count);
+        Assert.Throws<InvalidOperationException>(() => reservation.Commit(Device, new OperationId(1), ContentKind.Text, "Text", "text/plain", 3UL, ShareOrigin.Direct, null, null));
+        Assert.Throws<System.Reflection.TargetInvocationException>(() => typeof(ActivityTracker).GetMethod("ReserveOutgoing")!.Invoke(tracker, null));
+    }
+
+    [TestMethod]
+    public async Task IncomingPreviewSurvivesProvisionalIdentityReconciliation()
+    {
+        var repository = new Repository(); var original = Create(repository); var offer = Offer() with { Kind = ContentKind.Text };
+        var durable = original.AddIncomingOffer(offer); original.Complete(durable.Id, new(Transfer, null)); await original.SavePendingAsync();
+        repository.Loading = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replay = Create(repository); var provisional = replay.AddIncomingOffer(offer);
+        replay.PublishIncomingPreview(provisional.Id, new(ContentKind.Text, "process body", "text/plain", []));
+        repository.Loading.SetResult(new[] { repository.Records[durable.Id] }); await replay.LoadDeviceAsync(Device);
+        Assert.AreEqual("process body", replay.GetPreview(durable.Id)?.Text);
+        Assert.AreEqual("process body", replay.GetPreview(provisional.Id)?.Text);
+    }
+
+    [TestMethod]
     public void OutgoingAndIncomingEnterTransferringBeforeCompletion()
     {
         var outgoing = Create();
