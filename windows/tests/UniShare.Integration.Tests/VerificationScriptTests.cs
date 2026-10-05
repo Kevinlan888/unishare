@@ -10,21 +10,17 @@ public sealed class VerificationScriptTests
     [TestMethod]
     public void NativeGateRejectsSkippedOrMissingTests()
     {
-        string report = Path.Combine(Path.GetTempPath(), "unishare-native-report-" + Guid.NewGuid() + ".xml");
-        try
-        {
-            File.WriteAllText(report, "<testsuite tests=\"1\" failures=\"0\"><testcase name=\"sdk_api\" status=\"run\"/></testsuite>");
-            var valid = Run("validate-native-tests.ps1", "-Report", report, "-ExpectedCount", "1");
-            Assert.AreEqual(0, valid.Exit, valid.Text);
-            var missing = Run("validate-native-tests.ps1", "-Report", report, "-ExpectedCount", "2");
-            Assert.AreNotEqual(0, missing.Exit);
-            StringAssert.Contains(missing.Text, "Missing required native test");
-            File.WriteAllText(report, "<testsuite tests=\"1\" failures=\"0\"><testcase name=\"sdk_api\" status=\"notrun\"><skipped/></testcase></testsuite>");
-            var skipped = Run("validate-native-tests.ps1", "-Report", report, "-ExpectedCount", "1");
-            Assert.AreNotEqual(0, skipped.Exit);
-            StringAssert.Contains(skipped.Text, "Failed or skipped required native test");
-        }
-        finally { File.Delete(report); }
+        using var fixture = new NativeGateFixture();
+        var valid = fixture.Validate();
+        Assert.AreEqual(0, valid.Exit, valid.Text);
+        fixture.Write(NativeGateFixture.Names.Skip(1), NativeGateFixture.Names.Skip(1));
+        var missing = fixture.Validate();
+        Assert.AreNotEqual(0, missing.Exit);
+        StringAssert.Contains(missing.Text, "Missing required native test");
+        fixture.Write(NativeGateFixture.Names, NativeGateFixture.Names, skipped: true);
+        var skipped = fixture.Validate();
+        Assert.AreNotEqual(0, skipped.Exit);
+        StringAssert.Contains(skipped.Text, "Failed or skipped required native test");
     }
 
     // Catches silent prefix fallback, false acceptance PASS, and leaked package payloads.
@@ -143,7 +139,7 @@ public sealed class VerificationScriptTests
         finally { Directory.Delete(temporary, recursive: true); }
     }
 
-    private static (int Exit, string Text) Run(string name, params string[] arguments)
+    internal static (int Exit, string Text) Run(string name, params string[] arguments)
     {
         var start = new ProcessStartInfo("powershell.exe") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = Path.GetTempPath() };
         foreach (string argument in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", Path.Combine(NativeAbiSmokeTests.RepoRoot, "windows", "scripts", name) }.Concat(arguments))

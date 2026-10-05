@@ -2,7 +2,8 @@
 param([Parameter(Mandatory=$true)][string]$OpenSslRoot,
       [ValidateSet('Release','RelWithDebInfo','MinSizeRel')][string]$Configuration = 'Release')
 . (Join-Path $PSScriptRoot 'tools.ps1')
-if (![IO.Path]::IsPathRooted($OpenSslRoot) -or !(Test-Path -LiteralPath $OpenSslRoot -PathType Container)) {
+if (($OpenSslRoot -notmatch '^[A-Za-z]:[\\/]' -and $OpenSslRoot -notmatch '^\\\\[^\\/]+\\[^\\/]+(?:\\|$)') -or
+    !(Test-Path -LiteralPath $OpenSslRoot -PathType Container)) {
     throw 'OpenSslRoot must be an existing absolute x64 OpenSSL 3 development prefix.'
 }
 $OpenSslRoot = (Resolve-Path -LiteralPath $OpenSslRoot).Path
@@ -34,10 +35,13 @@ Invoke-Checked $cmake @('--fresh','-S',$RepoRoot,'-B',$build,'-G','Visual Studio
 Invoke-Checked $cmake @('--build',$build,'--config',$Configuration,'--parallel')
 $inventoryJson = & $ctest '--test-dir' $build '-C' $Configuration '--show-only=json-v1'
 if ($LASTEXITCODE -ne 0) { throw 'Native test inventory failed.' }
-$inventory = $inventoryJson | Out-String | ConvertFrom-Json
+$nativeInventory = Join-Path $build 'native-inventory.json'
+$inventoryJson | Set-Content -LiteralPath $nativeInventory -Encoding UTF8
+& (Join-Path $PSScriptRoot 'validate-native-tests.ps1') -Inventory $nativeInventory
+if (!$?) { throw 'Native inventory validation failed.' }
 $nativeReport = Join-Path $build 'native-results.xml'
 Invoke-Checked $ctest @('--test-dir',$build,'-C',$Configuration,'--output-on-failure','--no-tests=error','--timeout','120','--output-junit',$nativeReport)
-& (Join-Path $PSScriptRoot 'validate-native-tests.ps1') -Report $nativeReport -ExpectedCount $inventory.tests.Count
+& (Join-Path $PSScriptRoot 'validate-native-tests.ps1') -Inventory $nativeInventory -Report $nativeReport
 if (!$?) { throw 'Native report validation failed.' }
 Invoke-Checked $cmake @('--install',$build,'--config',$Configuration)
 foreach ($relative in @('bin\unishare.dll','lib\unishare.lib','include\unishare\c_api.h','include\unishare\windows.h')) {

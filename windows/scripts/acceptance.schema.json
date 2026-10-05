@@ -26,7 +26,7 @@
         "id": {"type": "string", "minLength": 1}, "peer": {"enum": ["Windows", "Android", "iOS", "Local"]},
         "scenario": {"type": "string", "minLength": 1}, "status": {"enum": ["PASS", "FAIL", "BLOCKED", "NOT_RUN"]},
         "reason": {"type": "string"}, "observedAtUtc": {"type": "string"},
-        "deviceIds": {"type": "array", "items": {"type": "string"}}, "evidence": {"type": "array", "items": {"type": "string"}}
+        "deviceIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "evidence": {"type": "array", "items": {"type": "string", "minLength": 1}}
       }
     }}
   }

@@ -2,6 +2,32 @@
 param([Parameter(Mandatory=$true)][string]$Output, [string]$Evidence,
       [string]$Package, [string]$Reason = 'Physical peers, an installed package, interactive operator, and Windows accessibility/display controls have not been verified in this environment.')
 . (Join-Path $PSScriptRoot 'tools.ps1')
+function Get-MsixHash([string]$Path) {
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf) -or [IO.Path]::GetExtension($Path) -ine '.msix') {
+        throw 'Package must be an existing MSIX file.'
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead([IO.Path]::GetFullPath($Path))
+    try {
+        foreach ($footprint in @(
+            @('AppxManifest.xml','Package','http://schemas.microsoft.com/appx/manifest/foundation/windows10'),
+            @('AppxBlockMap.xml','BlockMap','http://schemas.microsoft.com/appx/2010/blockmap'),
+            @('[Content_Types].xml','Types','http://schemas.openxmlformats.org/package/2006/content-types'))) {
+            $entries = @($archive.Entries | Where-Object FullName -ceq $footprint[0])
+            if ($entries.Count -ne 1) { throw "Missing or duplicate MSIX footprint: $($footprint[0])" }
+            $stream = $entries[0].Open()
+            try {
+                $xml = New-Object System.Xml.XmlDocument
+                $xml.XmlResolver = $null
+                $xml.Load($stream)
+                if ($xml.DocumentElement.LocalName -cne $footprint[1] -or $xml.DocumentElement.NamespaceURI -cne $footprint[2]) {
+                    throw "Invalid MSIX footprint: $($footprint[0])"
+                }
+            } finally { $stream.Dispose() }
+        }
+    } finally { $archive.Dispose() }
+    Get-Sha256 $Path
+}
 $outputPath = if ([IO.Path]::IsPathRooted($Output)) { [IO.Path]::GetFullPath($Output) } else { [IO.Path]::GetFullPath((Join-Path $RepoRoot $Output)) }
 $scenarios = @('discovery-offline-rediscovery','pairing-match-mismatch-reject-timeout','trust-forget-restart','identity-change-block',
     'text-trusted-autoaccept','text-untrusted-decision','image-offer','file-integrity','clipboard-source-text','clipboard-source-image',
@@ -34,6 +60,19 @@ if ($Evidence) {
         Invoke-Checked $pwsh @('-NoProfile','-File',$validator,'-Document',$Evidence,'-Schema',$schema)
         $record = Get-Content -LiteralPath $Evidence -Raw | ConvertFrom-Json
         if ($record.results.Count -ne $matrix.Count) { throw 'The complete required matrix must be supplied.' }
+        $observed = @($record.results | Where-Object { $_.status -in @('PASS','FAIL') })
+        if ($observed.Count -gt 0) {
+            if (!$Package) { throw 'Observed results require -Package to bind the exact MSIX.' }
+            if ($record.provenance.packageSha256 -notmatch '^[A-Fa-f0-9]{64}$' -or $record.provenance.packageSha256 -match '^0{64}$') {
+                throw 'Observed results require a valid nonzero SHA256 package hash.'
+            }
+        }
+        if ($Package -and (Get-MsixHash $Package) -ine $record.provenance.packageSha256) { throw 'Package provenance hash mismatch.' }
+        $deviceIds = @{}
+        foreach ($device in $record.provenance.devices) {
+            if ([string]::IsNullOrWhiteSpace($device.id) -or $deviceIds.ContainsKey($device.id)) { throw 'Missing or duplicate device provenance ID.' }
+            $deviceIds[$device.id] = $true
+        }
         $seen = @{}
         foreach ($row in $record.results) {
             if ($seen.ContainsKey($row.id)) { throw "Duplicate matrix row: $($row.id)" }
@@ -45,19 +84,27 @@ if ($Evidence) {
                     throw 'Observed results require operator, package hash, time, device IDs, and evidence.'
                 }
                 [datetimeoffset]::Parse($row.observedAtUtc) | Out-Null
+                if (@($row.evidence | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw 'Observed evidence references must not be empty or whitespace.' }
+                $references = @{}
                 foreach ($id in $row.deviceIds) {
+                    if ([string]::IsNullOrWhiteSpace($id) -or $references.ContainsKey($id)) { throw 'Missing or duplicate referenced device ID.' }
+                    $references[$id] = $true
                     if (@($record.provenance.devices | Where-Object id -eq $id).Count -ne 1) { throw "Missing device provenance: $id" }
                 }
-                if ($row.peer -ne 'Local') {
-                    $devices = @($record.provenance.devices | Where-Object { $_.id -in $row.deviceIds })
-                    if ($devices.Count -lt 2 -or @($devices | Where-Object platform -eq 'Windows').Count -eq 0 -or @($devices | Where-Object platform -eq $row.peer).Count -eq 0) { throw 'Cross-platform observation requires both physical peers.' }
+                $devices = @($record.provenance.devices | Where-Object { $_.id -in $row.deviceIds })
+                $windowsDevices = @($devices | Where-Object platform -eq 'Windows')
+                if ($row.peer -eq 'Windows') {
+                    if ($windowsDevices.Count -lt 2) { throw 'Windows observation requires two distinct referenced physical Windows devices.' }
+                } elseif ($row.peer -eq 'Local') {
+                    if ($windowsDevices.Count -lt 1) { throw 'Local UI observation requires a referenced physical Windows device.' }
+                } else {
+                    if ($windowsDevices.Count -lt 1 -or @($devices | Where-Object platform -eq $row.peer).Count -lt 1) { throw 'Cross-platform observation requires referenced Windows and named physical peer devices.' }
                 }
             } elseif ([string]::IsNullOrWhiteSpace($row.reason)) { throw 'Unobserved results require a reason.' }
         }
-        if ($Package -and (Get-Sha256 $Package) -ne $record.provenance.packageSha256) { throw 'Package provenance hash mismatch.' }
     } catch { throw "Invalid acceptance evidence: $_" }
 } else {
-    $packageHash = if ($Package) { Get-Sha256 $Package } else { '' }
+    $packageHash = if ($Package) { Get-MsixHash $Package } else { '' }
     $record = [ordered]@{
         schemaVersion=1; recordedAtUtc=[datetimeoffset]::UtcNow.ToString('o'); releaseGate='BLOCKED'
         provenance=[ordered]@{ operator=''; os=[Environment]::OSVersion.VersionString; architecture=$env:PROCESSOR_ARCHITECTURE; packageSha256=$packageHash; devices=@(); limitations=@($Reason) }
