@@ -9,6 +9,7 @@ public sealed partial class SharePage : UserControl
     private readonly ShellProjection model;
     private readonly DeviceListPane deviceList;
     private readonly DeviceSessionView session;
+    public void ShowDeviceSession() => CenterHost.Content = session;
     public SharePage(ShellProjection model)
     {
         InitializeComponent(); this.model = model;

@@ -16,6 +16,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
     <ProjectReference Include="../UniShare.Application/UniShare.Application.csproj" />
+    <ProjectReference Include="../UniShare.Native/UniShare.Native.csproj" />
+    <ProjectReference Include="../UniShare.Infrastructure/UniShare.Infrastructure.csproj" />
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

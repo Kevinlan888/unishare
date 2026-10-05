@@ -161,4 +161,26 @@
 <data name="Settings.SaveFailed" xml:space="preserve"><value>无法保存设置，请重试。</value></data>
 <data name="Settings.ReceiveDirectoryNotWritable" xml:space="preserve"><value>请选择可写入的接收目录。</value></data>
 <data name="OfflineStatus" xml:space="preserve"><value>离线</value></data>
+<data name="PairingDialog.Title" xml:space="preserve"><value>配对此设备</value></data>
+<data name="PairingDialog.PrimaryButtonText" xml:space="preserve"><value>匹配</value></data>
+<data name="PairingDialog.SecondaryButtonText" xml:space="preserve"><value>不匹配</value></data>
+<data name="PairingInstruction.Text" xml:space="preserve"><value>请核对安全码，确保它与另一台设备显示的安全码一致。</value></data>
+<data name="PairingCode.AutomationProperties.Name" xml:space="preserve"><value>安全码</value></data>
+<data name="Tray.Open" xml:space="preserve"><value>打开 UniShare</value></data>
+<data name="Tray.Pause" xml:space="preserve"><value>暂停接收</value></data>
+<data name="Tray.Resume" xml:space="preserve"><value>恢复接收</value></data>
+<data name="Tray.Exit" xml:space="preserve"><value>退出</value></data>
+<data name="Tray.Normal" xml:space="preserve"><value>UniShare — 正在接收</value></data>
+<data name="Tray.Pausing" xml:space="preserve"><value>UniShare — 正在暂停</value></data>
+<data name="Tray.Paused" xml:space="preserve"><value>UniShare — 已暂停</value></data>
+<data name="Tray.Warning" xml:space="preserve"><value>UniShare — 需要处理</value></data>
+<data name="Notification.Offer" xml:space="preserve"><value>一台设备请求分享内容。请在 UniShare 中查看。</value></data>
+<data name="Notification.Completed" xml:space="preserve"><value>内容传输已完成。</value></data>
+<data name="Notification.Failed" xml:space="preserve"><value>内容传输失败。请打开 UniShare 查看详情。</value></data>
+<data name="Notification.SdkFailure" xml:space="preserve"><value>分享暂不可用。请打开 UniShare 恢复。</value></data>
+<data name="Notification.Reject" xml:space="preserve"><value>拒绝</value></data>
+<data name="Notification.ViewAndAccept" xml:space="preserve"><value>查看并接收</value></data>
+<data name="ConnectPair.Content" xml:space="preserve"><value>连接并配对</value></data>
+<data name="ForgetDevice.Content" xml:space="preserve"><value>忘记设备</value></data>
+<data name="IdentityWarning" xml:space="preserve"><value>此设备的身份已变化。请先忘记设备，再重新配对。</value></data>
 </root>

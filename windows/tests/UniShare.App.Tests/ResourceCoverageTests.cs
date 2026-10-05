@@ -43,6 +43,18 @@ public sealed class ResourceCoverageTests
     }
 
     [TestMethod]
+    public void PairingTrayAndNotificationActionsHaveExplicitLabelsInBothLanguages()
+    {
+        foreach (var language in new[] { "en-US", "zh-CN" })
+        {
+            var resources = ReadResources(language);
+            foreach (var key in new[] { "PairingDialog.Title", "PairingInstruction.Text", "PairingCode.AutomationProperties.Name", "PairingDialog.PrimaryButtonText", "PairingDialog.SecondaryButtonText", "Tray.Open", "Tray.Pause", "Tray.Resume", "Tray.Exit", "Tray.Normal", "Tray.Pausing", "Tray.Paused", "Tray.Warning", "Notification.Offer", "Notification.Completed", "Notification.Failed", "Notification.SdkFailure", "Notification.Reject", "Notification.ViewAndAccept" })
+                Assert.IsTrue(resources.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value), $"Missing {key} in {language}");
+            Assert.AreNotEqual(resources["PairingDialog.PrimaryButtonText"], resources["PairingDialog.SecondaryButtonText"]);
+        }
+    }
+
+    [TestMethod]
     public void TaskEightViewModelErrorsHaveUserFacingTranslations()
     {
         string[] errors = ["Discovery.RetryFailed", "Discovery.PermissionDenied", "Discovery.Failed", "Transfer.SubmissionFailed", "Transfer.AcceptFailed", "Transfer.RejectFailed", "Transfer.CancelFailed", "Transfer.RetryFailed", "Device.ForgetFailed", "Device.IdentityChanged", "Pairing.ConnectFailed", "Pairing.ConfirmFailed", "Pairing.RejectFailed", "History.LoadFailed", "Activity.OpenFailed", "Activity.OpenLocationFailed", "Settings.SaveFailed", "Settings.ReceiveDirectoryNotWritable"];

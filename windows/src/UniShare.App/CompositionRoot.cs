@@ -4,10 +4,10 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Windows.ApplicationModel.Resources;
 using UniShare.Application.Models;
 using UniShare.App.Presentation;
+using UniShare.App.Services;
 namespace UniShare.App;
 
-// Task 9 uses explicit deterministic projections. The production lifecycle/native
-// adapter is composed in the following integration task, never by a page.
+// Projections adapt binding-only pages to one application-owned runtime.
 public static class CompositionRoot
 {
     public static ShellProjection Create(string[] args)
@@ -27,6 +27,7 @@ public static class CompositionRoot
         }
         return model;
     }
+    public static AppRuntime CreateRuntime(MainWindow window, ShellProjection model, Action exit) => new(window, model, exit);
 }
 public static class Strings
 {
@@ -34,12 +35,15 @@ public static class Strings
 }
 public sealed record DeviceProjection(string Name, string Glyph, string Summary, string Time, bool Trusted, bool Online, string Platform)
 {
+    public DeviceId? Id { get; init; }
+    public bool Blocked { get; init; }
     public double OnlineIndicatorOpacity => PresentationState.OnlineIndicatorOpacity(Online);
     public string StatusText => Strings.Get(PresentationState.StatusResourceKey(Online));
     public string AccessibleName => $"{Name}, {StatusText}";
 }
 public sealed class ActivityProjection : ObservableObject
 {
+    public ActivityId? Id { get; init; }
     private ActivityStatus status;
     public ActivityProjection(ContentKind kind, ShareDirection direction, string name, string text, string size, string time, ActivityStatus status, ShareOrigin origin = ShareOrigin.Direct)
     { Kind = kind; Direction = direction; Name = name; Text = text; Size = size; Time = time; this.status = status; Origin = origin; }
@@ -62,10 +66,12 @@ public sealed class ShellProjection : ObservableObject
     public ShellProjection(bool demo, bool states)
     {
         IsDemo = demo;
-        SendTextCommand = new RelayCommand(SendText, () => SelectedDevice?.Online == true && !string.IsNullOrWhiteSpace(ComposerText));
-        SendPhotoCommand = new RelayCommand(() => DemoSend(ContentKind.Image), () => SelectedDevice?.Online == true);
-        SendFileCommand = new RelayCommand(() => DemoSend(ContentKind.File), () => SelectedDevice?.Online == true);
-        SendClipboardCommand = new RelayCommand(() => Notice = Strings.Get("DemoClipboard"), () => SelectedDevice?.Online == true);
+        SendTextCommand = new RelayCommand(SendText, () => CanSend && !string.IsNullOrWhiteSpace(ComposerText));
+        SendPhotoCommand = new RelayCommand(() => DemoSend(ContentKind.Image), () => CanSend);
+        SendFileCommand = new RelayCommand(() => DemoSend(ContentKind.File), () => CanSend);
+        SendClipboardCommand = new RelayCommand(() => { if (Runtime is { } runtime && !IsDemo) _ = runtime.SendClipboardAsync(); else Notice = Strings.Get("DemoClipboard"); }, () => CanSend);
+        ConnectCommand = new RelayCommand(() => { if (Runtime is { } runtime && !IsDemo) _ = runtime.ConnectAsync(); }, () => SelectedDevice is { Online: true, Trusted: false, Blocked: false });
+        ForgetCommand = new RelayCommand(() => { if (Runtime is { } runtime && !IsDemo) _ = runtime.ForgetAsync(); }, () => SelectedDevice is { Trusted: true } or { Blocked: true });
         if (!demo) { Notice = Strings.Get("Loading"); return; }
         Recent.Add(new("Kevin’s iPhone", "\uE8EA", "IMG_3281.jpg", "19:22", true, true, "iOS"));
         Recent.Add(new("Pixel 10", "\uE8EA", "project.zip · 72%", "18:40", true, true, "Android"));
@@ -85,6 +91,7 @@ public sealed class ShellProjection : ObservableObject
         }
     }
     public bool IsDemo { get; }
+    public AppRuntime? Runtime { get; set; }
     public ObservableCollection<DeviceProjection> Recent { get; } = [];
     public ObservableCollection<DeviceProjection> Nearby { get; } = [];
     public ObservableCollection<ActivityProjection> Activities { get; } = [];
@@ -95,7 +102,7 @@ public sealed class ShellProjection : ObservableObject
         {
             if (!SetProperty(ref selected, value)) return;
             Activities.Clear();
-            if (value?.Name == "Kevin’s iPhone")
+            if (IsDemo && value?.Name == "Kevin’s iPhone")
             {
                 Activities.Add(new(ContentKind.Text, ShareDirection.Outgoing, "", Strings.Get("DemoGreeting"), "", "19:20", ActivityStatus.Completed));
                 Activities.Add(new(ContentKind.Text, ShareDirection.Incoming, "", Strings.Get("DemoHi"), "", "19:21", ActivityStatus.Completed));
@@ -103,19 +110,24 @@ public sealed class ShellProjection : ObservableObject
                 Activities.Add(new(ContentKind.File, ShareDirection.Outgoing, "project.zip", "", "1.8 GB", "19:24", ActivityStatus.Transferring));
                 Activities.Add(new(ContentKind.Text, ShareDirection.Incoming, "", "dotnet publish -c Release", "", "19:25", ActivityStatus.Completed));
             }
-            OnPropertyChanged(nameof(CanSend)); NotifyCommands();
+            Runtime?.SelectionChanged(value);
+            OnPropertyChanged(nameof(CanSend)); OnPropertyChanged(nameof(CanPair)); NotifyCommands();
         }
     }
-    public bool CanSend => SelectedDevice?.Online == true;
+    public bool CanSend => SelectedDevice is { Online: true, Blocked: false } && (IsDemo || Runtime?.Session.State == UniShare.Application.Services.SessionState.Running);
+    public bool CanPair => SelectedDevice is { Online: true, Trusted: false, Blocked: false };
     public string ComposerText { get => composerText; set { if (SetProperty(ref composerText, value)) SendTextCommand.NotifyCanExecuteChanged(); } }
     public string? Notice { get => notice; set => SetProperty(ref notice, value); }
     public RelayCommand SendTextCommand { get; }
     public RelayCommand SendPhotoCommand { get; }
     public RelayCommand SendFileCommand { get; }
     public RelayCommand SendClipboardCommand { get; }
-    public void Decide(ActivityProjection activity, ActivityStatus result) => activity.Status = result;
+    public RelayCommand ConnectCommand { get; }
+    public RelayCommand ForgetCommand { get; }
+    public void Decide(ActivityProjection activity, ActivityStatus result) { if (!IsDemo && Runtime is { } runtime) _ = runtime.DecideAsync(activity, result); else activity.Status = result; }
     public void Retry(ActivityProjection activity)
     {
+        if (!IsDemo && Runtime is { } runtime) { _ = runtime.RetryAsync(activity); return; }
         if (CanSend && activity.Direction == ShareDirection.Outgoing && activity.Status == ActivityStatus.Failed)
             Activities.Add(new(activity.Kind, activity.Direction, activity.Name, activity.Text, activity.Size, "19:31", ActivityStatus.AwaitingPeer, activity.Origin));
     }
@@ -127,6 +139,7 @@ public sealed class ShellProjection : ObservableObject
             var items = await data.GetStorageItemsAsync();
             if (items.Count != 1 || items[0] is not Windows.Storage.StorageFile file) { Notice = Strings.Get("DropOneFile"); return; }
             var kind = file.ContentType.StartsWith("image/", StringComparison.Ordinal) ? ContentKind.Image : ContentKind.File;
+            if (!IsDemo && Runtime is { } runtime) { await runtime.SendFileAsync(file.Path, kind); return; }
             Activities.Add(new(kind, ShareDirection.Outgoing, file.Name, "", "", "19:31", ActivityStatus.AwaitingPeer));
             Notice = Strings.Get("DemoOnly");
         }
@@ -134,13 +147,25 @@ public sealed class ShellProjection : ObservableObject
     }
     private void SendText()
     {
+        if (!IsDemo && Runtime is { } runtime) { _ = runtime.SendTextAsync(ComposerText); return; }
         Activities.Add(new(ContentKind.Text, ShareDirection.Outgoing, "", ComposerText, "", "19:31", ActivityStatus.Completed));
         ComposerText = "";
     }
     private void DemoSend(ContentKind kind)
     {
+        if (!IsDemo && Runtime is { } runtime) { _ = PickFileAsync(runtime, kind); return; }
         Activities.Add(new(kind, ShareDirection.Outgoing, kind == ContentKind.Image ? "IMG_3281.jpg" : "notes.txt", "", kind == ContentKind.Image ? "8.4 MB" : "12 KB", "19:31", ActivityStatus.AwaitingPeer));
         Notice = Strings.Get("DemoOnly");
     }
-    private void NotifyCommands() { SendTextCommand.NotifyCanExecuteChanged(); SendPhotoCommand.NotifyCanExecuteChanged(); SendFileCommand.NotifyCanExecuteChanged(); SendClipboardCommand.NotifyCanExecuteChanged(); }
+    private async Task PickFileAsync(AppRuntime runtime, ContentKind kind)
+    {
+        var picker = new Windows.Storage.Pickers.FileOpenPicker();
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(((App)Microsoft.UI.Xaml.Application.Current).MainWindow!));
+        if (kind == ContentKind.Image) foreach (var extension in new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" }) picker.FileTypeFilter.Add(extension);
+        else picker.FileTypeFilter.Add("*");
+        try { var file = await picker.PickSingleFileAsync(); if (file is not null) await runtime.SendFileAsync(file.Path, kind); }
+        catch { Notice = Strings.Get("Transfer.SubmissionFailed"); }
+    }
+    public void NotifyRuntimeState() { OnPropertyChanged(nameof(CanSend)); NotifyCommands(); }
+    private void NotifyCommands() { SendTextCommand.NotifyCanExecuteChanged(); SendPhotoCommand.NotifyCanExecuteChanged(); SendFileCommand.NotifyCanExecuteChanged(); SendClipboardCommand.NotifyCanExecuteChanged(); ConnectCommand.NotifyCanExecuteChanged(); ForgetCommand.NotifyCanExecuteChanged(); }
 }

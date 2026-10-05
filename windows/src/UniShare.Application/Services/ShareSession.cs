@@ -11,6 +11,8 @@ public sealed class ShareSession : IAsyncDisposable
     private readonly IShareSdkClient sdk;
     private readonly ITransferDrain transfers;
     private readonly SemaphoreSlim lifecycle = new(1, 1);
+    private readonly object admission = new();
+    private bool exitRequested;
     private int state = (int)SessionState.Paused;
     private bool initialized;
     private bool hasStarted;
@@ -30,7 +32,7 @@ public sealed class ShareSession : IAsyncDisposable
     public DeviceStore Devices { get; }
     public SessionState State => (SessionState)Volatile.Read(ref state);
     private void SetState(SessionState value) => Volatile.Write(ref state, (int)value);
-    private void RequireAlive() => ObjectDisposedException.ThrowIf(State == SessionState.Exiting, this);
+    private void RequireAlive() { lock (admission) ObjectDisposedException.ThrowIf(exitRequested || State == SessionState.Exiting, this); }
 
     public async Task InitializeAsync(SdkOptions options, CancellationToken cancellationToken = default)
     {
@@ -126,7 +128,7 @@ public sealed class ShareSession : IAsyncDisposable
             Devices.Refresh();
             hasStarted = true;
             SetState(SessionState.Running);
-            transfers.AllowNewTransfers();
+            lock (admission) if (!exitRequested) transfers.AllowNewTransfers();
         }
         catch
         {
@@ -149,11 +151,14 @@ public sealed class ShareSession : IAsyncDisposable
 
     public async Task ExitAsync(CancellationToken cancellationToken = default)
     {
-        await lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        // Exit admission precedes queued native transitions. An accepted Start
+        // may finish while exit waits, but can no longer reopen transfer work.
+        lock (admission) { exitRequested = true; transfers.BlockNewTransfers(); }
+        await lifecycle.WaitAsync().ConfigureAwait(false);
         try
         {
             if (State == SessionState.Exiting) return;
-            cancellationToken.ThrowIfCancellationRequested();
             SetState(SessionState.Exiting);
             transfers.BlockNewTransfers();
             sdk.EventReceived -= OnSdkEvent;

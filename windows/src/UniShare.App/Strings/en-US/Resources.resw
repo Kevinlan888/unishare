@@ -161,4 +161,26 @@
 <data name="Settings.SaveFailed" xml:space="preserve"><value>Could not save settings. Try again.</value></data>
 <data name="Settings.ReceiveDirectoryNotWritable" xml:space="preserve"><value>Choose a receive directory you can write to.</value></data>
 <data name="OfflineStatus" xml:space="preserve"><value>Offline</value></data>
+<data name="PairingDialog.Title" xml:space="preserve"><value>Pair this device</value></data>
+<data name="PairingDialog.PrimaryButtonText" xml:space="preserve"><value>Match</value></data>
+<data name="PairingDialog.SecondaryButtonText" xml:space="preserve"><value>Does not match</value></data>
+<data name="PairingInstruction.Text" xml:space="preserve"><value>Check that this security code matches the code on the other device.</value></data>
+<data name="PairingCode.AutomationProperties.Name" xml:space="preserve"><value>Security code</value></data>
+<data name="Tray.Open" xml:space="preserve"><value>Open UniShare</value></data>
+<data name="Tray.Pause" xml:space="preserve"><value>Pause receiving</value></data>
+<data name="Tray.Resume" xml:space="preserve"><value>Resume receiving</value></data>
+<data name="Tray.Exit" xml:space="preserve"><value>Exit</value></data>
+<data name="Tray.Normal" xml:space="preserve"><value>UniShare — receiving</value></data>
+<data name="Tray.Pausing" xml:space="preserve"><value>UniShare — pausing</value></data>
+<data name="Tray.Paused" xml:space="preserve"><value>UniShare — paused</value></data>
+<data name="Tray.Warning" xml:space="preserve"><value>UniShare — attention required</value></data>
+<data name="Notification.Offer" xml:space="preserve"><value>A device wants to share content. Review it in UniShare.</value></data>
+<data name="Notification.Completed" xml:space="preserve"><value>Content transfer completed.</value></data>
+<data name="Notification.Failed" xml:space="preserve"><value>Content transfer failed. Open UniShare for details.</value></data>
+<data name="Notification.SdkFailure" xml:space="preserve"><value>Sharing is unavailable. Open UniShare to resume.</value></data>
+<data name="Notification.Reject" xml:space="preserve"><value>Reject</value></data>
+<data name="Notification.ViewAndAccept" xml:space="preserve"><value>View and accept</value></data>
+<data name="ConnectPair.Content" xml:space="preserve"><value>Connect and pair</value></data>
+<data name="ForgetDevice.Content" xml:space="preserve"><value>Forget device</value></data>
+<data name="IdentityWarning" xml:space="preserve"><value>This device’s identity changed. Forget it and pair again before sharing.</value></data>
 </root>

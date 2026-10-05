@@ -15,6 +15,37 @@ public sealed partial class XamlPolicyTests
     }
 
     [TestMethod]
+    public void ManifestActivatesNotificationsAndDefaultOffStartupUsingOnlyTheMainExecutable()
+    {
+        var manifest = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Package.appxmanifest"));
+        var applications = manifest.Descendants().Where(e => e.Name.LocalName == "Application").ToArray();
+        Assert.AreEqual(1, applications.Length);
+        var executable = applications[0].Attribute("Executable")!.Value;
+        var server = manifest.Descendants().SingleOrDefault(e => e.Name.LocalName == "ExeServer");
+        Assert.IsNotNull(server, "Notification COM activation missing");
+        Assert.AreEqual(executable, server.Attribute("Executable")?.Value);
+        var toast = manifest.Descendants().Single(e => e.Name.LocalName == "ToastNotificationActivation");
+        Assert.AreEqual(server.Elements().Single(e => e.Name.LocalName == "Class").Attribute("Id")?.Value, toast.Attribute("ToastActivatorCLSID")?.Value);
+        var startup = manifest.Descendants().Single(e => e.Name.LocalName == "StartupTask");
+        Assert.AreEqual("http://schemas.microsoft.com/appx/manifest/desktop/windows10", startup.Name.NamespaceName);
+        Assert.AreEqual("false", startup.Attribute("Enabled")?.Value);
+        Assert.AreEqual("UniShareStartup", startup.Attribute("TaskId")?.Value);
+        Assert.IsFalse(manifest.Descendants().Any(e => e.Name.LocalName == "Service"));
+    }
+
+    [TestMethod]
+    public void PairingDialogExposesCodeAndExplicitMatchOrMismatchCommandsWithoutBypass()
+    {
+        var path = Path.Combine(ResourceCoverageTests.AppPath, "Features", "Pairing", "PairingDialog.xaml");
+        Assert.IsTrue(File.Exists(path), "Pairing dialog missing");
+        var root = XDocument.Load(path).Root!;
+        Assert.AreEqual("{Binding ConfirmMatchesCommand}", root.Attribute("PrimaryButtonCommand")?.Value);
+        Assert.AreEqual("{Binding RejectCommand}", root.Attribute("SecondaryButtonCommand")?.Value);
+        Assert.IsTrue(root.Descendants().Any(e => e.Attribute("Text")?.Value == "{Binding PendingRequest.VerificationCode}"));
+        Assert.IsNull(root.Attribute("CloseButtonText"));
+    }
+
+    [TestMethod]
     public void EveryFeaturePageHasAnAccessibleLocalizedTitle()
     {
         XamlFiles();

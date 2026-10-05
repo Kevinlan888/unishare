@@ -7,5 +7,11 @@
     <ProjectReference Include="../../src/UniShare.Application/UniShare.Application.csproj" />
     <Compile Include="../../src/UniShare.App/Presentation/PropertyChangedSubscription.cs" Link="Production/PropertyChangedSubscription.cs" />
     <Compile Include="../../src/UniShare.App/Presentation/PresentationState.cs" Link="Production/PresentationState.cs" />
+    <Compile Include="../../src/UniShare.App/Services/NotificationPayload.cs" Link="Production/NotificationPayload.cs" />
+    <Compile Include="../../src/UniShare.App/Services/TrayIconService.cs" Link="Production/TrayIconService.cs" />
+    <Compile Include="../../src/UniShare.App/Services/StartupTaskService.cs" Link="Production/StartupTaskService.cs" />
+    <Compile Include="../../src/UniShare.App/Services/WindowController.cs" Link="Production/WindowController.cs" />
+    <Compile Include="../../src/UniShare.App/Services/AppNotificationService.cs" Link="Production/AppNotificationService.cs" />
+    <Compile Include="../../src/UniShare.App/Services/ReceiveDirectoryValidator.cs" Link="Production/ReceiveDirectoryValidator.cs" />
   </ItemGroup>
 </Project>

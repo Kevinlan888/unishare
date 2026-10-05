@@ -3,5 +3,7 @@ using UniShare.App.Features.Share;
 namespace UniShare.App.Features.Shell;
 public sealed partial class ShellPage : UserControl
 {
-    public ShellPage(ShellProjection model) { InitializeComponent(); ShareHost.Content = new SharePage(model); }
+    private readonly SharePage share;
+    public ShellPage(ShellProjection model) { InitializeComponent(); share = new SharePage(model); ShareHost.Content = share; }
+    public void ShowDeviceSession() => share.ShowDeviceSession();
 }
