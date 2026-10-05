@@ -13,20 +13,24 @@ public sealed class PairingViewModel : CommandViewModel, IDisposable
     public PairingViewModel(IShareSdkClient sdk, IViewModelDispatcher dispatcher) : base(dispatcher)
     {
         this.sdk = sdk;
-        ConfirmMatchesCommand = Command(() => CompleteAsync(true), () => PendingRequest is not null, "Pairing.ConfirmFailed");
-        RejectCommand = Command(() => CompleteAsync(false), () => PendingRequest is not null, "Pairing.RejectFailed");
+        ConfirmMatchesCommand = SnapshotCommand(() => PendingRequest, request => CompleteAsync(request!, true), IsCurrent, "Pairing.ConfirmFailed");
+        RejectCommand = SnapshotCommand(() => PendingRequest, request => CompleteAsync(request!, false), IsCurrent, "Pairing.RejectFailed");
         sdk.EventReceived += OnEvent;
     }
     public ShareSdkEvent.PairingRequested? PendingRequest
     {
-        get => pendingRequest;
-        private set { if (SetProperty(ref pendingRequest, value)) NotifyCommands(); }
+        get => Volatile.Read(ref pendingRequest);
+        private set
+        {
+            if (ReferenceEquals(PendingRequest, value)) return;
+            Volatile.Write(ref pendingRequest, value); OnPropertyChanged(); NotifyCommands();
+        }
     }
     public IAsyncRelayCommand ConfirmMatchesCommand { get; }
     public IAsyncRelayCommand RejectCommand { get; }
-    private async Task CompleteAsync(bool matches)
+    private bool IsCurrent(ShareSdkEvent.PairingRequested? request) => request is not null && ReferenceEquals(PendingRequest, request);
+    private async Task CompleteAsync(ShareSdkEvent.PairingRequested request, bool matches)
     {
-        var request = PendingRequest!;
         if (matches) await sdk.ConfirmPairingAsync(request.Request, true, CancellationToken.None).ConfigureAwait(false);
         else await sdk.RejectPairingAsync(request.Request, CancellationToken.None).ConfigureAwait(false);
         await Dispatcher.InvokeAsync(() => { if (ReferenceEquals(PendingRequest, request)) PendingRequest = null; }).ConfigureAwait(false);

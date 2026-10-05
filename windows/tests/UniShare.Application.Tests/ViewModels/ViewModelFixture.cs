@@ -67,6 +67,7 @@ internal sealed class ViewModelFixture : IDisposable
         public bool ConfirmationWasDispatched;
         public Func<bool>? IsDispatching;
         public ShareContent Clipboard = new(ContentKind.Text, "clipboard", "text/plain", []);
+        public CancellationToken ClipboardToken;
         public void Emit(ShareSdkEvent value) => EventReceived?.Invoke(this, value);
         public Task InitializeAsync(SdkOptions options, CancellationToken token) => Task.CompletedTask;
         public Task StartAsync(CancellationToken token) => Task.CompletedTask;
@@ -88,7 +89,7 @@ internal sealed class ViewModelFixture : IDisposable
         public Task AcceptAsync(RequestId request, string path, CancellationToken token) { Calls.Add($"accept:{request.Value}"); return Accepting?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask; }
         public Task RejectAsync(RequestId request, CancellationToken token) { Calls.Add($"reject:{request.Value}"); return Wait?.Invoke() ?? Task.CompletedTask; }
         public Task CancelAsync(TransferId transfer, CancellationToken token) { Calls.Add($"cancel:{transfer.Value}"); return Cancelling?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask; }
-        public async Task<ShareContent> ReadClipboardAsync(CancellationToken token) { Calls.Add("clipboard"); if (Wait is not null) await Wait(); return Clipboard; }
+        public async Task<ShareContent> ReadClipboardAsync(CancellationToken token) { ClipboardToken = token; Calls.Add("clipboard"); if (Wait is not null) await Wait(); return Clipboard; }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     internal sealed class TestFiles : ITransferFiles
@@ -132,12 +133,20 @@ internal sealed class ViewModelFixture : IDisposable
         public bool IsDispatching { get; private set; }
         private readonly object gate = new();
         private readonly Queue<Action> actions = new();
+        private readonly List<(int Count, TaskCompletionSource Completion)> queueWaiters = [];
         private readonly List<TaskCompletionSource> completions = [];
         public void Post(Action action)
         {
             lock (gate)
             {
-                if (Queue) actions.Enqueue(action);
+                if (Queue)
+                {
+                    actions.Enqueue(action);
+                    foreach (var waiter in queueWaiters.Where(waiter => actions.Count >= waiter.Count).ToArray())
+                    {
+                        waiter.Completion.SetResult(); queueWaiters.Remove(waiter);
+                    }
+                }
                 else Run(action);
             }
         }
@@ -161,6 +170,15 @@ internal sealed class ViewModelFixture : IDisposable
             return completion.Task;
         }
         public void Drain() { lock (gate) { while (actions.TryDequeue(out var action)) Run(action); } }
+        public Task WaitForQueuedActionsAsync(int count)
+        {
+            lock (gate)
+            {
+                if (actions.Count >= count) return Task.CompletedTask;
+                var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                queueWaiters.Add((count, completion)); return completion.Task;
+            }
+        }
         public void ReleaseCompletions()
         {
             lock (gate) { foreach (var completion in completions) completion.SetResult(); completions.Clear(); }

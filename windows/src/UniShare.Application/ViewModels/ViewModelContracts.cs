@@ -57,6 +57,19 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
         commands.Add(command); return command;
     }
 
+    // Capture must return an immutable, thread-safe snapshot at user invocation.
+    // Delayed dispatcher admission validates that same input, rather than
+    // silently substituting binding state changed by an earlier queued event.
+    protected IAsyncRelayCommand SnapshotCommand<T>(Func<T> capture, Func<T, Task> action, Predicate<T> enabled, string errorKey)
+    {
+        var command = new AsyncRelayCommand(() =>
+        {
+            var input = capture();
+            return RunAsync(() => action(input), () => enabled(input), errorKey, defaultLane);
+        }, () => !defaultLane.IsBusy && enabled(capture()));
+        commands.Add(command); return command;
+    }
+
     // Eligibility, lane admission, and the synchronous start of the operation
     // share one dispatcher action. Async methods capture their binding inputs
     // before their first await; a later event cannot replace those inputs while

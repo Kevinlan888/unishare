@@ -14,10 +14,11 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     private readonly IViewModelFiles files;
     private readonly Dictionary<ActivityId, ActivityItemViewModel> items = [];
     private readonly HashSet<ActivityId> cancellationSubmitted = [];
-    private CancellationTokenSource sendEligibility = new();
+    private readonly object eligibilityGate = new();
+    private EligibilityGeneration sendEligibility = new();
     private IReadOnlyList<ActivityItemViewModel> activities = [];
     private string composerText = string.Empty;
-    private bool disposed;
+    private volatile bool disposed;
 
     public DeviceSessionViewModel(DeviceEntry device, DeviceStore devices, TransferCoordinator coordinator,
         ActivityTracker tracker, IShareSdkClient sdk, IViewModelFiles files, IViewModelDispatcher dispatcher) : base(dispatcher)
@@ -27,7 +28,7 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         SendTextCommand = Command(async () =>
         {
             var submitted = ComposerText;
-            var eligibility = sendEligibility.Token;
+            var eligibility = CaptureEligibilityToken();
             await coordinator.SendTextAsync(Device.Id, submitted, ShareOrigin.Direct, eligibility).ConfigureAwait(false);
             await Dispatcher.InvokeAsync(() => { if (ComposerText == submitted) ComposerText = string.Empty; }).ConfigureAwait(false);
         }, () => CanSend && !string.IsNullOrWhiteSpace(ComposerText), "Transfer.SubmissionFailed");
@@ -35,7 +36,7 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         SendImageCommand = Command<string>(path => SendFileAsync(path!, ContentKind.Image), path => CanSend && !string.IsNullOrWhiteSpace(path), "Transfer.SubmissionFailed");
         SendClipboardCommand = Command(async () =>
         {
-            var eligibility = sendEligibility.Token;
+            var eligibility = CaptureEligibilityToken();
             await coordinator.SendClipboardAsync(Device.Id, eligibility).ConfigureAwait(false);
         }, () => CanSend, "Transfer.SubmissionFailed");
         AcceptCommand = Command<ActivityId>(id => coordinator.AcceptAsync(id, CancellationToken.None), id => CanDecide(id), "Transfer.AcceptFailed");
@@ -52,7 +53,7 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         }, id => !IdentityChanged && !cancellationSubmitted.Contains(id) && Find(id)?.Status is ActivityStatus.AwaitingPeer or ActivityStatus.AwaitingDecision or ActivityStatus.Transferring, "Transfer.CancelFailed", cancellationLane);
         RetryCommand = Command<ActivityId>(async id =>
         {
-            var eligibility = sendEligibility.Token;
+            var eligibility = CaptureEligibilityToken();
             await coordinator.RetryAsync(id, eligibility).ConfigureAwait(false);
         }, id => CanSend && Find(id) is not null && tracker.CanRetry(id), "Transfer.RetryFailed");
         ForgetCommand = Command(async () =>
@@ -96,7 +97,7 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
 
     public Task DropFilesAsync(IReadOnlyList<string> paths) => paths.Count == 1 ? SendFileCommand.ExecuteAsync(paths[0]) : Task.CompletedTask;
     private async Task SendFileAsync(string path, ContentKind kind) =>
-        _ = await coordinator.SendFileAsync(Device.Id, path, kind, ShareOrigin.Direct, sendEligibility.Token).ConfigureAwait(false);
+        _ = await coordinator.SendFileAsync(Device.Id, path, kind, ShareOrigin.Direct, CaptureEligibilityToken()).ConfigureAwait(false);
     private ActivityRecord? Find(ActivityId id) => tracker.GetDeviceSnapshot(Device.Id).FirstOrDefault(value => value.Id == id);
     private bool CanDecide(ActivityId id) => !IdentityChanged && !cancellationSubmitted.Contains(id) && Find(id) is { Direction: ShareDirection.Incoming, Status: ActivityStatus.AwaitingDecision };
 
@@ -105,10 +106,15 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     public void Refresh()
     {
         if (disposed) return;
-        if (!CanSend) sendEligibility.Cancel();
-        else if (sendEligibility.IsCancellationRequested)
+        if (!CanSend) RevokeSendEligibility();
+        else
         {
-            sendEligibility.Dispose(); sendEligibility = new();
+            lock (eligibilityGate)
+            {
+                // Recheck the thread-safe device state inside generation
+                // ownership so an event cannot race an unsafe reset.
+                if (CanSend && sendEligibility.Source.IsCancellationRequested) sendEligibility = new();
+            }
         }
         var snapshot = tracker.GetDeviceSnapshot(Device.Id);
         var current = snapshot.Select(record =>
@@ -126,24 +132,54 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     private void OnActivitiesChanged(object? sender, EventArgs args) => Dispatcher.Post(Refresh);
     private void OnSdkEvent(object? sender, ShareSdkEvent value)
     {
+        if (disposed) return;
+        // This is non-binding state: revoke synchronously on the SDK thread.
+        // Clipboard/staging continuations do not wait for UI notifications.
+        if (value is ShareSdkEvent.DeviceOffline offline && offline.Device == Device.Id ||
+            value is ShareSdkEvent.IdentityChanged changed && changed.Device == Device.Id ||
+            value is ShareSdkEvent.ConnectionChanged { Failure.Kind: ShareErrorKind.IdentityChanged } connection && connection.Device == Device.Id ||
+            value is ShareSdkEvent.PairingCompleted { Failure.Kind: ShareErrorKind.IdentityChanged } pairing && pairing.Device == Device.Id)
+            RevokeSendEligibility();
         if (value is ShareSdkEvent.DeviceOnline or ShareSdkEvent.DeviceUpdated or ShareSdkEvent.DeviceOffline or
             ShareSdkEvent.ConnectionChanged or ShareSdkEvent.IdentityChanged or ShareSdkEvent.PairingCompleted)
-            Dispatcher.Post(() =>
-            {
-                if (disposed) return;
-                // Revoke the generation for the actual unsafe event, even if a
-                // newer online snapshot is already visible before dispatch.
-                if (value is ShareSdkEvent.DeviceOffline offline && offline.Device == Device.Id ||
-                    value is ShareSdkEvent.IdentityChanged changed && changed.Device == Device.Id ||
-                    value is ShareSdkEvent.ConnectionChanged { Failure.Kind: ShareErrorKind.IdentityChanged } connection && connection.Device == Device.Id ||
-                    value is ShareSdkEvent.PairingCompleted { Failure.Kind: ShareErrorKind.IdentityChanged } pairing && pairing.Device == Device.Id)
-                    sendEligibility.Cancel();
-                Refresh();
-            });
+            Dispatcher.Post(Refresh);
+    }
+
+    private CancellationToken CaptureEligibilityToken()
+    {
+        lock (eligibilityGate) return sendEligibility.Source.Token;
+    }
+
+    private void RevokeSendEligibility()
+    {
+        Task cancellation;
+        lock (eligibilityGate)
+        {
+            if (sendEligibility.Source.IsCancellationRequested) return;
+            // CancelAsync marks the token cancelled synchronously, but runs
+            // callbacks asynchronously. No callback can invert the dispatcher/
+            // generation lock order, and concurrent observers see revocation.
+            cancellation = sendEligibility.Source.CancelAsync();
+        }
+        _ = ObserveCancellationAsync(cancellation);
+    }
+
+    private static async Task ObserveCancellationAsync(Task cancellation)
+    {
+        try { await cancellation.ConfigureAwait(false); }
+        catch { /* Callback failures do not undo synchronous revocation. */ }
+    }
+
+    private sealed class EligibilityGeneration
+    {
+        public readonly CancellationTokenSource Source = new();
+        // No timer or wait handle is allocated here. Tokens/registrations may
+        // outlive the ViewModel or a reset, so do not prematurely Dispose their
+        // source. Retired managed generations are collected after those owners
+        // release them; no list of retired generations is retained by the VM.
     }
     public void Dispose()
     {
         if (disposed) return; disposed = true; tracker.Changed -= OnActivitiesChanged; sdk.EventReceived -= OnSdkEvent;
-        sendEligibility.Dispose();
     }
 }

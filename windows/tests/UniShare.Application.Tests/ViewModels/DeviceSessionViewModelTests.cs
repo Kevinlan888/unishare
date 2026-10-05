@@ -7,6 +7,35 @@ namespace UniShare.Application.Tests.ViewModels;
 public sealed class DeviceSessionViewModelTests
 {
     [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(false, true)]
+    [DataRow(true, false)]
+    [DataRow(true, true)]
+    public async Task UnsafeEventRevokesPreparationBeforeAnyBindingDispatch(bool image, bool identityChanged)
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(); using var vm = f.Session(device);
+        var read = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var staged = new TaskCompletionSource<TransientSource>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = new ViewModelFixture.TestFiles.StagedImage();
+        if (image) { f.Sdk.Clipboard = new(ContentKind.Image, null, "image/png", [1, 2]); f.Files.Staging = _ => staged.Task; }
+        else f.Sdk.Wait = () => read.Task;
+        var sending = vm.SendClipboardCommand.ExecuteAsync(null);
+        f.Dispatcher.Queue = true;
+        if (identityChanged) f.Sdk.Emit(new ShareSdkEvent.IdentityChanged(device.Id)); else f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        Assert.IsTrue(f.Sdk.ClipboardToken.IsCancellationRequested);
+        if (image) staged.SetResult(source); else read.SetResult();
+        // Wait for the continuation's binding notification, but deliberately do
+        // not run the queued unsafe-event notification before checking SDK state.
+        await f.Dispatcher.WaitForQueuedActionsAsync(2).WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.AreEqual(0, f.Sdk.Completions.Count);
+            Assert.AreEqual(0, f.Tracker.GetDeviceSnapshot(device.Id).Count);
+            if (image) { Assert.AreEqual(1, source.Disposals); Assert.IsFalse(f.Tracker.HasActiveTransfers); }
+        }
+        finally { f.Dispatcher.Queue = false; f.Dispatcher.Drain(); await sending.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+    [TestMethod]
     public async Task UnsafeGenerationRetiresStagedClipboardImageEvenIfDeviceIsOnlineAgainBeforeDispatch()
     {
         using var f = new ViewModelFixture(); var device = f.Online(); using var vm = f.Session(device);
@@ -28,7 +57,10 @@ public sealed class DeviceSessionViewModelTests
         using var f = new ViewModelFixture(); var device = f.Online(); using var vm = f.Session(device); vm.ComposerText = "accepted";
         await vm.SendTextCommand.ExecuteAsync(null); var transfer = new TransferId(Guid.NewGuid());
         f.Sdk.Emit(new ShareSdkEvent.OutgoingTransferRegistered(new(1), transfer));
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Sdk.Cancelling = () => { cancelled.SetResult(); return Task.CompletedTask; };
         f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.AreEqual(1, f.Sdk.Calls.Count(x => x.StartsWith("cancel:")));
         Assert.IsTrue(f.Tracker.HasActiveTransfers); Assert.IsFalse(f.Sdk.Completions.Single().Task.IsCompleted);
         f.Sdk.Completions.Single().SetResult(new(transfer, new(ShareErrorKind.Cancelled, "private")));
