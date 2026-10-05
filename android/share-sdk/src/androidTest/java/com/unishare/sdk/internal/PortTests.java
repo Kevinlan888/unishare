@@ -1,0 +1,111 @@
+package com.unishare.sdk.internal;
+import android.app.Instrumentation;
+import android.os.Bundle;
+import java.io.*;
+import java.util.*;
+
+/** Standalone instrumentation runner: no downloaded test framework or test-only production API. */
+public final class PortTests extends Instrumentation {
+    @Override public void onCreate(Bundle b) { super.onCreate(b); start(); }
+    static void check(boolean yes, String why) { if (!yes) throw new AssertionError(why); }
+    static byte[] identity() throws Exception {
+        ByteArrayOutputStream b = new ByteArrayOutputStream(); DataOutputStream d = new DataOutputStream(b);
+        d.write(new byte[16]); d.writeInt(3); d.write(new byte[]{1,2,3}); d.writeInt(2); d.write(new byte[]{4,5}); return b.toByteArray();
+    }
+    void identityRestart() throws Exception {
+        String name="test-"+UUID.randomUUID(); IdentityStore first=new IdentityStore(getTargetContext(),name);
+        check(Arrays.equals(first.transact(1,new byte[0]),new byte[]{0}),"missing identity must be distinguished from corruption");
+        first.transact(2,identity()); IdentityStore restarted=new IdentityStore(getTargetContext(),name);
+        byte[] loaded=restarted.transact(1,new byte[0]);
+        check(loaded.length==identity().length+1 && loaded[0]==1,"identity must survive restart");
+        check(Arrays.equals(Arrays.copyOfRange(loaded,1,loaded.length),identity()),"DER identity changes on restart");
+        boolean duplicate=false; try { restarted.transact(2,identity()); } catch(Exception e) { duplicate=true; }
+        check(duplicate,"create-once identity must reject overwrite");
+    }
+    void contentStreams() throws Exception {
+        ContentStreams streams=new ContentStreams(getTargetContext().getContentResolver());
+        String uri="content://"+getTargetContext().getPackageName()+".probe/staging-"+UUID.randomUUID();
+        long target=streams.open(uri,true);streams.write(target,new byte[]{9,8,7});streams.close(target,false);
+        long source=streams.open(uri,false);
+        check(Arrays.equals(streams.read(source,2),new byte[]{9,8}),"URI reads must be bounded and preserve data");
+        check(Arrays.equals(streams.read(source,2),new byte[]{7}),"URI stream position");
+        check(streams.read(source,2).length==0,"URI EOF");streams.close(source,false);
+        long aborted=streams.open(uri,true);streams.write(aborted,new byte[]{6});streams.close(aborted,true);
+        check(!new File(getTargetContext().getCacheDir(),android.net.Uri.parse(uri).getLastPathSegment()).exists(),"abort must delete staged destination");
+        boolean failure=false;try{streams.write(aborted,new byte[]{1});}catch(Exception e){failure=true;}
+        check(failure,"closed destination cannot report successful write");
+        boolean pipeRejected=false;try{streams.open("content://"+getTargetContext().getPackageName()+".probe/pipe",true);}catch(java.io.IOException e){pipeRejected=true;}
+        check(pipeRejected,"commit-on-close destination pipes cannot report durable Write success");
+    }
+    void dnsOwnership() throws Exception {
+        class Fake implements DnsPort.Boundary {
+            Events events;int advertised;int registration=-1;
+            public void publish(DnsPort.Record r,java.util.function.IntConsumer cb){advertised=r.port;cb.accept(registration);}
+            public void browse(Events e){events=e;} public void stop(){}
+        }
+        Fake boundary=new Fake();List<byte[]> found=new ArrayList<>();DnsPort dns=new DnsPort(boundary,(id,bytes)->found.add(bytes));
+        DnsPort.Record service=new DnsPort.Record();service.instance="peer";service.scope="net:42";service.port=12345;service.addresses.add("192.0.2.1");
+        dns.browse(1);check(boundary.events!=null,"browse must submit framework registration");
+        boundary.events.found(service);boundary.events.lost(service);check(found.size()==2,"found/removal must reach consumer");
+        java.io.DataInputStream removal=Packet.input(found.get(1));check(removal.readInt()==0,"DNS event error");removal.readLong();Packet.text(removal);
+        check(removal.readInt()==1 && Packet.text(removal).equals("peer") && Packet.text(removal).equals("net:42"),"removal must keep original network scope");
+        dns.stop();boundary.events.found(service);check(found.size()==2,"late callbacks after stop must be ignored");
+        dns.publish(2,service);check(boundary.advertised==12345,"publish actual bound port");
+        Fake legacy=new Fake();List<byte[]> old=new ArrayList<>();DnsPort aggregate=new DnsPort(legacy,(id,b)->old.add(b));aggregate.browse(3);
+        service.scope="legacy";legacy.events.found(service);legacy.events.lost(service);check(old.size()==1,"ambiguous legacy loss cannot remove confirmed device");aggregate.stop();
+        boundary.events.error(6); // stopped generation ignores errors too
+        Fake errors=new Fake();List<byte[]> failures=new ArrayList<>();DnsPort errorPort=new DnsPort(errors,(id,b)->failures.add(b));errorPort.browse(4);
+        errors.events.error(6);java.io.DataInputStream bad=Packet.input(failures.get(0));check(bad.readInt()==2 && bad.readLong()==6,"NSD bad parameters is DiscoveryFailed with raw6");
+        errors.events.error(7);bad=Packet.input(failures.get(1));check(bad.readInt()==1 && bad.readLong()==7,"NSD permission denied retains raw7");errorPort.stop();
+        errors.registration=0;errorPort.publish(5,service);bad=Packet.input(failures.get(2));check(bad.readInt()==2&&bad.readLong()==0,"native NSD internal error0 cannot be success");
+    }
+    void clipboardAndPermission() throws Exception {
+        class Fake implements ClipboardPort.Boundary {android.content.ClipData data;public android.content.ClipData get(){return data;}public void set(android.content.ClipData d){data=d;}}
+        Fake boundary=new Fake();ClipboardPort clipboard=new ClipboardPort(getTargetContext(),boundary);
+        byte[] text=Packet.make(d->{d.writeInt(1);Packet.text(d,"你好\u0000world");Packet.text(d,"");Packet.bytes(d,new byte[0]);});
+        clipboard.write(text);check(Arrays.equals(clipboard.read(),text),"explicit clipboard UTF-8 text roundtrip");
+        boundary.data=android.content.ClipData.newIntent("unsupported",new android.content.Intent("test"));
+        boolean unsupported=false;try{clipboard.read();}catch(PortFailure e){unsupported=e.code==13;}check(unsupported,"unsupported clipboard must be InvalidInput");
+        class Policy implements PermissionPolicy.Boundary {boolean front=true,grant=false;int sdk=37,target=37;public boolean foreground(){return front;}public int sdk(){return sdk;}public int target(){return target;}public boolean granted(){return grant;}}
+        Policy policy=new Policy();boolean denied=false;try{PermissionPolicy.check(policy);}catch(PortFailure e){denied=e.code==1;}check(denied,"target37 local-network denial");
+        policy.target=36;PermissionPolicy.check(policy);policy.front=false;denied=false;try{PermissionPolicy.check(policy);}catch(PortFailure e){denied=e.code==10;}check(denied,"background lifecycle must reject network Start");
+    }
+    void nativeBridge()throws Exception{try(NativeBridge bridge=new NativeBridge(getTargetContext(),"native-"+UUID.randomUUID())){
+        check(bridge.platformHandle()!=0,"JNI must register a retained C ABI platform");
+        bridge.setForeground(true);
+        boolean invalid=false;try{bridge.openStream("file:///etc/hosts",false);}catch(NativePortException e){invalid=e.code==13;}check(invalid,"JNI must retain core error code");
+        String uri="content://"+getTargetContext().getPackageName()+".probe/registered-"+UUID.randomUUID();
+        long stream=bridge.openStream(uri,true);check(stream!=0,"JNI must retain URI stream token");NativeBridge.releaseStream(stream);
+        invalid=false;try{NativeBridge.releaseStream(stream);}catch(NativePortException e){invalid=e.code==13;}check(invalid,"released stream token cannot be reused");
+    }FrameworkPorts framework=new FrameworkPorts(getTargetContext(),"probe-"+UUID.randomUUID());framework.setForeground(true);
+        String uri="content://"+getTargetContext().getPackageName()+".probe/native-"+UUID.randomUUID();String status=NativeProbe.run(framework,uri);check(status.startsWith("PASS"),status);
+        NativeBridge.complete(framework.nativeKey,Long.MAX_VALUE,Packet.success(new byte[0])); // a late retired completion has no native owner
+    }
+    void identityCorruptionAndImages()throws Exception {
+        String name="corrupt-"+UUID.randomUUID();IdentityStore store=new IdentityStore(getTargetContext(),name);store.transact(2,identity());
+        File dbFile=new File(new File(getTargetContext().getNoBackupFilesDir(),"unishare-"+name),"records.db");
+        try(android.database.sqlite.SQLiteDatabase db=android.database.sqlite.SQLiteDatabase.openDatabase(dbFile.toString(),null,0)){
+            db.execSQL("UPDATE records SET v=? WHERE k='identity'",new Object[]{new byte[32]});
+        }
+        boolean corrupt=false;try{new IdentityStore(getTargetContext(),name).transact(1,new byte[0]);}catch(Exception e){corrupt=true;}check(corrupt,"corrupt identity cannot silently become absent");
+        class Fake implements ClipboardPort.Boundary {android.content.ClipData clip;public android.content.ClipData get(){return clip;}public void set(android.content.ClipData c){clip=c;}}
+        Fake boundary=new Fake();ClipboardPort clipboard=new ClipboardPort(getTargetContext(),boundary);
+        byte[] image=Packet.make(d->{d.writeInt(2);Packet.text(d,"");Packet.text(d,"image/png");Packet.bytes(d,new byte[]{(byte)137,80,78,71});});
+        clipboard.write(image);check(Arrays.equals(clipboard.read(),image),"explicit image clipboard URI roundtrip");
+    }
+    @Override public void onStart() {
+        Bundle result=new Bundle();
+        try {
+            runCase("identityRestart",1,this::identityRestart);runCase("contentStreams",2,this::contentStreams);runCase("dnsOwnership",3,this::dnsOwnership);
+            runCase("clipboardAndPermission",4,this::clipboardAndPermission);runCase("identityCorruptionAndImages",5,this::identityCorruptionAndImages);runCase("nativeBridge",6,this::nativeBridge);
+            result.putString("stream","PASS 6 internal adapter cases\n");finish(-1,result);
+        }
+        catch(Throwable e) { result.putString("stream","FAIL "+android.util.Log.getStackTraceString(e)); finish(1,result); }
+    }
+    interface Case {void run()throws Exception;}
+    void runCase(String name,int index,Case test)throws Exception{
+        Bundle status=new Bundle();status.putString("id","UniSharePortTests");status.putString("class",getClass().getName());status.putString("test",name);
+        status.putInt("current",index);status.putInt("numtests",6);sendStatus(1,status);
+        try{test.run();sendStatus(0,status);}catch(Throwable e){status.putString("stack",android.util.Log.getStackTraceString(e));sendStatus(-2,status);throw e;}
+    }
+}

@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.unishare.sdk.porttest">
+ <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+ <uses-permission android:name="android.permission.INTERNET" />
+ <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+ <application android:label="UniShare internal port tests" android:debuggable="true" android:allowBackup="false">
+  <provider android:name="com.unishare.sdk.internal.ProbeProvider" android:authorities="com.unishare.sdk.porttest.probe" android:exported="false" />
+  <provider android:name="com.unishare.sdk.internal.ImageProvider" android:authorities="com.unishare.sdk.porttest.unishare.images" android:exported="false" android:grantUriPermissions="true" />
+ </application>
+ <instrumentation android:name="com.unishare.sdk.internal.PortTests" android:targetPackage="com.unishare.sdk.porttest" />
+</manifest>

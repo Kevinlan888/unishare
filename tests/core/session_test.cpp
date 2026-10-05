@@ -212,6 +212,16 @@ void EveryContentTypeAndConsumerFailure(){
 }
 
 
+void SmallCompletionIsConsumedBeforeClose(){
+ Pair p;p.Start();p.ConfirmA();p.ConfirmB();int completions=0;
+ p.b->SetContentHandler([](auto,auto ack){ack(Result<void>::Success());},[](auto){});
+ // A pointer-sized callable uses libc++'s small callable storage. Moving a
+ // std::function need not clear that storage; one-shot ownership must do so.
+ p.a->SendContent(protocol::Data{},[&completions](auto){++completions;});p.q.Run();
+ CHECK(completions==1);
+ p.Close();
+ CHECK(completions==1);
+}
 void ContentRacesLocalPairingFlush(){
  for(int outcome=0;outcome<4;++outcome){
  Pair p;p.Start();int delivered=0;
@@ -248,7 +258,7 @@ void CloseObserverReleasesLastOwner(){
  CHECK(p.a_limit.Buffers().Used()==0&&p.b_limit.Buffers().Used()==0);
 }
 
-int main(){
+int main(){SmallCompletionIsConsumedBeforeClose();
  {SessionAdmission a;CHECK(a.AcquireOffer(1));CHECK(!a.AcquireOffer(1));a.ReleaseOffer();CHECK(a.AcquireOffer(4));CHECK(a.AcquireOffer(4));CHECK(a.AcquireOffer(4));CHECK(a.AcquireOffer(4));CHECK(!a.AcquireOffer(99));for(int i=0;i<4;++i)a.ReleaseOffer();}
  CloseObserverReleasesLastOwner();
  ContentRacesLocalPairingFlush();

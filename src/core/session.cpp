@@ -112,7 +112,7 @@ void Session::PostResult(ResultCallback<void> callback,Result<void> result){
  if(callback)scheduler_.Post([callback=std::move(callback),result]{callback(result);});
 }
 void Session::CompleteSend(Result<void> result){
- auto done=std::move(send_done_);send_charge_.reset();PostResult(std::move(done),result);
+ auto done=std::exchange(send_done_,{});send_charge_.reset();PostResult(std::move(done),result);
 }
 void Session::SetContentHandler(ContentHandler handler,std::function<void(ShareError)> closed){
  if(content_handler_||content_closed_)throw std::logic_error("content handler already attached");
