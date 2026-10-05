@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "recordedAtUtc", "releaseGate", "provenance", "results"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "recordedAtUtc": {"type": "string", "format": "date-time"},
+    "releaseGate": {"enum": ["PASS", "BLOCKED", "FAIL"]},
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operator", "os", "architecture", "packageSha256", "devices", "limitations"],
+      "properties": {
+        "operator": {"type": "string"}, "os": {"type": "string"}, "architecture": {"type": "string"},
+        "packageSha256": {"type": "string", "pattern": "^([A-Fa-f0-9]{64})?$"},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "devices": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+          "required": ["id", "platform", "model", "osVersion", "appVersion"],
+          "properties": {"id": {"type": "string", "minLength": 1}, "platform": {"enum": ["Windows", "Android", "iOS"]},
+            "model": {"type": "string", "minLength": 1}, "osVersion": {"type": "string", "minLength": 1}, "appVersion": {"type": "string", "minLength": 1}}}}
+      }
+    },
+    "results": {"type": "array", "minItems": 1, "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "peer", "scenario", "status", "reason", "observedAtUtc", "deviceIds", "evidence"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1}, "peer": {"enum": ["Windows", "Android", "iOS", "Local"]},
+        "scenario": {"type": "string", "minLength": 1}, "status": {"enum": ["PASS", "FAIL", "BLOCKED", "NOT_RUN"]},
+        "reason": {"type": "string"}, "observedAtUtc": {"type": "string"},
+        "deviceIds": {"type": "array", "items": {"type": "string"}}, "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    }}
+  }
+}

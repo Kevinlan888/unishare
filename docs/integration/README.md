@@ -1,6 +1,7 @@
 # SDK integration
 
 - [Windows C++ package](windows.md)
+- [Windows native application: staging, MSIX, and acceptance](windows-app.md)
 - [Android Kotlin AAR](android.md)
 - [iOS Swift XCFramework](ios.md)
 - [Public cross-platform test hosts](../../tests/interop/README.md)
