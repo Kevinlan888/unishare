@@ -250,9 +250,10 @@ StorageFailed through public initialization without silently replacing identity.
 URI acquisition/Stop/Close and late callback ownership are covered by the public
 instrumentation cases. Foreground-denied Start reports PermissionDenied.
 
-An empty focused test activity on MuMu verified actual ClipboardManager text,
-image ContentResolver bytes, and unsupported intent clipboard InvalidInput.
-The phone clipboard focus case requires an unlocked, awake phone; headless
+An empty focused test activity on MuMu and the unlocked physical Pixel 10a
+verified actual ClipboardManager text, image ContentResolver bytes, and unsupported
+intent clipboard InvalidInput. The Pixel focused rerun returned instrumentation
+code -1. The phone clipboard focus case requires an unlocked, awake phone; headless
 instrumentation alone does not meet Android's focus requirement. Adapter tests
 also cover explicit clipboard conversion and unsupported formats at an injected
 framework boundary.

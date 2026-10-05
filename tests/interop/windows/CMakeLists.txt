@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+project(unishare_interop LANGUAGES CXX)
+find_package(unishare CONFIG REQUIRED)
+add_executable(interop main.cpp)
+target_link_libraries(interop PRIVATE unishare::windows bcrypt)
+target_compile_features(interop PRIVATE cxx_std_17)
+target_compile_definitions(interop PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

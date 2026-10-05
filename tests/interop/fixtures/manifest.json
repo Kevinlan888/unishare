@@ -1,0 +1,38 @@
+[
+  {
+    "name": "text.txt",
+    "kind": "text",
+    "size": 24,
+    "sha256": "0ef32af6b0165f5c80ad0ecbbbc99e96443146fc3cfe19c2b9a00935768219da"
+  },
+  {
+    "name": "image.png",
+    "kind": "image",
+    "size": 130,
+    "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206"
+  },
+  {
+    "name": "image.jpg",
+    "kind": "image",
+    "size": 695,
+    "sha256": "5518d9adee1d3db049900ae8f8829e9a57e0f4dc7e0e27d7386d3ab405bc0ce7"
+  },
+  {
+    "name": "empty.bin",
+    "kind": "file",
+    "size": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "large.bin",
+    "kind": "file",
+    "size": 700001,
+    "sha256": "4c47cf2213b62ff9d5b31b83e3d9a7ebbda3cc54d22ee469f640373740bab739"
+  },
+  {
+    "name": "clipboard.txt",
+    "kind": "text",
+    "size": 24,
+    "sha256": "c1d2af2b6a2962f420b01ae40b5c33363a1925faa8ce99806dc5dd1188e6bdc5"
+  }
+]
