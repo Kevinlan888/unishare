@@ -5,6 +5,7 @@ import java.io.*;
 import java.util.*;
 
 /** Standalone instrumentation runner: no downloaded test framework or test-only production API. */
+@SuppressWarnings("deprecation")
 public final class PortTests extends Instrumentation {
     @Override public void onCreate(Bundle b) { super.onCreate(b); start(); }
     static void check(boolean yes, String why) { if (!yes) throw new AssertionError(why); }
@@ -59,6 +60,58 @@ public final class PortTests extends Instrumentation {
         errors.events.error(7);bad=Packet.input(failures.get(1));check(bad.readInt()==1 && bad.readLong()==7,"NSD permission denied retains raw7");errorPort.stop();
         errors.registration=0;errorPort.publish(5,service);bad=Packet.input(failures.get(2));check(bad.readInt()==2&&bad.readLong()==0,"native NSD internal error0 cannot be success");
     }
+    static final class CatalogPorts {
+        long nativeKey;final DnsPort dns;
+        CatalogPorts(android.net.nsd.NsdServiceInfo info){dns=new DnsPort(new DnsPort.Boundary(){
+            public void publish(DnsPort.Record r,java.util.function.IntConsumer c){}
+            public void browse(Events e){e.found(AndroidNsd.record(info));}public void stop(){}
+        },(id,bytes)->NativeBridge.complete(nativeKey,id,bytes));}
+        byte[] call(int command,byte[] data){if(command==42)dns.stop();return Packet.success(new byte[0]);}
+        void start(int command,long id,byte[] data){try{dns.browse(id);}catch(Exception e){NativeBridge.complete(nativeKey,id,Packet.failure(e,2));}}
+        void shutdown(){dns.stop();}
+    }
+    void resolvedCatalog()throws Exception{
+        for(boolean ipv6:new boolean[]{false,true}){
+            android.net.nsd.NsdServiceInfo info=new android.net.nsd.NsdServiceInfo();info.setServiceName("resolved-peer");info.setPort(12345);
+            info.setAttribute("id","12345678-1234-4234-8234-123456789abc");info.setAttribute("name","Resolved peer");info.setAttribute("platform","android");info.setAttribute("pv","1.0");
+            byte[] ip=new byte[16];ip[0]=(byte)0xfe;ip[1]=(byte)0x80;ip[15]=1;
+            java.net.InetAddress address=ipv6?java.net.Inet6Address.getByAddress(null,ip,7):java.net.InetAddress.getByAddress(new byte[]{(byte)192,0,2,42});
+            if(android.os.Build.VERSION.SDK_INT>=34)info.setHostAddresses(Collections.singletonList(address));else info.setHost(address);
+            String result=NativeProbe.catalog(new CatalogPorts(info));check(result.startsWith("PASS"),"resolved record must produce catalog Online: "+result);
+            DnsPort.Record record=AndroidNsd.record(info);check(record.addresses.contains(address.getHostAddress()),"resolved numeric address/scope must survive adapter");
+            if(android.os.Build.VERSION.SDK_INT<36)check(record.target.equals(address.getHostAddress()),"older NSD target is resolved endpoint metadata");
+        }
+    }
+    void dnsStopDuringSubmissionFailure()throws Exception{
+        for(String mode:new String[]{"updates","resolve","publish","browse"}){
+            java.util.concurrent.CountDownLatch entered=new java.util.concurrent.CountDownLatch(1),release=new java.util.concurrent.CountDownLatch(1);
+            class Framework implements AndroidNsd.Framework {
+                android.net.nsd.NsdManager.DiscoveryListener discovery;
+                void pause(){entered.countDown();try{check(release.await(5,java.util.concurrent.TimeUnit.SECONDS),"test submission release");}catch(InterruptedException e){throw new AssertionError(e);}throw new SecurityException("submission denied");}
+                public void register(android.net.nsd.NsdServiceInfo i,android.net.nsd.NsdManager.RegistrationListener l){pause();}
+                public void unregister(android.net.nsd.NsdManager.RegistrationListener l){}
+                public void discover(int sdk,java.util.concurrent.Executor e,android.net.nsd.NsdManager.DiscoveryListener l){discovery=l;if(mode.equals("browse"))pause();}
+                public void stopDiscovery(android.net.nsd.NsdManager.DiscoveryListener l){l.onStopDiscoveryFailed("_share._tcp.",7);}
+                public void resolve(android.net.nsd.NsdServiceInfo i,android.net.nsd.NsdManager.ResolveListener l){pause();}
+                public void registerUpdates(android.net.nsd.NsdServiceInfo i,java.util.concurrent.Executor e,Object c){pause();}
+                public void unregisterUpdates(Object c){}
+            }
+            Framework framework=new Framework();AndroidNsd nsd=new AndroidNsd(framework,Runnable::run,mode.equals("resolve")?26:34);
+            java.util.concurrent.ConcurrentLinkedQueue<byte[]> emitted=new java.util.concurrent.ConcurrentLinkedQueue<>();DnsPort dns=new DnsPort(nsd,(id,b)->emitted.add(b));
+            if(mode.equals("updates")||mode.equals("resolve"))dns.browse(1);
+            Thread submit=new Thread(()->{try{if(mode.equals("publish")){DnsPort.Record r=new DnsPort.Record();r.instance="peer";r.port=12345;dns.publish(2,r);}
+                else if(mode.equals("browse"))dns.browse(1);
+                else{android.net.nsd.NsdServiceInfo i=new android.net.nsd.NsdServiceInfo();i.setServiceName("peer");framework.discovery.onServiceFound(i);}
+            }catch(Exception expected){}});submit.setDaemon(true);submit.start();
+            check(entered.await(2,java.util.concurrent.TimeUnit.SECONDS),"framework submission must be paused");
+            Thread stop=new Thread(dns::stop);stop.setDaemon(true);stop.start();
+            boolean stopped;try{stop.join(700);stopped=!stop.isAlive();}finally{release.countDown();}
+            submit.join(1000);stop.join(1000);
+            check(stopped,"Stop must finish while "+mode+" submission is paused, without nested monitor ordering");
+            check(!submit.isAlive()&&!stop.isAlive(),"submission failure and Stop must both retire");
+            check(emitted.size()==(mode.equals("publish")?1:0),"retired failure cannot deliver late callback: "+mode);
+        }
+    }
     void clipboardAndPermission() throws Exception {
         class Fake implements ClipboardPort.Boundary {android.content.ClipData data;public android.content.ClipData get(){return data;}public void set(android.content.ClipData d){data=d;}}
         Fake boundary=new Fake();ClipboardPort clipboard=new ClipboardPort(getTargetContext(),boundary);
@@ -97,15 +150,15 @@ public final class PortTests extends Instrumentation {
         Bundle result=new Bundle();
         try {
             runCase("identityRestart",1,this::identityRestart);runCase("contentStreams",2,this::contentStreams);runCase("dnsOwnership",3,this::dnsOwnership);
-            runCase("clipboardAndPermission",4,this::clipboardAndPermission);runCase("identityCorruptionAndImages",5,this::identityCorruptionAndImages);runCase("nativeBridge",6,this::nativeBridge);
-            result.putString("stream","PASS 6 internal adapter cases\n");finish(-1,result);
+            runCase("clipboardAndPermission",4,this::clipboardAndPermission);runCase("identityCorruptionAndImages",5,this::identityCorruptionAndImages);runCase("nativeBridge",6,this::nativeBridge);runCase("resolvedCatalog",7,this::resolvedCatalog);runCase("dnsStopDuringSubmissionFailure",8,this::dnsStopDuringSubmissionFailure);
+            result.putString("stream","PASS 8 internal adapter cases\n");finish(-1,result);
         }
         catch(Throwable e) { result.putString("stream","FAIL "+android.util.Log.getStackTraceString(e)); finish(1,result); }
     }
     interface Case {void run()throws Exception;}
     void runCase(String name,int index,Case test)throws Exception{
         Bundle status=new Bundle();status.putString("id","UniSharePortTests");status.putString("class",getClass().getName());status.putString("test",name);
-        status.putInt("current",index);status.putInt("numtests",6);sendStatus(1,status);
+        status.putInt("current",index);status.putInt("numtests",8);sendStatus(1,status);
         try{test.run();sendStatus(0,status);}catch(Throwable e){status.putString("stack",android.util.Log.getStackTraceString(e));sendStatus(-2,status);throw e;}
     }
 }

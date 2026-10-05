@@ -1,5 +1,6 @@
 #include "platform/android/adapter.hpp"
 #include "core/identity.hpp"
+#include "core/device_catalog.hpp"
 #include "unishare/c_api_bridge.hpp"
 #include <future>
 #include <stdexcept>
@@ -31,3 +32,13 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_unishare_sdk_internal_NativeProbe_
  std::promise<Result<void>> retired;retainedPermission->RequestLocalNetwork([&](auto r){retired.set_value(r);});auto cancelled=Await(retired.get_future());CHECK(!cancelled.ok()&&cancelled.error().code==ErrorCode::Cancelled);
  return env->NewStringUTF("PASS native core identity/trust/URI streaming/permission/C ABI retained lifecycle");
  }catch(const std::exception& e){return env->NewStringUTF(e.what());}catch(const ShareError& e){return env->NewStringUTF(e.message.c_str());}catch(...){return env->NewStringUTF("unknown native test exception");}}
+
+extern "C" JNIEXPORT jstring JNICALL Java_com_unishare_sdk_internal_NativeProbe_catalog(JNIEnv* env,jclass,jobject framework){try{
+ auto platform=android::CreatePlatform(env,framework);core::DeviceCatalog catalog(DeviceId{});
+ auto received=std::make_shared<std::promise<Result<ServiceRecord>>>();auto delivered=std::make_shared<std::atomic<bool>>(false);platform->DnsSd().BrowseEvents("_share._tcp.local.",[received,delivered](auto r){if(!delivered->exchange(true))received->set_value(std::move(r));},[](auto){});
+ auto record=Await(received->get_future());CHECK(record.ok());auto events=catalog.Apply(record.value());
+ CHECK(events.size()==1 && events[0].kind==DiscoveryEventKind::Online);
+ CHECK(events[0].device.id==*Uuid::Parse("12345678-1234-4234-8234-123456789abc"));
+ CHECK(events[0].device.port==12345 && events[0].device.addresses==record.value().addresses);
+ platform->DnsSd().Stop();return env->NewStringUTF("PASS resolved Android record reaches catalog Online");
+ }catch(const std::exception& e){return env->NewStringUTF(e.what());}catch(...){return env->NewStringUTF("native catalog regression failed");}}

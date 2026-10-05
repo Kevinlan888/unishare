@@ -144,3 +144,19 @@ downloaded Android test frameworks. `tests/android/run-native.ps1` can serve
 as CMAKE_CROSSCOMPILING_EMULATOR to run the full portable core CTest on a device.
 Generated builds, SDKs, caches, keys and APKs are ignored. No multi-ABI AAR or
 physical interoperability claim is established by Task 9a.
+
+### Resolved target and NSD concurrency
+
+On API 36+, resolved records use NsdServiceInfo.getHostname() plus the framework's
+omitted `.local.` suffix. On API 26–35, which cannot expose that hostname, the
+adapter uses a framework-resolved numeric host address (including IPv6 scope)
+as target endpoint metadata. This value is not an authenticated peer identity;
+DeviceId is the advertised identifier and TLS/SAS authenticates the connection.
+No target is synthesized from the service instance, TXT identifier or reverse DNS.
+
+NSD state monitors protect generations, callback ownership and the legacy resolve
+queue. Framework submissions, cleanup and cross-boundary callbacks run outside
+those monitors. Stop retires the generation before cleanup; submissions finishing
+after Stop unregister their late registrations and cannot advance a new resolve
+queue. This lets synchronous framework submission failures race with Stop without
+holding opposing adapter monitors.

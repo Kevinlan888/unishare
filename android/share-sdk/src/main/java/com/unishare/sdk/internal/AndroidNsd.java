@@ -8,63 +8,108 @@ import java.util.function.IntConsumer;
 
 @SuppressWarnings("deprecation")
 final class AndroidNsd implements DnsPort.Boundary {
-    private final NsdManager manager;private final Executor executor;
+    interface Framework {
+        void register(NsdServiceInfo info,NsdManager.RegistrationListener listener);
+        void unregister(NsdManager.RegistrationListener listener);
+        void discover(int sdk,Executor executor,NsdManager.DiscoveryListener listener);
+        void stopDiscovery(NsdManager.DiscoveryListener listener);
+        void resolve(NsdServiceInfo info,NsdManager.ResolveListener listener);
+        void registerUpdates(NsdServiceInfo info,Executor executor,Object callback);
+        void unregisterUpdates(Object callback);
+    }
+    private final Framework framework;private final Executor executor;private final int sdk;
     private final List<NsdManager.RegistrationListener> publications=new ArrayList<>();
     private final List<NsdManager.DiscoveryListener> browsers=new ArrayList<>();
     private final List<NsdManager.ServiceInfoCallback> updates=new ArrayList<>();
     private final Set<String> updateKeys=new HashSet<>();
-    private final ArrayDeque<Runnable> resolutions=new ArrayDeque<>();private boolean resolving;private long generation;
-    AndroidNsd(NsdManager nsd,Executor executor){manager=nsd;this.executor=executor;}
-    public synchronized void publish(DnsPort.Record r,IntConsumer result){
-        long current=generation;
+    private final ArrayDeque<Resolution> resolutions=new ArrayDeque<>();private Resolution activeResolution;private long generation;
+    AndroidNsd(NsdManager nsd,Executor executor){this(new Framework(){
+        public void register(NsdServiceInfo i,NsdManager.RegistrationListener l){nsd.registerService(i,NsdManager.PROTOCOL_DNS_SD,l);}
+        public void unregister(NsdManager.RegistrationListener l){nsd.unregisterService(l);}
+        public void discover(int sdk,Executor e,NsdManager.DiscoveryListener l){if(sdk>=33)nsd.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,new android.net.NetworkRequest.Builder().build(),e,l);else nsd.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,l);}
+        public void stopDiscovery(NsdManager.DiscoveryListener l){nsd.stopServiceDiscovery(l);}
+        public void resolve(NsdServiceInfo i,NsdManager.ResolveListener l){nsd.resolveService(i,l);}
+        public void registerUpdates(NsdServiceInfo i,Executor e,Object c){nsd.registerServiceInfoCallback(i,e,(NsdManager.ServiceInfoCallback)c);}
+        public void unregisterUpdates(Object c){nsd.unregisterServiceInfoCallback((NsdManager.ServiceInfoCallback)c);}
+    },executor,Build.VERSION.SDK_INT);}
+    AndroidNsd(Framework framework,Executor executor,int sdk){this.framework=framework;this.executor=executor;this.sdk=sdk;}
+    private synchronized boolean alive(long current){return current==generation;}
+    private static void ignore(Runnable action){try{action.run();}catch(RuntimeException ignored){}}
+    public void publish(DnsPort.Record r,IntConsumer result){
+        final long current;synchronized(this){current=generation;}
         NsdServiceInfo info=new NsdServiceInfo();info.setServiceName(r.instance);info.setServiceType("_share._tcp.");info.setPort(r.port);
         for(Map.Entry<String,byte[]> item:r.txt.entrySet())info.setAttribute(item.getKey(),new String(item.getValue(),java.nio.charset.StandardCharsets.UTF_8));
         NsdManager.RegistrationListener listener=new NsdManager.RegistrationListener(){
-            public void onServiceRegistered(NsdServiceInfo i){synchronized(AndroidNsd.this){if(current!=generation){try{manager.unregisterService(this);}catch(RuntimeException ignored){}return;}}result.accept(-1);}
-            public void onRegistrationFailed(NsdServiceInfo i,int code){result.accept(code);}
+            public void onServiceRegistered(NsdServiceInfo i){if(!alive(current)){ignore(()->framework.unregister(this));return;}result.accept(-1);}
+            public void onRegistrationFailed(NsdServiceInfo i,int code){if(alive(current))result.accept(code);}
             public void onServiceUnregistered(NsdServiceInfo i){}
             public void onUnregistrationFailed(NsdServiceInfo i,int code){}
-        };publications.add(listener);manager.registerService(info,NsdManager.PROTOCOL_DNS_SD,listener);
+        };
+        synchronized(this){if(current!=generation)return;publications.add(listener);}
+        try{framework.register(info,listener);}finally{if(!alive(current))ignore(()->framework.unregister(listener));}
     }
     static DnsPort.Record record(NsdServiceInfo info){DnsPort.Record r=new DnsPort.Record();r.instance=info.getServiceName();
         r.scope=Build.VERSION.SDK_INT>=33?(info.getNetwork()==null?"unscoped":"net:"+info.getNetwork().getNetworkHandle()):"legacy";
         r.port=info.getPort();r.txt.putAll(info.getAttributes());
         List<InetAddress> addresses=Build.VERSION.SDK_INT>=34?info.getHostAddresses():info.getHost()==null?Collections.emptyList():Collections.singletonList(info.getHost());
-        for(InetAddress ip:addresses){String host=ip.getHostAddress();if(host!=null)r.addresses.add(host);}return r;
+        for(InetAddress ip:addresses){String host=ip.getHostAddress();if(host!=null)r.addresses.add(host);}
+        // Routing metadata only: neither hostname nor numeric endpoint authenticates a peer.
+        String hostname=Build.VERSION.SDK_INT>=36?info.getHostname():null;
+        if(hostname!=null&&!hostname.isEmpty())r.target=hostname+".local.";
+        else if(!r.addresses.isEmpty())r.target=r.addresses.get(0);
+        return r;
     }
-    public synchronized void browse(Events events){long current=generation;
+    public void browse(Events events){
+        final long current;synchronized(this){current=generation;}
         NsdManager.DiscoveryListener listener=new NsdManager.DiscoveryListener(){
-            public void onDiscoveryStarted(String t){synchronized(AndroidNsd.this){if(current!=generation)try{manager.stopServiceDiscovery(this);}catch(RuntimeException ignored){}}}
-            public void onStartDiscoveryFailed(String t,int code){events.error(code);}
-            public void onStopDiscoveryFailed(String t,int code){events.error(code);}
+            public void onDiscoveryStarted(String t){if(!alive(current))ignore(()->framework.stopDiscovery(this));}
+            public void onStartDiscoveryFailed(String t,int code){if(alive(current))events.error(code);}
+            public void onStopDiscoveryFailed(String t,int code){if(alive(current))events.error(code);}
             public void onDiscoveryStopped(String t){}
-            public void onServiceLost(NsdServiceInfo info){events.lost(record(info));}
-            public void onServiceFound(NsdServiceInfo info){synchronized(AndroidNsd.this){if(current!=generation)return;
-                if(Build.VERSION.SDK_INT>=34){
-                    DnsPort.Record discovered=record(info);if(!updateKeys.add(discovered.instance+"\u0000"+discovered.scope))return;
-                    NsdManager.ServiceInfoCallback update=new NsdManager.ServiceInfoCallback(){
-                        private DnsPort.Record last=record(info);
-                        public void onServiceInfoCallbackRegistrationFailed(int code){events.error(code);}
-                        public void onServiceUpdated(NsdServiceInfo resolved){last=record(resolved);events.found(last);}
-                        public void onServiceLost(){events.lost(last);}
-                        public void onServiceInfoCallbackUnregistered(){}
-                    };updates.add(update);try{manager.registerServiceInfoCallback(info,executor,update);}catch(RuntimeException e){events.failure(e);}
-                }else{
-                    resolutions.add(()->{try{manager.resolveService(info,new NsdManager.ResolveListener(){
-                        public void onResolveFailed(NsdServiceInfo i,int code){events.error(code);nextResolution(current);}
-                        public void onServiceResolved(NsdServiceInfo resolved){if(current==generation){events.found(record(resolved));nextResolution(current);}}
-                    });}catch(RuntimeException e){events.failure(e);nextResolution(current);}});if(!resolving)nextResolution(current);
-                }
-            }}
-        };browsers.add(listener);
-        if(Build.VERSION.SDK_INT>=33)manager.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,new android.net.NetworkRequest.Builder().build(),executor,listener);
-        else manager.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,listener);
+            public void onServiceLost(NsdServiceInfo info){if(alive(current))events.lost(record(info));}
+            public void onServiceFound(NsdServiceInfo info){if(sdk>=34)observe(current,info,events);else enqueue(new Resolution(current,info,events));}
+        };
+        synchronized(this){if(current!=generation)return;browsers.add(listener);}
+        try{framework.discover(sdk,executor,listener);}finally{if(!alive(current))ignore(()->framework.stopDiscovery(listener));}
     }
-    private synchronized void nextResolution(long current){if(current!=generation)return;if(resolving){resolving=false;}if(!resolutions.isEmpty()){resolving=true;resolutions.remove().run();}}
-    public synchronized void stop(){++generation;resolutions.clear();resolving=false;
-        for(NsdManager.DiscoveryListener l:browsers)try{manager.stopServiceDiscovery(l);}catch(RuntimeException ignored){}
-        for(NsdManager.RegistrationListener l:publications)try{manager.unregisterService(l);}catch(RuntimeException ignored){}
-        if(Build.VERSION.SDK_INT>=34)for(NsdManager.ServiceInfoCallback l:updates)try{manager.unregisterServiceInfoCallback(l);}catch(RuntimeException ignored){}
-        browsers.clear();publications.clear();updates.clear();updateKeys.clear();
+    private void observe(long current,NsdServiceInfo info,Events events){
+        DnsPort.Record discovered=record(info);
+        NsdManager.ServiceInfoCallback update=new NsdManager.ServiceInfoCallback(){
+            private volatile DnsPort.Record last=discovered;
+            public void onServiceInfoCallbackRegistrationFailed(int code){if(alive(current))events.error(code);}
+            public void onServiceUpdated(NsdServiceInfo resolved){if(alive(current)){last=record(resolved);events.found(last);}}
+            public void onServiceLost(){if(alive(current))events.lost(last);}
+            public void onServiceInfoCallbackUnregistered(){}
+        };
+        synchronized(this){if(current!=generation||!updateKeys.add(discovered.instance+"\u0000"+discovered.scope))return;updates.add(update);}
+        try{framework.registerUpdates(info,executor,update);}catch(RuntimeException e){if(alive(current))events.failure(e);}
+        finally{if(!alive(current))ignore(()->framework.unregisterUpdates(update));}
+    }
+    private static final class Resolution {
+        final long generation;final NsdServiceInfo info;final Events events;
+        Resolution(long g,NsdServiceInfo i,Events e){generation=g;info=i;events=e;}
+    }
+    private void enqueue(Resolution request){Resolution submit=null;
+        synchronized(this){if(request.generation!=generation)return;resolutions.add(request);if(activeResolution==null){activeResolution=resolutions.remove();submit=activeResolution;}}
+        if(submit!=null)resolve(submit);
+    }
+    private void finish(Resolution request){Resolution submit=null;
+        synchronized(this){if(request.generation!=generation||activeResolution!=request)return;activeResolution=null;if(!resolutions.isEmpty()){activeResolution=resolutions.remove();submit=activeResolution;}}
+        if(submit!=null)resolve(submit);
+    }
+    private void resolve(Resolution request){
+        try{framework.resolve(request.info,new NsdManager.ResolveListener(){
+            public void onResolveFailed(NsdServiceInfo info,int code){try{if(alive(request.generation))request.events.error(code);}finally{finish(request);}}
+            public void onServiceResolved(NsdServiceInfo info){try{if(alive(request.generation))request.events.found(record(info));}finally{finish(request);}}
+        });}catch(RuntimeException e){try{if(alive(request.generation))request.events.failure(e);}finally{finish(request);}}
+    }
+    public void stop(){
+        List<NsdManager.DiscoveryListener> oldBrowsers;List<NsdManager.RegistrationListener> oldPublications;List<NsdManager.ServiceInfoCallback> oldUpdates;
+        synchronized(this){++generation;resolutions.clear();activeResolution=null;
+            oldBrowsers=new ArrayList<>(browsers);oldPublications=new ArrayList<>(publications);oldUpdates=new ArrayList<>(updates);
+            browsers.clear();publications.clear();updates.clear();updateKeys.clear();}
+        for(NsdManager.DiscoveryListener listener:oldBrowsers)ignore(()->framework.stopDiscovery(listener));
+        for(NsdManager.RegistrationListener listener:oldPublications)ignore(()->framework.unregister(listener));
+        if(sdk>=34)for(NsdManager.ServiceInfoCallback callback:oldUpdates)ignore(()->framework.unregisterUpdates(callback));
     }
 }
