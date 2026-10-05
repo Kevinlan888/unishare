@@ -13,6 +13,84 @@ public sealed class TransferShutdownTests
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     [TestMethod]
+    public async Task ExitPreemptsDrainingPauseWithUndecidedOfferWithoutWarning()
+    {
+        var x = await Create(); x.Sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File)));
+        await WaitUntil(() => x.Tracker.GetDeviceSnapshot(Device).Count == 1);
+        var id = x.Tracker.GetDeviceSnapshot(Device).Single().Id;
+        var pause = x.Lifecycle.PauseAsync(); Assert.AreEqual(SessionState.Pausing, x.Session.State);
+        Assert.IsFalse(pause.IsCompleted); Assert.AreEqual(0, x.Sdk.LifecycleCalls.Count);
+        var exit = x.Lifecycle.ExitAsync();
+        try
+        {
+            await Task.WhenAll(pause, exit).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.AreEqual(ActivityStatus.Cancelled, x.Repository.Saved.Last().Status);
+            Assert.AreEqual(SessionState.Exiting, x.Session.State);
+            CollectionAssert.AreEqual(new[] { "stop", "dispose" }, x.Sdk.LifecycleCalls);
+            CollectionAssert.AreEqual(new[] { "resources", "exit" }, x.Presence.Calls);
+            Assert.AreEqual(0, x.Presence.Notices.Count); Assert.AreEqual(0, x.Sdk.Commands.Count);
+        }
+        finally
+        {
+            // Release the old implementation's circular wait after observing RED.
+            x.Tracker.Complete(id, new(null, new(ShareErrorKind.Cancelled, "cancelled")));
+            await Task.WhenAll(pause, exit).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ExitPreemptsPauseWhenAcceptedNativeWorkNeedsStopThenRetiresAndFlushes(bool receive)
+    {
+        var x = await Create(); var stopped = Signal(); var native = Signal(); var submitted = Signal(); var released = 0;
+        x.Files.CleanupRelease = Signal(); x.Repository.TerminalRelease = Signal();
+        Task acceptance = Task.CompletedTask;
+        void CompleteNative()
+        {
+            if (Interlocked.Exchange(ref released, 1) != 0) return;
+            if (receive) native.SetResult(); else x.Sdk.Finish(new(null, new(ShareErrorKind.Cancelled, "cancelled")));
+        }
+        x.Sdk.Stopping = () => { stopped.TrySetResult(); CompleteNative(); return Task.CompletedTask; };
+        string path;
+        if (receive)
+        {
+            x.Sdk.Accept = _ => { submitted.SetResult(); return native.Task; };
+            x.Sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File)));
+            await WaitUntil(() => x.Tracker.GetDeviceSnapshot(Device).Count == 1);
+            acceptance = x.Transfers.AcceptAsync(x.Tracker.GetDeviceSnapshot(Device).Single().Id, default);
+            await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5)); path = x.Files.Receive!.StagingPath;
+        }
+        else
+        {
+            x.Sdk.Clipboard = new(ContentKind.Image, null, "image/png", ImmutableArray.Create<byte>(1));
+            await x.Transfers.SendClipboardAsync(Device, default); path = x.Files.Source!.Path;
+        }
+        var pause = x.Lifecycle.PauseAsync(); Assert.AreEqual(SessionState.Pausing, x.Session.State);
+        Assert.IsFalse(pause.IsCompleted); Assert.AreEqual(0, x.Sdk.LifecycleCalls.Count);
+        var exit = x.Lifecycle.ExitAsync();
+        try
+        {
+            await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await x.Files.CleanupEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.IsTrue(File.Exists(path)); Assert.IsFalse(exit.IsCompleted); Assert.AreEqual(0, x.Presence.Calls.Count);
+            x.Files.CleanupRelease.SetResult();
+            await x.Repository.TerminalEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.IsFalse(File.Exists(path)); Assert.IsFalse(exit.IsCompleted); Assert.AreEqual(0, x.Presence.Calls.Count);
+            x.Repository.TerminalRelease.SetResult();
+            await Task.WhenAll(pause, exit, acceptance).WaitAsync(TimeSpan.FromSeconds(5));
+            CollectionAssert.AreEqual(new[] { "stop", "dispose" }, x.Sdk.LifecycleCalls);
+            CollectionAssert.AreEqual(new[] { "resources", "exit" }, x.Presence.Calls);
+            Assert.AreEqual(ActivityStatus.Cancelled, x.Repository.Saved.Last().Status); Assert.AreEqual(0, x.Presence.Notices.Count);
+        }
+        finally
+        {
+            CompleteNative(); x.Files.CleanupRelease.TrySetResult(); x.Repository.TerminalRelease.TrySetResult();
+            await Task.WhenAll(pause, exit, acceptance).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [TestMethod]
     public async Task ExitWaitsForDelayedNativeCompletionThenStageCleanupThenMetadataFlush()
     {
         var x = await Create(); x.Files.CleanupRelease = Signal(); x.Repository.TerminalRelease = Signal();
@@ -92,9 +170,9 @@ public sealed class TransferShutdownTests
         var tracker = new ActivityTracker(repository, new Clock()); var session = new ShareSession(sdk, tracker);
         var transfers = new TransferCoordinator(sdk, tracker, files, () => new() { ReceiveDirectory = "receive" }); var presence = new Presence();
         await session.InitializeAsync(new()); await session.StartAsync();
-        return new(sdk, repository, files, tracker, transfers, presence, new(session, presence, new TransferShutdown(transfers, tracker)));
+        return new(sdk, repository, files, tracker, transfers, presence, new(session, presence, new TransferShutdown(transfers, tracker)), session);
     }
-    private sealed record Context(TransferCoordinatorTests.Sdk Sdk, Repository Repository, Files Files, ActivityTracker Tracker, TransferCoordinator Transfers, Presence Presence, AppLifecycleCoordinator Lifecycle);
+    private sealed record Context(TransferCoordinatorTests.Sdk Sdk, Repository Repository, Files Files, ActivityTracker Tracker, TransferCoordinator Transfers, Presence Presence, AppLifecycleCoordinator Lifecycle, ShareSession Session);
     private sealed class Clock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
     private sealed class Repository : IActivityRepository
     {
@@ -112,8 +190,9 @@ public sealed class TransferShutdownTests
     private sealed class Presence : IAppPresence
     {
         public List<string> Calls { get; } = []; public bool IsWindowVisible => false;
+        public List<AppNotificationRequest> Notices { get; } = [];
         public void ShowWindow(DeviceId? device = null) { } public void HideWindow() { } public void SetTrayState(TrayState state) { }
-        public void ShowNotification(AppNotificationRequest notification) { } public void DisposeResources() => Calls.Add("resources"); public void ExitApplication() => Calls.Add("exit");
+        public void ShowNotification(AppNotificationRequest notification) => Notices.Add(notification); public void DisposeResources() => Calls.Add("resources"); public void ExitApplication() => Calls.Add("exit");
     }
     private sealed class Files : ITransferFiles
     {

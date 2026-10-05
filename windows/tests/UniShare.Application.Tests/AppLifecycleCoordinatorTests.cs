@@ -31,6 +31,27 @@ public sealed class AppLifecycleCoordinatorTests
     }
 
     [TestMethod]
+    public async Task DiscoveryFailureInsideResumeLeavesPausedWarningAndResumeRetries()
+    {
+        var x = await CreateAsync(); await x.Coordinator.PauseAsync();
+        x.Sdk.Starting = () =>
+        {
+            x.Sdk.Emit(new ShareSdkEvent.DiscoveryFailed(new(ShareErrorKind.DiscoveryFailed, "private start diagnostic")));
+            return Task.CompletedTask;
+        };
+        try
+        {
+            await x.Coordinator.ResumeAsync();
+            Assert.AreEqual(SessionState.Paused, x.Session.State); Assert.AreEqual(TrayState.Warning, x.Presence.State);
+            Assert.IsFalse(x.Drain.NewTransfersAllowed);
+            Assert.AreEqual("Notification.SdkFailure", x.Presence.Notices.Single().BodyResourceKey);
+            x.Sdk.Starting = null; await x.Coordinator.ResumeAsync();
+            Assert.AreEqual(SessionState.Running, x.Session.State); Assert.AreEqual(TrayState.Normal, x.Presence.State);
+        }
+        finally { await x.Coordinator.ExitAsync(); }
+    }
+
+    [TestMethod]
     public async Task CloseHidesAndRepeatedActivationKeepsTheRunningSession()
     {
         var x = await CreateAsync();

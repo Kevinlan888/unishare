@@ -652,6 +652,8 @@ public sealed class TransferCoordinatorTests
         public Func<string, Task>? Accept { get; set; } public int AcceptCount { get; private set; } public bool ThrowSend { get; set; }
         public Action? OnSending { get; set; } public bool ZeroOperation { get; set; }
         public Func<Task>? Rejecting { get; set; } public Func<Task>? Cancelling { get; set; }
+        public Func<Task>? Stopping { get; set; }
+        public List<string> LifecycleCalls { get; } = [];
         private TaskCompletionSource<TransferTerminal> completion = new(TaskCreationOptions.RunContinuationsAsynchronously); private ulong next;
         public void Emit(ShareSdkEvent value) => EventReceived?.Invoke(this, value);
         public void Finish(TransferTerminal terminal) => completion.SetResult(terminal);
@@ -666,12 +668,12 @@ public sealed class TransferCoordinatorTests
         public IReadOnlyList<DeviceSnapshot> GetDevices() => [];
         public Task InitializeAsync(SdkOptions options, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken) { LifecycleCalls.Add("stop"); return Stopping?.Invoke() ?? Task.CompletedTask; }
         public Task ConnectAsync(DeviceId device, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ConfirmPairingAsync(RequestId request, bool matches, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task RejectPairingAsync(RequestId request, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ForgetDeviceAsync(DeviceId device, CancellationToken cancellationToken) => Task.CompletedTask;
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync() { LifecycleCalls.Add("dispose"); return ValueTask.CompletedTask; }
     }
     public sealed class Files : ITransferFiles
     {

@@ -11,6 +11,44 @@ public sealed class ShareSessionTests
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(false, true)]
+    [DataRow(true, false)]
+    [DataRow(true, true)]
+    public async Task DiscoveryFailureDuringActiveStartCannotBeOverwrittenAndNextGenerationCanRetry(bool resume, bool delayed)
+    {
+        var sdk = new FakeShareSdkClient(); var drain = new FakeTransferDrain(); var session = new ShareSession(sdk, drain);
+        await session.InitializeAsync(new());
+        if (resume) { await session.StartAsync(); await session.PauseAsync(); }
+        drain.Calls.Clear(); var entered = Signal(); var returned = Signal();
+        sdk.Starting = () =>
+        {
+            entered.SetResult();
+            if (delayed) return returned.Task;
+            sdk.Emit(new ShareSdkEvent.DiscoveryFailed(new(ShareErrorKind.DiscoveryFailed, "private start diagnostic")));
+            return Task.CompletedTask;
+        };
+        var start = resume ? session.ResumeAsync() : session.StartAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (delayed)
+        {
+            sdk.Emit(new ShareSdkEvent.DiscoveryFailed(new(ShareErrorKind.DiscoveryFailed, "private start diagnostic")));
+            returned.SetResult();
+        }
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => start);
+            Assert.AreEqual(resume ? SessionState.Paused : SessionState.Faulted, session.State);
+            Assert.IsFalse(drain.NewTransfersAllowed); Assert.IsFalse(drain.Calls.Contains("allow"));
+            sdk.Starting = null; await session.ResumeAsync();
+            Assert.AreEqual(SessionState.Running, session.State); Assert.IsTrue(drain.NewTransfersAllowed);
+            CollectionAssert.AreEqual(resume ? new[] { "initialize", "start", "stop", "start", "stop", "start" }
+                : new[] { "initialize", "start", "stop", "start" }, sdk.Calls);
+        }
+        finally { await session.ExitAsync(); }
+    }
+
+    [TestMethod]
     public async Task PauseAndResumeWithEmptyCatalogKeepTrustedDeviceOfflineAndNotTransferable()
     {
         var device = new DeviceSnapshot(new(Guid.NewGuid()), "Phone", DevicePlatform.Android,
@@ -179,7 +217,7 @@ public sealed class ShareSessionTests
     }
 
     [TestMethod]
-    public async Task ExitQueuedDuringPauseWaitsForDrainWithoutDuplicateStop()
+    public async Task ExitQueuedDuringPausePreemptsDrainButWaitsForAcceptedStopWithoutDuplicateStop()
     {
         var sdk = new FakeShareSdkClient();
         var drain = new FakeTransferDrain();
@@ -187,13 +225,33 @@ public sealed class ShareSessionTests
         await session.InitializeAsync(new());
         await session.StartAsync();
         drain.BeginTransfer();
+        var stopEntered = Signal(); var stopReleased = Signal();
+        sdk.Stopping = () => { stopEntered.SetResult(); return stopReleased.Task; };
         var pause = session.PauseAsync();
         await drain.WaitEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var exit = session.ExitAsync();
+        await stopEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await pause.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsTrue(drain.HasActiveTransfers);
         Assert.IsFalse(exit.IsCompleted);
         drain.CompleteTransfer();
+        stopReleased.SetResult();
         await Task.WhenAll(pause, exit);
         CollectionAssert.AreEqual(new[] { "initialize", "start", "stop", "dispose" }, sdk.Calls);
+    }
+
+    [TestMethod]
+    public async Task CallerCancellationAfterPauseAdmissionStillDrainsAndDoesNotFault()
+    {
+        var sdk = new FakeShareSdkClient(); var drain = new FakeTransferDrain(); var session = new ShareSession(sdk, drain);
+        await session.InitializeAsync(new()); await session.StartAsync(); drain.BeginTransfer();
+        using var cancellation = new CancellationTokenSource();
+        var pause = session.PauseAsync(cancellation.Token);
+        await drain.WaitEntered.Task.WaitAsync(TimeSpan.FromSeconds(5)); cancellation.Cancel();
+        Assert.IsFalse(pause.IsCompleted); Assert.AreEqual(SessionState.Pausing, session.State);
+        Assert.IsFalse(drain.NewTransfersAllowed); Assert.IsFalse(sdk.Calls.Contains("stop"));
+        drain.CompleteTransfer(); await pause.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(SessionState.Paused, session.State); await session.ExitAsync();
     }
 
     [TestMethod]

@@ -12,6 +12,7 @@ public sealed class ShareSession : IAsyncDisposable
     private readonly ITransferDrain transfers;
     private readonly SemaphoreSlim lifecycle = new(1, 1);
     private readonly object admission = new();
+    private readonly TaskCompletionSource exitAccepted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool exitRequested;
     private bool pauseRequested;
     private int state = (int)SessionState.Paused;
@@ -19,6 +20,8 @@ public sealed class ShareSession : IAsyncDisposable
     private bool hasStarted;
     private bool needsStop;
     private long generation;
+    private long? activeStartGeneration;
+    private long? failedStartGeneration;
     private ExceptionDispatchInfo? initializationFailure;
 
     public ShareSession(IShareSdkClient sdk, ITransferDrain transfers)
@@ -86,14 +89,19 @@ public sealed class ShareSession : IAsyncDisposable
         await lifecycle.WaitAsync().ConfigureAwait(false);
         try
         {
-            RequireAlive();
+            lock (admission) if (exitRequested) return;
             if (State == SessionState.Paused) return;
             SetState(SessionState.Pausing);
             try
             {
-                await transfers.WaitForIdleAsync(CancellationToken.None).ConfigureAwait(false);
+                var drain = transfers.WaitForIdleAsync(CancellationToken.None);
+                // Only explicit Exit may preempt drain. Accepted Pause ignores
+                // caller cancellation, and never fabricates a fault on exit.
+                if (await Task.WhenAny(drain, exitAccepted.Task).ConfigureAwait(false) == exitAccepted.Task) return;
+                await drain.ConfigureAwait(false);
+                lock (admission) if (exitRequested) return;
                 await StopCoreAsync().ConfigureAwait(false);
-                SetState(SessionState.Paused);
+                lock (admission) if (!exitRequested) SetState(SessionState.Paused);
             }
             catch { SetState(SessionState.Faulted); throw; }
         }
@@ -128,22 +136,35 @@ public sealed class ShareSession : IAsyncDisposable
             // Faulted or failed starts can leave native observation active.
             // Stop that generation before retrying, using the same SDK instance.
             await StopCoreAsync().ConfigureAwait(false);
-            Interlocked.Increment(ref generation);
-            needsStop = true;
-            await sdk.StartAsync(CancellationToken.None).ConfigureAwait(false);
-            Devices.Refresh();
-            hasStarted = true;
-            SetState(SessionState.Running);
             lock (admission)
             {
+                activeStartGeneration = Interlocked.Increment(ref generation);
+                failedStartGeneration = null;
+                needsStop = true;
+            }
+            await sdk.StartAsync(CancellationToken.None).ConfigureAwait(false);
+            Devices.Refresh();
+            lock (admission)
+            {
+                // Start's successful task does not erase an SDK background
+                // failure delivered synchronously or while this generation ran.
+                if (failedStartGeneration == activeStartGeneration)
+                    throw new InvalidOperationException("Unable to start device discovery.");
+                activeStartGeneration = null;
+                hasStarted = true;
+                SetState(SessionState.Running);
                 if (pauseRequested) SetState(SessionState.Pausing);
                 else if (!exitRequested) transfers.AllowNewTransfers();
             }
         }
         catch
         {
-            transfers.BlockNewTransfers();
-            SetState(failureState);
+            lock (admission)
+            {
+                activeStartGeneration = null;
+                transfers.BlockNewTransfers();
+                SetState(failureState);
+            }
             throw;
         }
     }
@@ -164,7 +185,7 @@ public sealed class ShareSession : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         // Exit admission precedes queued native transitions. An accepted Start
         // may finish while exit waits, but can no longer reopen transfer work.
-        lock (admission) { exitRequested = true; transfers.BlockNewTransfers(); }
+        lock (admission) { exitRequested = true; transfers.BlockNewTransfers(); exitAccepted.TrySetResult(); }
         await lifecycle.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -187,8 +208,11 @@ public sealed class ShareSession : IAsyncDisposable
         if (value is ShareSdkEvent.DiscoveryFailed)
         {
             lock (admission)
+            {
+                if (activeStartGeneration is { } start) failedStartGeneration = start;
                 if (!exitRequested && !pauseRequested && State == SessionState.Running)
                 { transfers.BlockNewTransfers(); SetState(SessionState.Faulted); }
+            }
         }
         if (value is ShareSdkEvent.DiscoveryStateChanged { State: DiscoveryState.Stopped })
             _ = ObserveStoppedAsync(Volatile.Read(ref generation));
