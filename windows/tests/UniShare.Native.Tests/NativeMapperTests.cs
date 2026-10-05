@@ -28,7 +28,36 @@ public sealed class NativeMapperTests
         var id = (Guid)Map("ReadUuid", bytes)!;
         Assert.AreEqual(Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"), id);
         CollectionAssert.AreEqual(bytes, (byte[])Map("WriteUuid", id)!);
-        Assert.AreEqual(id, NativeMapper.ToGuid(NativeMapper.ToNativeUuid(id)));
+    }
+
+    [TestMethod]
+    public void NativeUuidBytesDecodeAsNetworkOrder()
+    {
+        byte[] bytes = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        var storage = Marshal.AllocHGlobal(16);
+        try
+        {
+            Marshal.Copy(bytes, 0, storage, 16);
+            var native = Marshal.PtrToStructure<NativeUuid>(storage);
+            Assert.AreEqual(Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"), NativeMapper.ToGuid(native));
+        }
+        finally { Marshal.FreeHGlobal(storage); }
+    }
+
+    [TestMethod]
+    public void GuidEncodesAsNetworkOrderNativeUuidBytes()
+    {
+        byte[] expected = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        var storage = Marshal.AllocHGlobal(16);
+        try
+        {
+            var native = NativeMapper.ToNativeUuid(Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"));
+            Marshal.StructureToPtr(native, storage, false);
+            var actual = new byte[16];
+            Marshal.Copy(storage, actual, 0, 16);
+            CollectionAssert.AreEqual(expected, actual);
+        }
+        finally { Marshal.FreeHGlobal(storage); }
     }
 
     [TestMethod]
