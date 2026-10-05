@@ -405,6 +405,83 @@ public sealed class NativeShareSdkClientTests
         api.Complete(send.OperationId.Value);
         Assert.IsNull((await send.Completion.WaitAsync(TimeSpan.FromSeconds(5))).Failure);
     }
+
+    [TestMethod]
+    public async Task NativeStoppedEventRequiresRealStartAndStaleStoppedEventCannotStopRestartedClient()
+    {
+        var api = new FakeNativeApi();
+        await using var client = await Running(api);
+        var events = Events(client);
+        var old = api.LastRegistration;
+        var initialStart = api.Latest.Operation;
+
+        api.Emit(new() { Kind = 5, State = 3 });
+        Assert.AreEqual(DiscoveryState.Stopped, (await Next<ShareSdkEvent.DiscoveryStateChanged>(events)).State);
+        var restart = client.StartAsync(default);
+        Assert.AreEqual(initialStart + 1, api.Latest.Operation, "Native Stopped must invalidate the cached Running shortcut.");
+        Assert.AreEqual(NativeCommand.Start, api.Latest.Command);
+        Assert.IsFalse(restart.IsCompleted, "Restart must wait for its native completion.");
+        api.Complete(api.Latest.Operation);
+        await restart.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // An obsolete registration must not reconcile the new generation to Stopped.
+        FakeNativeApi.Emit(old, new() { Kind = 5, State = 3 });
+        api.Emit(new() { Kind = 5, State = 1 });
+        Assert.AreEqual(DiscoveryState.Browsing, (await Next<ShareSdkEvent.DiscoveryStateChanged>(events)).State);
+        await client.StartAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(initialStart + 1, api.Latest.Operation, "The successfully restarted generation remains Running.");
+        var send = client.BeginSendText(Peer, "after native restart");
+        api.Complete(send.OperationId.Value);
+        Assert.IsNull((await send.Completion.WaitAsync(TimeSpan.FromSeconds(5))).Failure);
+    }
+
+    [TestMethod]
+    public async Task NativeStoppedEventDuringAcceptedStartCannotBeOverwrittenByStartContinuation()
+    {
+        var api = new FakeNativeApi();
+        await using var client = Create(api);
+        var initialize = client.InitializeAsync(new(), default);
+        api.Complete(api.Latest.Operation);
+        await initialize.WaitAsync(TimeSpan.FromSeconds(5));
+        var events = Events(client);
+        var start = client.StartAsync(default);
+        var operation = api.Latest.Operation;
+
+        // The lifecycle caller has not resumed from its accepted Start yet.
+        api.Emit(new() { Kind = 5, State = 3 });
+        Assert.AreEqual(DiscoveryState.Stopped, (await Next<ShareSdkEvent.DiscoveryStateChanged>(events)).State);
+        api.Complete(operation);
+        await start.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.ThrowsExactly<InvalidOperationException>(() => client.BeginSendText(Peer, "native services are stopped"));
+
+        var retry = client.StartAsync(default);
+        Assert.AreEqual(operation + 1, api.Latest.Operation);
+        api.Complete(api.Latest.Operation);
+        await retry.WaitAsync(TimeSpan.FromSeconds(5));
+        var send = client.BeginSendText(Peer, "after retry");
+        api.Complete(send.OperationId.Value);
+        Assert.IsNull((await send.Completion.WaitAsync(TimeSpan.FromSeconds(5))).Failure);
+    }
+
+    [TestMethod]
+    public async Task ExplicitStopAfterNativeStoppedStillRetiresTheActiveGeneration()
+    {
+        var api = new FakeNativeApi();
+        await using var client = await Running(api);
+        var events = Events(client);
+        var send = client.BeginSendText(Peer, "pending native terminal");
+        api.Emit(new() { Kind = 5, State = 3 });
+        await Next<ShareSdkEvent.DiscoveryStateChanged>(events);
+
+        var stop = client.StopAsync(default);
+        Assert.AreEqual(send.OperationId.Value + 1, api.Latest.Operation,
+            "A native failure retains its observer/catalog until explicit Stop retires them.");
+        Assert.AreEqual(NativeCommand.Stop, api.Latest.Command);
+        api.Complete(api.Latest.Operation);
+        await stop.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(ShareErrorKind.Cancelled, (await send.Completion.WaitAsync(TimeSpan.FromSeconds(5))).Failure!.Kind);
+        Assert.AreEqual(0, api.EventCallback);
+    }
 }
 
 internal static class InterlockedExtensions

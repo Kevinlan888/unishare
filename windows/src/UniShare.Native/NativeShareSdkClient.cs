@@ -34,7 +34,7 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private GCHandle callbackRoot;
     private ApiHandle? sdk;
     private ClientState state;
-    private long nextGeneration, activeGeneration;
+    private long nextGeneration, activeGeneration, stoppedGeneration;
 
     public NativeShareSdkClient(string? identityDirectory = null) : this(new UniShareNativeApi(), identityDirectory) { }
 
@@ -111,20 +111,28 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         try
         {
             Task<NativeCompletion> completion;
+            long generation;
             lock (submissionGate)
             {
                 RequireInitialized();
                 if (state == ClientState.Running) return;
                 cancellationToken.ThrowIfCancellationRequested();
-                var root = GCHandle.Alloc(new EventContext(this, ++nextGeneration));
+                generation = ++nextGeneration;
+                var root = GCHandle.Alloc(new EventContext(this, generation));
                 eventRoots.Add(root);
-                activeGeneration = nextGeneration;
+                activeGeneration = generation;
                 Throw(api.SetEventHandler(sdk!.Token, EventPointer, GCHandle.ToIntPtr(root)));
                 completion = Submit(new(NativeCommand.Start)).Completion;
             }
             var result = await completion.ConfigureAwait(false);
             Throw(result.Terminal.Failure);
-            lock (submissionGate) { RequireInitialized(); state = ClientState.Running; }
+            lock (submissionGate)
+            {
+                RequireInitialized();
+                // A native replacement can stop after Start succeeds but before
+                // this continuation runs. Its newer state must win that race.
+                if (stoppedGeneration != generation) state = ClientState.Running;
+            }
         }
         catch
         {
@@ -150,7 +158,9 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             lock (submissionGate)
             {
                 RequireInitialized();
-                if (state != ClientState.Running) return;
+                // Native failure leaves its observer/catalog active. Explicit
+                // Stop must still retire that generation and pending operations.
+                if (state != ClientState.Running && activeGeneration == 0) return;
                 cancellationToken.ThrowIfCancellationRequested();
                 var submitted = Submit(new(NativeCommand.Stop));
                 if (submitted.Operation.Value == 0) Throw(submitted.Completion.GetAwaiter().GetResult().Terminal.Failure);
@@ -400,6 +410,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         lock (submissionGate)
         {
             if (generation != activeGeneration || state == ClientState.Disposed) return;
+            if (value is ShareSdkEvent.DiscoveryStateChanged { State: DiscoveryState.Stopped })
+            {
+                stoppedGeneration = generation;
+                state = ClientState.Stopped;
+            }
             if (value is ShareSdkEvent.OfferReceived offer) outgoing.ObserveIncoming(offer.Offer.TransferId);
             if (value is ShareSdkEvent.ProgressReceived progress && outgoing.ObserveProgress(progress.Progress.TransferId) is { } registered)
                 events.Writer.TryWrite((generation, registered));
