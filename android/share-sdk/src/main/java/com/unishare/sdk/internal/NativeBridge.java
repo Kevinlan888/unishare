@@ -7,9 +7,10 @@ public final class NativeBridge implements AutoCloseable {
     public NativeBridge(Context context,String store){ports=new FrameworkPorts(context,store);platform=create(ports);}
     public synchronized long platformHandle(){if(platform==0)throw new IllegalStateException("platform released");return platform;}
     public synchronized void setForeground(boolean foreground){platformHandle();ports.setForeground(foreground);}
-    public synchronized long openStream(String uri,boolean destination){return open(platformHandle(),uri.getBytes(java.nio.charset.StandardCharsets.UTF_8),destination);}
+    public long openStream(String uri,boolean destination){return open(platformHandle(),uri.getBytes(java.nio.charset.StandardCharsets.UTF_8),destination);}
     public synchronized void close(){if(platform!=0){release(platform);platform=0;}}
     public static native void releaseStream(long stream);
+    public static native void abortStream(long stream);
     private static native long create(FrameworkPorts ports);
     private static native void release(long platform);
     private static native long open(long platform,byte[] uri,boolean destination);

@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <application android:label="UniShare AAR consumer" />
+    <instrumentation android:name="com.unishare.consumer.ConsumerSmoke" android:targetPackage="com.unishare.consumer" />
+</manifest>

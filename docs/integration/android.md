@@ -1,168 +1,230 @@
-# Android internal platform ports (Task 9a)
+# Android Kotlin SDK integration
 
-Minimum API 26; compile and target API 36. This split provides production
-`IPlatform` ports, their retained JNI/C ABI bridge and an internal Gradle library.
-The public Kotlin service API and multi-ABI distributable AAR belong to Task 9b.
-Physical device and LAN interoperability acceptance belongs to Task 9c/11.
+The AAR supports API 26+, builds against API 36, and packages arm64-v8a,
+armeabi-v7a and x86_64 JNI libraries. The consuming application sets its target
+SDK; the library instrumentation host targets 36. OpenSSL and libc++ are linked
+statically. There is no native test probe in the release AAR.
 
-## Permissions and lifecycle
+Add the AAR and Kotlin standard library to an Android Kotlin project:
 
-The library manifest declares `INTERNET`, `ACCESS_NETWORK_STATE` and
-`ACCESS_LOCAL_NETWORK`. Unknown newer permission names are ignored on older
-Android versions. Android 17 requires the last permission at runtime for hosts
-targeting API 37+, as documented by
-[Android local network permission](https://developer.android.com/privacy-and-security/local-network-permission).
-The adapter checks the host's actual target SDK and permission grant. The host
-must present the runtime permission UI; the internal agent never opens an
-Activity or treats denial as approval. Android 16's optional local network
-restriction testing can also reject NSD/socket operations; those errors propagate.
+```kotlin
+// app/build.gradle.kts
+android { defaultConfig { minSdk = 26; targetSdk = 36 } }
+dependencies {
+    implementation(files("libs/share-sdk-release.aar"))
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.2.10")
+}
+```
 
-The host marks the bridge foreground before Start and marks it background when
-the foreground lifecycle ends. Background notification stops native sockets and
-DNS registration and notifies the core, which interrupts sessions and refuses
-network restart while the host is background. On returning foreground, the
-host explicitly starts the SDK again. No background discovery guarantee or
-automatic clipboard synchronization is provided. Task 9b owns the Kotlin
-lifecycle binding and Task 9c owns real lifecycle transition tests.
+## Lifecycle and public services
 
-ConnectivityManager watches available networks and link properties. Registration
-errors are held for the permission/start gate. Initial network snapshots are
-excluded from change events to avoid a restart loop. Old watcher generations
-and queued old NSD submissions are retired. Teardown is best effort and never
-throws through native destructor/Close/Stop boundaries.
+```kotlin
+val sdk = ShareSdk(applicationContext, storageName = "my-sharing-installation")
+val discoverySubscription = sdk.discovery.observe { event ->
+    when (event) {
+        is DiscoveryEvent.Online -> showCandidate(event.device)
+        is DiscoveryEvent.Updated -> updateCandidate(event.device)
+        is DiscoveryEvent.Offline -> removeCandidate(event.device.id)
+        is DiscoveryEvent.Error -> showError(event.error)
+        is DiscoveryEvent.State -> showDiscoveryState(event.state)
+    }
+}
+sdk.initialize(SdkConfig(deviceName = "My Android phone")).result.thenAccept { result ->
+    if (result.isSuccess) {
+        sdk.setForeground(true)
+        sdk.start()
+    } else showError(result.error!!)
+}
 
-## DNS-SD and TCP
+// From an explicit user action:
+val connect = sdk.connections.connect(selectedDevice.id)
+val pairingSubscription = sdk.connections.observe { event ->
+    if (event is ConnectionEvent.PairingRequest) {
+        // Show all six digits; wait for the user to compare both devices.
+        showPairingPrompt(event.verificationCode) { matches ->
+            sdk.connections.confirmPairing(event.requestId, matches)
+        }
+    }
+}
+val send = sdk.transfers.sendFile(selectedDevice.id, selectedContentUri,
+    displayName = "report.pdf", byteCount = selectedByteCount,
+    mimeType = "application/pdf")
+send.result.thenAccept { result ->
+    if (!result.isSuccess) showError(result.error!!)
+}
 
-NsdManager publishes `_share._tcp.` (Android's representation of the core's
-`_share._tcp.local.`), the actual bound TCP port and the core's id/name/platform/pv
-TXT attributes. API 33+ uses NetworkRequest discovery and Network handles for
-removal scope. API 34+ uses ServiceInfoCallback for continuous address updates
-and all returned host addresses. The adapter preserves native NSD error codes,
-including internal error 0, bad parameters 6 and permission denial 7.
+// When leaving foreground:
+sdk.setForeground(false)
+sdk.stop()
+// On returning foreground, setForeground(true) and explicitly start again.
+// At final ownership teardown:
+discoverySubscription.close()
+pairingSubscription.close()
+sdk.close()
+```
 
-The controller approved the following minimum-version limitation. API 26–32
-provides no authoritative interface identifier in legacy NSD results. It uses
-an aggregate `legacy` scope and serializes legacy resolution, returning the
-resolved host address. Ambiguous lost callbacks do not remove a confirmed
-device. A connectivity change restarts discovery and the core reconciles its
-DeviceId catalog. Null-Network results on newer APIs use the same conservative
-aggregate treatment (`unscoped`). This can delay Offline until network
-reconciliation on those paths. API 33 legacy resolution provides one host;
-full address lists and continuous updates begin at API 34. See
-[NsdManager](https://developer.android.com/reference/android/net/nsd/NsdManager)
-and [NsdServiceInfo](https://developer.android.com/reference/android/net/nsd/NsdServiceInfo).
+Initialize once and await a successful result before service commands or
+snapshots. `state` returns UNINITIALIZED, INITIALIZED, RUNNING, STOPPED or CLOSED.
+Storage names identify independent installation identities; reuse a stable name
+across application launches. Resource limits in `SdkConfig` may be tightened by
+the host. A failed initialization requires closing the instance and handling the
+error before creating another instance; corruption never replaces an identity.
 
-Native POSIX TCP sockets accept numeric IPv4/IPv6 addresses only, including IPv6
-scope. An IPv6 dual-stack listener returns its OS-selected bound port before
-accepted sockets. Remote endpoints come from getpeername, exclude ports and
-normalize IPv4-mapped IPv6 to IPv4. Read returns bounded bytes or EOF; Write
-completes only after the whole buffer is sent. Cancel closes the affected socket
-and completes pending operations once. Factory Stop shuts down listeners,
-connecting and established sockets; workers retain descriptors until their
-completion, preventing descriptor reuse races. Connect polls a nonblocking
-descriptor so Stop does not depend on the OS's long connect timeout.
+`discovery.devices()` and `connections.trustedDevices()` return immutable
+snapshots. Events preserve DeviceId, name, platform, protocol major/minor,
+addresses (including IPv6 scope), port, pairing flag and last-seen milliseconds.
+`connect`, `confirmPairing`, `rejectPairing` and `forgetDevice` cover connection
+and trust decisions. A SAS is a six-character string, including leading zeros.
+The host must explicitly decide each pairing and incoming transfer offer.
 
-## Identity and trust
+Observe `TransferEvent.IncomingOffer` to inspect request ID, transfer ID, content
+type, display name, MIME and declared byte count. Call `transfers.accept(requestId,
+stagingContentUri)` or `reject(requestId)` for that offer. Accept completion means
+the destination was attached; deliver the staging file to the application only
+following a successful `TransferEvent.Result`. Progress carries transferred and
+total byte counts. `cancel(transferId)` cancels a known active transfer.
+`sendText`, `sendImage` and `sendFile` return operations; file/image data uses an
+explicit source content URI and exact declared byte count.
 
-The C++ core generates the UUID, DER PKCS#8 key and DER certificate. DER key bytes
-are exportable in runtime memory. Android Keystore retains only the AES-256-GCM
-wrapping key; this does **not** make the TLS private key hardware-backed.
-Encrypted, authenticated identity and trust records live in an app-private
-SQLite database under `Context.getNoBackupFilesDir()`. Each encrypted row binds
-its row identity with GCM AAD. SQLite FULL-synchronous transactions provide
-atomic commits; a JVM mutex plus app-private file lock serialize SDK instances
-and processes, including wrapping-key creation. See
-[Android Keystore](https://developer.android.com/privacy-and-security/keystore).
+## Callbacks, operations and ownership
 
-An identity is created once. Read/decryption/corruption/missing wrapping-key
-errors fail startup rather than generating a replacement. Trust insertion is
-idempotent only for the identical binding; changed fingerprints return
-IdentityChanged. Removing trust is idempotent. Native packets and transient
-Java identity response buffers are cleared where practical; JVM/SQLite/crypto
-internals may retain copies and the runtime core necessarily retains its key.
-Hardware-backed key characteristics and power-loss recovery require physical
-verification. No Keystore export or stronger key-protection claim is made.
+The stable v1 ABI limits one sendText span and clipboard write's combined
+text/MIME/image spans to 4 MiB; a larger call reports ResourceLimit even when the
+configured content ceiling is higher. Image/file transfers use streaming URIs.
 
-## URI streams and clipboard
+All asynchronous methods return immediately with an `Operation` containing an
+ID and `CompletableFuture<OperationResult>`. IDs are scoped to the Kotlin SDK
+instance and differ from internal native IDs. Accepted facade operations have
+one terminal result, including preparation/submission failures. Native rejection
+is reported in that future with the original stable error category and optional
+platform code. Snapshots throw `ShareException` on native failure. Calls after
+Close throw `IllegalStateException`.
 
-Source and destination handles are explicit host-selected `content://` URIs.
-Reads and writes are asynchronous and bounded. A destination must be a regular,
-app-controlled staging file exposed by a provider supporting deletion. Pipes
-and providers that finalize only on Close are rejected: every Write flushes and
-syncs the file descriptor before success, so a finalization failure cannot be
-hidden behind the void Close interface. Abort closes the descriptor and deletes
-the staging URI. The host controls final naming/move after verified receipt;
-display names are never used to construct paths.
+The default callback executor is serial. An optional `callbackExecutor` in the
+ShareSdk constructor selects host delivery; a private serial trampoline prevents
+JNI callbacks and an inline host executor from running user code on the
+submitting stack. Device events, observers and SDK future completion are
+serialized. An executor must eventually run accepted tasks; rejected tasks use
+the private serial fallback. Do not block a callback waiting for another callback
+on the same executor. UI changes require a UI executor or explicit UI posting.
+CompletableFuture's normal rules apply: continuations attached to an already
+completed future may execute on the attaching thread; host-requested async
+continuations are scheduled and owned by the host.
 
-The host must ensure its provider's delete succeeds. Abort's inherited void
-interface cannot report a failed delete to the core; native cleanup is best
-effort when the provider or OS refuses cleanup. Host reconciliation of abandoned
-staging files is still required. Successful Close leaves the staging file for
-the host. These contracts deliberately exclude arbitrary commit-on-close SAF
-destination providers. See
-[ContentResolver](https://developer.android.com/reference/android/content/ContentResolver).
+Stop completes pending native operations and URI preparation as Cancelled. URI
+acquisition runs separately so a blocked provider does not delay native Stop.
+Close suppresses queued
+listeners/results, drains an already-running SDK callback, and completes unresolved
+futures as Cancelled while Close is executing. After Close returns the SDK starts
+no listener or future-completion delivery. Close from an SDK callback is safe.
+Future continuations scheduled independently by host code remain host-owned.
+An in-flight URI acquisition can finish after Close; its returned stream is
+closed exactly once, and a late destination is aborted/deleted without submitting
+to the destroyed SDK or delivering another result.
 
-Clipboard access occurs only on explicit Read/Write requests and runs on the
-main looper. A single plain-text clip preserves UTF-8, including embedded NUL;
-an image URI is read as its MIME and bytes. Unsupported formats return
-InvalidInput. Image writes create app-cache data and a read-only, grantable
-ImageProvider URI with `${applicationId}.unishare.images` authority. Cache data
-can be removed by Android; hosts may clean unused clipboard images when safe.
-Android's focus/privacy rules can prevent reads or show system UI; hosts must
-trigger this from an eligible foreground user action. See
+Borrowed C ABI spans are copied in JNI before native callbacks return. Kotlin
+models defensively copy mutable byte arrays/lists. Native callback contexts and
+stream references remain retained through terminal completion/cancellation.
+Hosts must close the ShareSdk instance to release native, platform and executor
+ownership; Close is idempotent. No background service or automatic clipboard
+watch is installed. Discovery/listening/transfers are guaranteed only while the
+host is foreground and the SDK is started.
+
+## Permissions by Android version and target
+
+| Device/API and host target | Host action |
+| --- | --- |
+| API 26–35 | INTERNET and ACCESS_NETWORK_STATE (merged from AAR); no LAN runtime prompt. |
+| API 36, target 36 or lower | Normal LAN access uses INTERNET. The optional Android 16 local-network restriction test requires declaring/granting NEARBY_WIFI_DEVICES. |
+| API 37+, target 36 or lower | INTERNET supplies the legacy implicit LAN grant; do not request ACCESS_LOCAL_NETWORK. |
+| API 37+, target 37+ | Host declares ACCESS_LOCAL_NETWORK, requests its runtime grant, and handles denial/revocation before Start. |
+
+The AAR declares INTERNET and ACCESS_NETWORK_STATE. The host targeting 37+
+adds `<uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK"/>`.
+The adapter checks the actual host target and permission; the SDK opens no
+permission UI. Framework/errno failures preserve available original numeric
+codes. A foreground prerequisite failure is PermissionDenied; an NSD failure is
+DiscoveryFailed unless the platform identifies denial. Java exceptions without a
+numeric platform code do not invent one. See the official
+[local network permission guide](https://developer.android.com/privacy-and-security/local-network-permission),
+verified 2026-10-05. The SDK uses broad discovery and explicit pairing; it does
+not substitute a system picker flow.
+
+## URI streams and explicit clipboard
+
+Source and destination URIs must use `content://`; obtain the appropriate
+read/write URI grants in the host. Pass an exact nonnegative byte count and an
+explicit display name/MIME. Names are display-only and never become paths.
+Sources are closed without deleting their data. Destination URIs must identify
+regular, app-controlled **staging** files exposed by a provider that supports
+deletion; never supply a final user document. Writes flush and sync before
+success. Pipes and providers that finalize only on Close are rejected.
+
+After verified successful TransferEvent.Result, the host chooses final naming
+and moves/publishes staging. Failed decisions, cancellation, checksum failure and
+Close abort staging. Provider deletion is best effort because the platform's void
+Abort interface cannot surface a refused delete; hosts should reconcile abandoned
+staging files. Arbitrary commit-on-close SAF providers are outside this destination
+contract. See [ContentResolver](https://developer.android.com/reference/android/content/ContentResolver).
+
+`clipboard.readShareableContent()` and `writeContent(ShareContent.Text(...))` /
+`writeContent(ShareContent.Image(mime, bytes))` are explicit text/image operations.
+They use the main looper. Unsupported clipboard types return InvalidInput.
+Android focus/privacy restrictions can prevent reads or show system UI, so invoke
+reads only from an eligible foreground user action. Read content is in the
+operation result; the host separately chooses a device and sends it. Text uses
+sendText. To send a clipboard image, the host exposes the returned bytes through
+its own read-granted content provider and uses sendImage.
+
+Image clipboard writes use the AAR's read-only grantable ImageProvider at
+`${applicationId}.unishare.images`; keep that authority unique. The host's
+applicationId supplies the manifest placeholder. Android may evict cached image
+data, and hosts can clean unused clipboard images when safe. No storage-wide
+permission or automatic clipboard synchronization is needed. See
 [ClipboardManager](https://developer.android.com/reference/android/content/ClipboardManager).
 
-## Internal ownership and building
+## Discovery, sockets and identity limits
 
-`com.unishare.sdk.internal.NativeBridge` is an implementation detail for Task 9b.
-It registers an opaque C ABI platform token and optional URI stream tokens.
-The C ABI SDK retains the platform after the original token is released.
-Each independently registered stream token requires `releaseStream`, normally
-by a Kotlin closeable wrapper. Releasing a token twice is InvalidInput.
-NativePortException preserves the stable code and optional platform code.
-Recurring/one-shot callbacks use monotonic IDs and weak native-owner lookup;
-late completion of retired IDs cannot dereference a released native object.
-Consumers receive JNI keep rules. Default public callbacks use the core's
-serial queue. Keystore/Errno/NSD codes are kept when their Android APIs expose
-a numeric code; Java exceptions without one do not invent an OS code.
+NsdManager publishes `_share._tcp.` with the actual listener port and core TXT
+metadata. API 33+ uses network-scoped discovery; API 34+ receives all resolved
+addresses and continuous updates. API 26–32 has no authoritative interface ID,
+so ambiguous legacy lost notifications do not remove confirmed sightings.
+Connectivity reconciliation restarts discovery; this may delay Offline. Null-
+Network results follow the same conservative rule. API 33 resolves one host.
+API 36 exposes the resolved hostname; earlier versions preserve the resolved
+numeric endpoint, including IPv6 scope. These addresses are discovery candidates,
+not authenticated identities. See [NsdManager](https://developer.android.com/reference/android/net/nsd/NsdManager).
 
-Provision SDK API 36/Build Tools 36.0.0, NDK 28.2.13676358, CMake 3.22.1, JDK 21,
-Gradle 9.4.1 and Android OpenSSL 3 before building. Dependencies are not
-downloaded by CMake. In this workspace, arm64 OpenSSL is provisioned at
-`build-deps/vcpkg_installed/arm64-android`. Set ANDROID_HOME and optionally
-GRADLE_USER_HOME to your provisioned locations, then run:
+TCP uses numeric IPv4/IPv6 and TLS identity verification. Network changes,
+background suspension and Stop interrupt sessions. Keystore wraps the core's
+DER identity with a non-exportable AES-GCM key; the TLS private key itself is
+exportable into runtime core memory. Encrypted identity/trust records live in
+app-private no-backup SQLite with authenticated row identity, FULL synchronous
+transactions and a cross-process lock. This does not claim hardware-backed TLS
+key custody. See [Android Keystore](https://developer.android.com/privacy-and-security/keystore).
+
+## Build and verification
+
+Provision API 36/Build Tools 36.0.0, NDK 28.2.13676358, CMake 3.22.1, JDK 21,
+Gradle 9.4.1, and architecture-matched static OpenSSL 3. CMake downloads nothing.
+The build selects these ignored dependency roots per ABI:
+
+- `build-deps/vcpkg_installed/arm64-android`
+- `build-deps/vcpkg_arm_neon_android/arm-neon-android`
+- `build-deps/vcpkg_x64_android/x64-android`
 
 ```powershell
 ./android/gradlew.bat -p android :share-sdk:assembleRelease
+./android/gradlew.bat -p android :share-sdk:connectedDebugAndroidTest -PpublicTests=ON
 ./android/gradlew.bat -p android :share-sdk:connectedDebugAndroidTest -PportTests=ON
+./android/tests/verify-aar.ps1
+./android/tests/run-consumer.ps1
 ```
 
-Task 9a enables only arm64-v8a. Use `-PportTests=ON` only for internal probes;
-normal Release excludes the native test library. The standalone installed-SDK
-gate is `android/tests/run-ports.ps1 -NativeBuild <native-build-dir>` and avoids
-downloaded Android test frameworks. `tests/android/run-native.ps1` can serve
-as CMAKE_CROSSCOMPILING_EMULATOR to run the full portable core CTest on a device.
-Generated builds, SDKs, caches, keys and APKs are ignored. No multi-ABI AAR or
-physical interoperability claim is established by Task 9a.
-
-### Resolved target and NSD concurrency
-
-On API 36+, resolved records use NsdServiceInfo.getHostname() plus the framework's
-omitted `.local.` suffix. On API 26–35, which cannot expose that hostname, the
-adapter uses a framework-resolved numeric host address (including IPv6 scope)
-as target endpoint metadata. This value is not an authenticated peer identity;
-DeviceId is the advertised identifier and TLS/SAS authenticates the connection.
-No target is synthesized from the service instance, TXT identifier or reverse DNS.
-
-NSD state monitors protect generations, callback ownership and the legacy resolve
-queue. Framework submissions, cleanup and cross-boundary callbacks run outside
-those monitors. Stop retires the generation before cleanup; submissions finishing
-after Stop unregister their late registrations and cannot advance a new resolve
-queue. This lets synchronous framework submission failures race with Stop without
-holding opposing adapter monitors.
-A shared admission token spans DnsPort and AndroidNsd. Stop retires that token
-before calling framework cleanup. A delayed operation entering AndroidNsd after
-Stop cannot adopt its newer generation; callback/resolve ownership and late
-registration cleanup also check the original admission token. New operations
-capture a fresh token for restart after all active Stop cleanup has completed.
-Publish/browse attempts during that cleanup return Cancelled.
+Release output: `android/share-sdk/build/outputs/aar/share-sdk-release.aar`.
+Release always excludes the native test probe, including when portTests=ON is
+passed. Public tests exercise the facade and native initialization, lifecycle,
+URI ownership, callback races and mapping. The independent consuming project
+compiles and shrinks against the release AAR. Physical LAN interop, older API
+coverage and network-switch/large-file acceptance belong to Task 9c/11.
+Generated SDKs, caches, binaries, keys, consumer builds and APKs remain ignored.
