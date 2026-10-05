@@ -34,5 +34,24 @@
     "kind": "text",
     "size": 24,
     "sha256": "c1d2af2b6a2962f420b01ae40b5c33363a1925faa8ce99806dc5dd1188e6bdc5"
+  },
+  {
+    "name": "text-large.txt",
+    "kind": "text",
+    "size": 5242888,
+    "sha256": "e57810c5a605bc0fd9cdb3ddb54cc7209df8c07b6aaeb7d0c8e8a8ce678fda92"
+  },
+  {
+    "name": "clipboard.png",
+    "kind": "image",
+    "size": 130,
+    "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206",
+    "pixel_sha256": "80bd4e68af2714bf9b5b3fe21e22163ebd5cd6727001de0dc4ee4d630d8a3bc2"
+  },
+  {
+    "name": "isolation.txt",
+    "kind": "text",
+    "size": 14,
+    "sha256": "8f5dce26a0b2358be71da74f0bd8c6d452bf5b74ee7fd07a1aeb73a85079d007"
   }
 ]

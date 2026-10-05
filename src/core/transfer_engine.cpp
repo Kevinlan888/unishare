@@ -62,8 +62,8 @@ void TransferEngine::Deadline(const std::shared_ptr<Transfer>& t){
   auto error=Error(ErrorCode::Timeout,"transfer timed out");e->Finish(t,Result<void>::Failure(error));e->session_->Close(error);
  }});
 }
-TransferId TransferEngine::Offer(ContentSource source){
- TransferId id;if(RAND_bytes(id.bytes.data(),static_cast<int>(id.bytes.size()))!=1){Emit(id,Result<void>::Failure(Error(ErrorCode::ResourceLimit,"random ID unavailable")));return id;}
+TransferId TransferEngine::Offer(ContentSource source,std::optional<TransferId> supplied){
+ TransferId id;if(supplied)id=*supplied;else if(RAND_bytes(id.bytes.data(),static_cast<int>(id.bytes.size()))!=1){Emit(id,Result<void>::Failure(Error(ErrorCode::ResourceLimit,"random ID unavailable")));return id;}
  if(active_||sending_||!sends_.empty()){Emit(id,Result<void>::Failure(Error(ErrorCode::ResourceLimit,"one active transfer per session")));return id;}
  if(closed_||!session_->Connected()){Emit(id,Result<void>::Failure(Error(ErrorCode::AuthenticationFailed,"session is not authenticated")));return id;}
  protocol::Offer offer{id,source.type,std::move(source.content.display_name),std::move(source.content.mime_type),source.content.byte_count};

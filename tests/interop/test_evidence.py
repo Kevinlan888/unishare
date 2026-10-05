@@ -37,18 +37,90 @@ class EvidenceTests(unittest.TestCase):
             for side in (0, 1):
                 add(side, "terminal", id=transfer, error="")
             for side, event in ((0, "sent"), (1, "received")):
-                add(side, event, id=transfer, **{k: fixture[k] for k in ("name", "size", "sha256")})
+                add(side, event, id=transfer, **{k: fixture[k] for k in fixture if k != "kind"})
         add(1, "offer", id="rejected", requestId=20, kind="text", size=6)
         add(1, "consent", id="rejected", requestId=20, decision="reject")
         add(1, "operation", operation="reject", id="rejected", requestId=20, error="")
         for side in (0, 1):
             add(side, "terminal", id="rejected", error="7")
-            add(side, "complete", terminals=7)
+            add(side, "complete", terminals=len(manifest)+1)
         return logs, manifest
 
     def test_complete_evidence_passes(self):
         logs, manifest = self.valid_records()
-        self.assertEqual(evidence.verify(*logs, manifest)["successes"], 6)
+        self.assertEqual(evidence.verify(*logs, manifest)["successes"], len(manifest))
+
+    def test_extended_scenario_cannot_claim_pass_without_cancellation_cleanup(self):
+        logs, manifest = self.valid_records()
+        for rows in logs: rows[0]["scenario"] = "extended"
+        with self.assertRaisesRegex(ValueError, "extended"):
+            evidence.verify(*logs, manifest)
+
+    def extended_records(self):
+        logs,manifest=self.valid_records()
+        for index,rows in enumerate(logs):
+            rows[0]["scenario"]="extended"
+            rows[-1]["terminals"]=len(manifest)+2
+            isolation=[r for r in rows if r.get("id")=="transfer-8"]
+            rows[:]=[r for r in rows if r not in isolation]
+            def add(event,**fields):
+                rows.insert(-1,dict(event=event,run="unit",role=["sender","receiver"][index],**fields))
+            if index==0:
+                add("clipboard",decision="explicit_read_send")
+                for _ in range(2):
+                    add("operation",operation="clipboard_write",error="")
+                    add("operation",operation="clipboard_read",error="")
+                add("operation",operation="send_cancel",error="10")
+                add("terminal",id="cancelled",error="10")
+            else:
+                add("offer",id="cancelled",requestId=21,kind="file",size=8388608)
+                add("consent",id="cancelled",requestId=21,decision="accept")
+                add("operation",operation="accept",id="cancelled",requestId=21,error="")
+                add("progress",id="cancelled",bytes=262144,size=8388608)
+                add("cancel",id="cancelled",bytes=262144,size=8388608)
+                add("terminal",id="cancelled",error="8")
+                add("operation",operation="cancel",id="cancelled",error="")
+                add("cleanup",id="cancelled",deleted=True)
+                add("pairing",id="peer-a",sas="999999",decision="confirm")
+                add("operation",operation="confirm",error="")
+            add("restart",trustStable=True)
+            rows[-1:-1]=isolation
+            if index==1:add("offline",id="peer-a")
+        return logs,manifest
+
+    def test_extended_valid_and_corruption_checks(self):
+        logs,manifest=self.extended_records()
+        self.assertEqual(evidence.verify(*logs,manifest)["cancellations"],1)
+        mutations={
+            "cleanup omission":lambda a,b:b.remove(next(r for r in b if r["event"]=="cleanup")),
+            "staging remains":lambda a,b:next(r for r in b if r["event"]=="cleanup").update(deleted=False),
+            "zero byte cancel":lambda a,b:next(r for r in b if r["event"]=="cancel").update(bytes=0),
+            "completed cancel":lambda a,b:next(r for r in b if r["event"]=="cancel").update(bytes=8388608),
+            "cancel command omitted":lambda a,b:b.remove(next(r for r in b if r.get("operation")=="cancel")),
+            "restart trust changed":lambda a,b:next(r for r in a if r["event"]=="restart").update(trustStable=False),
+            "offline omitted":lambda a,b:b.remove(next(r for r in b if r["event"]=="offline")),
+            "early offline":lambda a,b:b.insert(0,b.pop(next(i for i,r in enumerate(b) if r["event"]=="offline"))),
+            "clipboard read completion omitted":lambda a,b:a.remove(next(r for r in a if r.get("operation")=="clipboard_read")),
+            "receiver wrong cancel outcome":lambda a,b:next(r for r in b if r["event"]=="terminal" and r["id"]=="cancelled").update(error="10"),
+            "cancel progress mismatch":lambda a,b:next(r for r in b if r["event"]=="cancel").update(bytes=123),
+            "isolation before cancel":lambda a,b:a.insert(0,a.pop(next(i for i,r in enumerate(a) if r["event"]=="sent" and r["name"]=="isolation.txt"))),
+        }
+        for name,mutate in mutations.items():
+            with self.subTest(name=name):
+                logs,manifest=self.extended_records();mutate(*logs)
+                with self.assertRaises(ValueError):evidence.verify(*logs,manifest)
+
+    def test_clipboard_reencoding_preserves_pixels_and_actual_transport_hash(self):
+        logs,manifest=self.extended_records()
+        fixture=next(r for r in manifest if r["name"]=="clipboard.png")
+        fixture["pixel_sha256"]="80bd4e68af2714bf9b5b3fe21e22163ebd5cd6727001de0dc4ee4d630d8a3bc2"
+        for rows in logs:
+            for row in rows:
+                if row.get("name")=="clipboard.png":row.update(size=99,sha256="a"*64,pixel_sha256=fixture["pixel_sha256"])
+                if row.get("event")=="offer" and row["id"]=="transfer-7":row["size"]=99
+        self.assertEqual(evidence.verify(*logs,manifest)["successes"],9)
+        next(r for r in logs[1] if r.get("name")=="clipboard.png")["pixel_sha256"]="bad"
+        with self.assertRaises(ValueError):evidence.verify(*logs,manifest)
 
     def test_evidence_mutations_fail_closed(self):
         # These are concrete omissions/corruptions that would falsely claim an interop pass.

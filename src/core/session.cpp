@@ -145,7 +145,7 @@ void Session::Deliver(const protocol::Message& message,std::shared_ptr<ByteBudge
  // its write complete. Hold one charged frame until that existing pin gate
  // succeeds, but never admit content while either consent is missing.
  const bool awaiting_flush=hello_received_&&local_confirmed_&&peer_confirmed_&&decision_sent_&&!rejecting_;
- if(!content_handler_||(!connected_&&!awaiting_flush)){Fail(ErrorCode::AuthenticationFailed,"content before authenticated handler");return;}
+ if(!connected_&&!awaiting_flush){Fail(ErrorCode::AuthenticationFailed,"content before authenticated handler");return;}
  delivery_=std::make_shared<Delivery>(Delivery{std::move(charge),message});
  ++delivery_generation_;
  if(connected_)DispatchDelivery();
@@ -163,9 +163,14 @@ void Session::DispatchDelivery(){
   }
  });};
  // Always defer delivery; callbacks cannot reenter the OpenSSL pump.
- auto handler=content_handler_;
- scheduler_.Post([weak,generation,handler,view=std::move(view),ack=std::move(ack)]{
-  if(auto self=weak.lock())if(!self->closed_&&self->delivery_generation_==generation)handler(view,ack);
+ // Connected is posted before this task. Its service observer installs the
+ // transfer handler, so resolve that handler only when delivery runs.
+ scheduler_.Post([weak,generation,view=std::move(view),ack=std::move(ack)]{
+  if(auto self=weak.lock())if(!self->closed_&&self->delivery_generation_==generation){
+   auto handler=self->content_handler_;
+   if(!handler){self->Fail(ErrorCode::AuthenticationFailed,"content before authenticated handler");return;}
+   handler(view,ack);
+  }
  });
 }
 void Session::ReadFrames(){

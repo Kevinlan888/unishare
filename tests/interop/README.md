@@ -6,40 +6,60 @@ then connect only by the SDK's discovered DeviceId. They use production mDNS,
 TCP/TLS, SAS, consent and streaming. ADB/simctl and files coordinate launches and
 collect evidence; they never carry share content or inject a peer endpoint.
 
-Task 11a establishes the reusable hosts and one direction. See [matrix.md](matrix.md)
-for measured results and the remaining Task 11b gates. A host `complete` record
+See [matrix.md](matrix.md) for measured results and physical release gates. A host `complete` record
 alone is insufficient: **both logs must pass `evidence.py`**.
 
 ## Fixtures and scenario
 
 Run `python tests/interop/fixtures.py tests/interop/build-fixtures`. It materializes
-six fixtures and verifies their bytes against the committed
+nine successful fixtures plus an 8 MiB cancellation source. It verifies the
+successful fixture bytes against the committed
 [SHA-256 manifest](fixtures/manifest.json): UTF-8 with an embedded NUL; valid 2×2
 PNG and JPEG; an empty file; 700001 bytes (`byte[i] = i % 251`, crossing two 256 KiB
-chunk boundaries); and UTF-8 text for explicit clipboard read/send. Images are
-fixed binary fixtures, so image encoder versions cannot change expectations.
+chunk boundaries); UTF-8 text for explicit clipboard read/send; 5242888-byte
+UTF-8 text ending in `世界`, NUL and newline; clipboard PNG; and text sent after
+failure to verify isolation. Ordinary PNG/JPEG fixture transfers retain exact
+encoding, size and SHA-256 expectations.
 
-Each sender sends those six items in manifest order, then sends a text offer the
-recipient explicitly rejects. The clipboard case writes the known fixture to
+Each sender sends the first eight items, then a text offer the recipient rejects,
+then an 8 MiB file the recipient cancels after positive progress. Both SDKs
+Stop/Start, verify the same trusted DeviceId and fingerprint, and rediscover the
+new listener ports. The sender reconnects using that DeviceId and sends the ninth
+fixture. The recipient observes final Offline before stopping. Each platform
+checks 11 distinct terminals and operation completion exactly once.
+The clipboard cases write known fixtures to
 the foreground host's actual clipboard, reads it through the public SDK, checks
 it, and explicitly sends it. **It replaces the clipboard contents.** It does not
-claim cross-app paste permission or image clipboard coverage. Windows clipboard
+claim cross-app paste permission. Windows clipboard
 cannot preserve NUL; the wire text fixture and clipboard fixture are separate.
 
-Both hosts must receive one pairing request for the expected run name. The
+Both hosts receive an initial pairing request for the discovered expected peer.
+Incoming pairing may precede discovery, so hosts defer confirmation until that
+DeviceId has been discovered. The
 explicit test-consent mode logs the SAS and calls public ConfirmPairing, and the
 coordinator requires the two six-digit values to match. This is automated test
 consent, not a production pairing UI; log comparison happens after the run. Each
 incoming offer is independently accepted or rejected using the public API.
 Successful receive bytes/hash are checked by the recipient, then compared with
 the sender and committed manifest by the coordinator. Receiver staging paths are
-locally generated, never based on remote display names. The seventh rejected
+locally generated, never based on remote display names. The rejected
 offer creates no destination. Hosts check operation and terminal counts; the
 coordinator also checks identical transfer-ID sets, one terminal per ID, kinds,
 sizes, explicit decisions and no data/terminal record before the decision.
 Each receiving decision must have exactly one successful public Accept/Reject
 completion correlated by both request ID and transfer ID. A decision-intent log
 alone cannot satisfy the gate.
+
+Clipboard OS conversion may re-encode a PNG. Hosts decode the readback to 2×2
+sRGB RGBA (red, green, blue, white), compare its pixel SHA-256 with the manifest,
+and send the **actual public clipboard readback bytes**. The gate compares the
+sender/recipient transport byte count and SHA-256 exactly, plus independent
+decoded pixel hashes; it does not demand identical clipboard PNG encoding.
+Cancellation evidence requires positive incomplete progress before public Cancel,
+its successful completion, the failed transfer terminal, and deleted staging.
+The known peer must reappear in discovery after restart before isolation consent;
+otherwise its goodbye cannot produce Offline from an empty catalog. A trusted
+reconnect requires a second explicit recipient connection decision.
 
 Hosts record their configured local name, SDK platform and expected peer name.
 The gate checks reciprocal names and discovered platforms against that metadata.
@@ -48,10 +68,14 @@ limited to each host's remote pairing ID matching its own discovered remote ID.
 It does **not** claim reciprocal binding to a separately observed local DeviceId.
 Coherently altered logs are not authenticated evidence; preserve original logs.
 
-Active cancellation, interruption cleanup, offline/update, changed identity,
-malformed frame and wrong digest cases remain Task 11b extensions. This first
-host scenario covers rejection only. Existing platform acceptance/core tests
-cover additional failures but are not counted as cross-platform runs.
+Cancellation closes the active TLS connection and exercises interruption, cleanup
+and reconnect isolation. Updated events from trust/address/port changes are logged
+where observable. Host name/interface changes are not an API in this scenario.
+Changed identity, malicious lengths and wrong digest cannot be generated through
+these public APIs without tampering with the authenticated protocol. Existing core
+regressions remain separate evidence, not new LAN matrix cases. Process recreation
+and storage persistence are covered by owning platform acceptance; this matrix
+verifies public Stop/Start and rediscovery identity/trust.
 
 ## Windows build and launch
 
@@ -121,7 +145,25 @@ and installs a minimal foreground UIKit host. It reuses the existing
 Simulator-only synthetic Keychain entitlements. It saves the raw console under
 `build-interop-ios-ai2/receiver.log`, fails on nonzero exit/missing completion,
 and terminates its test app on a 240-second timeout. A distinct run isolates the
-Keychain identity. Physical iPhone signing/runtime is not covered by this runner.
+Keychain identity. Physical iPhone signing/runtime uses the runner below.
+
+## Physical iPhone build and launch
+
+Use an unlocked, awake iPhone on the same LAN. Configure the existing Personal
+Team locally via `DEVELOPMENT_TEAM`; keep its value and signing material out of
+source control. The generated Xcode project consumes only the XCFramework,
+embeds fixtures, signs automatically and replaces the `com.unishare.acceptance`
+test app. Xcode destination UDID and CoreDevice UUID are separate arguments.
+
+```sh
+MODE=build bash tests/interop/ios/device.sh ARCHIVE XCODE_UDID COREDEVICE_UUID receiver wi8 interop-wi8-sender
+# After the opposite host starts, launch the installed app:
+xcrun devicectl device process launch --device COREDEVICE_UUID --terminate-existing --console com.unishare.acceptance receiver wi8 interop-wi8-sender --test-consent
+```
+
+Omit `MODE=build` to build/install/launch in one bounded invocation. Output and
+the generated project stay in ignored `build-interop-ios-device-RUN/`. A locked
+device prevents launch; signing/install alone does not establish runtime acceptance.
 
 Any platform can take either role by swapping `sender`/`receiver` and expected
 name. Each process logs `interop-RUN-ROLE` as its own advertised name.

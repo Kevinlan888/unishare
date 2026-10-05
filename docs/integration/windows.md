@@ -58,7 +58,16 @@ Run the production-port two-process harness from a built tree:
 
 The script creates a fresh run directory and launches hidden sender/receiver processes linked to the public DLL. Both publish and browse using production DNS-SD and TCP. The explicit `--test-consent` mode compares the two SAS values through local test files before confirming both requests, accepts the two offers into host-selected HANDLE staging, sends text and a 262145-byte file, verifies received bytes, and stops. The files carry test consent only; peer discovery and content always use the shipped protocol. This harness is a test host, not a recommended application consent UI. Each process can also be launched manually using `windows_smoke sender|receiver ABSOLUTE_RUN_DIRECTORY --test-consent` with the same fresh directory. Logs name the failing stage and retain native errors. It never touches the user's desktop clipboard.
 
-On this development host (Windows 10.0.26200, WLAN plus virtual adapters), both processes initialized and completed native publication but timed out discovering the peer after 30 seconds. Pairing/text/file were therefore **not run** by the live harness. An unrestricted retry was interrupted during approval and did not execute. Deterministic assembly tests use real TCP/TLS/DPAPI/file/clipboard codecs with native DNS/clipboard seams; they are not evidence of live mDNS or physical LAN interoperability. Task 11 remains the Windows/mobile device matrix. Cross-application clipboard testing remains a manual gate.
+Earlier Task 8 runs on this host (Windows 10.0.26200, WLAN plus virtual adapters)
+published but timed out browsing. Task 11 isolated the native query's final root
+dot as the discovery defect: actual Android announcements reached Windows, and
+the same `DnsServiceBrowse` query without the dot received callbacks. The adapter
+now supplies Microsoft's native service-name form `_share._tcp.local` while its
+public service type stays `_share._tcp.local.`. The regression and public package
+LAN matrix pass Windows↔physical Pixel and Windows↔iOS Simulator, including
+discovery, TLS/SAS, all content flows, both clipboard formats, cancellation,
+cleanup, rediscovery, trust, isolation and Offline. See the
+[matrix](../../tests/interop/matrix.md) for exact scope and physical iPhone gates.
 
 ## Identity and trust
 
@@ -118,7 +127,13 @@ Native APIs and ownership references:
 - [Register instance ownership](https://learn.microsoft.com/en-us/windows/win32/api/windns/nc-windns-dns_service_register_complete)
 - [NotifyIpInterfaceChange and callback/cancellation threading](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-notifyipinterfacechange)
 
-The ordinary windows_network CTest uses real TCP loopback, an injectable Win32 DNS boundary, and actual interface-change registration. An optional same-host native DNS check runs when UNISHARE_LIVE_MDNS=1. It advertises a uniquely named temporary service and requires native browse/resolve within 20 seconds. On the development host publication succeeded but discovery timed out; this is not a live-LAN pass. The attempted unrestricted retry was not approved/executed. Firewall, multicast environment and cross-host discovery remain integration gates, as does the physical Task 11 interoperability matrix. Task 8c assembled SDK tests pass, while its production two-process discovery also timed out as described above.
+The ordinary windows_network CTest uses real TCP loopback, an injectable Win32 DNS
+boundary (including native query normalization), and actual interface-change
+registration. An optional same-host native DNS check runs with
+`UNISHARE_LIVE_MDNS=1`; it advertises a unique temporary service and requires native
+browse/resolve within 20 seconds. Task 11's independent public DLL consumers
+provide measured cross-host discovery and transfer evidence. Hosts still configure
+their own firewall/LAN policy; the test launchers do not change firewall rules.
 
 - [SHGetKnownFolderPath current-user path and memory ownership](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath)
 - [DnsServiceBrowse Windows 10 requirement and asynchronous contract](https://learn.microsoft.com/en-us/windows/win32/api/windns/nf-windns-dnsservicebrowse)

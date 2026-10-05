@@ -1,6 +1,7 @@
 #include "transfer_service.hpp"
 #include <algorithm>
 #include <atomic>
+#include <openssl/rand.h>
 namespace unishare::core {
 namespace {
 // Close even when submission is rejected/retired before the engine takes it.
@@ -65,14 +66,11 @@ class TransferService final : public ITransferService,
     std::function<void(IncomingOffer)> offer_;
     std::function<void(TransferProgress)> progress_;
     std::function<void(TransferResult)> result_;
-    std::uint64_t next_transfer_ = 1;
     std::optional<std::string> offering_;
-    TransferId NewId() {
+    std::optional<TransferId> NewId() {
         TransferId id;
-        auto value = next_transfer_++;
-        for (unsigned n = 0; n < 8; ++n)
-            id.bytes[15 - n] = static_cast<std::uint8_t>(value >> (n * 8));
-        id.bytes[0] = 0x75;
+        if(RAND_bytes(id.bytes.data(),static_cast<int>(id.bytes.size()))!=1 ||
+           transfers_.count(id.ToString())) return {};
         return id;
     }
     auto Find(std::uint64_t c, TransferId id) {
@@ -95,11 +93,11 @@ class TransferService final : public ITransferService,
         auto r = runtime.lock();
         if (!r || !engines_.count(c) || !enabled)
             return;
-        if (r->next_request == 0 || next_transfer_ == 0) {
+        if (r->next_request == 0 || transfers_.count(event.transfer_id.ToString())) {
             engines_.at(c).engine->Reject(event.transfer_id);
             return;
         }
-        Transfer t{c, event.transfer_id, NewId(), r->next_request++, true, {}};
+        Transfer t{c, event.transfer_id, event.transfer_id, r->next_request++, true, {}};
         transfers_.emplace(t.public_id.ToString(), t);
         event.transfer_id = t.public_id;
         event.request_id = t.request;
@@ -157,13 +155,14 @@ class TransferService final : public ITransferService,
                         ErrorCode::AuthenticationFailed, "no authenticated connection")));
                     return;
                 }
-                if (!s.next_transfer_) {
+                auto random=s.NewId();
+                if (!random) {
                     if (source.content.stream) source.content.stream->Close();
                     ticket.Complete(Result<TransferId>::Failure(
-                        ServiceError(ErrorCode::ResourceLimit, "transfer handles exhausted")));
+                        ServiceError(ErrorCode::ResourceLimit, "random transfer ID unavailable")));
                     return;
                 }
-                auto id = s.NewId();
+                auto id = *random;
                 auto key = id.ToString();
                 s.transfers_.emplace(key, Transfer{*c, {}, id, 0, false, ticket});
                 s.offering_ = key;
@@ -174,7 +173,7 @@ class TransferService final : public ITransferService,
                     return;
                 }
                 PublicEvent(r, s.progress_, TransferProgress{id, 0, source.content.byte_count});
-                auto local = s.engines_.at(*c).engine->Offer(std::move(source));
+                auto local = s.engines_.at(*c).engine->Offer(std::move(source), id);
                 s.offering_.reset();
                 auto i = s.transfers_.find(key);
                 if (i != s.transfers_.end())

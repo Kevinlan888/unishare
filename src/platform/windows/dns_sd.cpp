@@ -146,6 +146,10 @@ struct DnsSd::State : std::enable_shared_from_this<State> {
   if(stopped)return;
   auto interfaces=api->Interfaces();if(!interfaces.ok()){found(Result<ServiceRecord>::Failure(interfaces.error()));return;}
   if(interfaces.value().empty()){found(Result<ServiceRecord>::Failure(DnsError("no multicast interface",ERROR_NETWORK_UNREACHABLE)));return;}
+  // DnsServiceBrowse requires the service query without its presentation root
+  // dot on Windows. Live Android answers reached this host but produced no
+  // callback with the trailing dot; the same query without it succeeded.
+  if(!service.empty()&&service.back()=='.')service.pop_back();
   for(auto index:interfaces.value()){
    auto c=Make(Kind::Browse);c->interfaceIndex=index;c->found=found;c->removed=removed;
    try{c->name=Wide(service);}catch(const ShareError& e){Finish(c);found(Result<ServiceRecord>::Failure(e));continue;}

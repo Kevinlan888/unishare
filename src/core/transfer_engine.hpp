@@ -12,7 +12,7 @@ public:
  using ResultHandler=std::function<void(TransferResult)>;
  static std::shared_ptr<TransferEngine> Create(std::shared_ptr<Session>,ISessionScheduler&,SessionAdmission&,SdkConfig,OfferHandler,ProgressHandler,ResultHandler,std::shared_ptr<ISessionScheduler> scheduler_owner = {});
  ~TransferEngine();
- TransferId Offer(ContentSource);
+ TransferId Offer(ContentSource, std::optional<TransferId> = {});
  void Accept(TransferId,ContentSink);void Reject(TransferId);void Cancel(TransferId);
  // Internal SDK observers run synchronously on the core queue, before public
  // delivery. Install before Offer; terminal operation arbitration must never

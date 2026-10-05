@@ -43,10 +43,11 @@ struct Pair {
  Factory a_factory,b_factory; SessionAdmission a_limit,b_limit; std::shared_ptr<Socket> ax,bx;
  SessionAdmission* external_b_limit=nullptr;std::string source="192.0.2.1";
  std::shared_ptr<Session> a,b; std::vector<SessionEvent> ae,be;
+ std::function<void(const SessionEvent&)> b_event;
  Pair():a_id(IdentityManager::LoadOrCreate(a_store).value()),b_id(IdentityManager::LoadOrCreate(b_store).value()){}
  void Start(bool default_executor=false){ae.clear();be.clear();ax=std::make_shared<Socket>(q);bx=std::make_shared<Socket>(q);ax->peer=bx;bx->peer=ax;bx->source=source;a_factory.socket=ax;
  auto executor=default_executor?std::shared_ptr<IExecutor>{}:std::shared_ptr<IExecutor>(&q,[](IExecutor*){});
- a=std::make_shared<Session>(a_id,a_trust,a_factory,q,a_limit,executor,[this](auto e){ae.push_back(e);});b=std::make_shared<Session>(b_id,b_trust,b_factory,q,external_b_limit?*external_b_limit:b_limit,executor,[this](auto e){be.push_back(e);});
+ a=std::make_shared<Session>(a_id,a_trust,a_factory,q,a_limit,executor,[this](auto e){ae.push_back(e);});b=std::make_shared<Session>(b_id,b_trust,b_factory,q,external_b_limit?*external_b_limit:b_limit,executor,[this](auto e){be.push_back(e);if(b_event)b_event(e);});
  b->Accept(bx);DeviceInfo d;d.id=b_id.material.id;d.addresses={"192.0.2.1"};d.port=1234;a->Connect(d);q.Run();}
  void ConfirmA(bool yes=true){CHECK(!ae.empty());a->ConfirmPairing(ae.front().request,yes);q.Run();}
  void ConfirmB(bool yes=true){CHECK(!be.empty());b->ConfirmPairing(be.front().request,yes);q.Run();}
@@ -225,7 +226,9 @@ void SmallCompletionIsConsumedBeforeClose(){
 void ContentRacesLocalPairingFlush(){
  for(int outcome=0;outcome<4;++outcome){
  Pair p;p.Start();int delivered=0;
- p.b->SetContentHandler([&](auto,auto ack){++delivered;ack(Result<void>::Success());},[](auto){});
+ // The public SDK attaches its transfer engine in the queued Connected event.
+ p.b_event=[&](const SessionEvent& e){if(e.kind==SessionEvent::Kind::Connected)
+  p.b->SetContentHandler([&](auto,auto ack){++delivered;ack(Result<void>::Success());},[](auto){});};
  p.ConfirmA();p.bx->hold_writes=true;p.ConfirmB();CHECK(p.a->Connected()&&!p.b->Connected());
  p.a->SendContent(protocol::Data{},[](auto result){CHECK(result.ok());});p.q.Run();
  CHECK(delivered==0&&p.b_store.trust.empty()&&p.be.size()==1&&p.bx->held_write);

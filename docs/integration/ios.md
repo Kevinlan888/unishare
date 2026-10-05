@@ -115,7 +115,23 @@ The network host creates two independent Keychain identities inside one foregrou
 
 The clipboard subset first writes UTF-8/NUL text and a valid PNG using the public API, then exits the writer process. Each run uses fresh opaque pixel values and saves the expected decoded pixels for the next process. A separately launched reader compares all four pixels and consumes that expectation, so an image left by an earlier run cannot satisfy the check. Logs include both process IDs. This goes beyond immediate same-process readback but uses the same application bundle; it does not exercise another app's paste-consent prompt.
 
-The background case posts UIKit lifecycle notifications and verifies that Stop cancels pending transfers on both peers, denied background Start, that the foreground notification alone leaves both SDKs stopped, and explicit foreground restart. It does not claim actual OS suspension. Failure cases match terminal events to the sender's initial progress transfer ID and completion error; terminal ID sets must contain exactly the expected transfers. Receiver-initiated cancellation reports local `cancelled` while the sender observes `networkLost` after the TLS socket closes; the raw OS status can vary. The permission mode removes the Bonjour declaration and expects `permissionDenied`; an actual OS local-network grant/denial requires a signed physical host. Physical iPhone execution, external document-provider URLs, locked Keychain and Windows/Android interoperability remain pending.
+The background case posts UIKit lifecycle notifications and verifies Stop cancels
+pending transfers on both peers, denied background Start, that foreground alone
+leaves both SDKs stopped, and explicit restart. It does not claim actual OS
+suspension. Terminal event IDs/errors match operation results. Receiver Cancel
+reports local `cancelled`; the sender observes `networkLost` after TLS closes.
+The permission mode removes the Bonjour declaration and expects `permissionDenied`;
+an actual OS grant/denial requires a signed physical host.
+
+The signed iPhone SE3 (iOS 17.6.1) public acceptance `network` run passed Bonjour,
+TLS/SAS, consent, content, rejection, cancellation/cleanup, trust and lifecycle
+checks through CoreDevice. Its clipboard follow-up and cross-platform interop
+launch remain blocked while the phone is locked. Independent public XCFramework
+hosts pass Windows↔iOS Simulator and physical Pixel↔iOS Simulator; see the
+[matrix](../../tests/interop/matrix.md). External document-provider URLs and locked
+Keychain behavior remain outside measured acceptance. UIKit may re-encode clipboard
+images; public interop verifies decoded sRGB RGBA pixels and exact transmitted
+readback bytes, while ordinary image fixtures keep exact encoded-byte hashes.
 
 For a connected iPhone, stage the same host as an Xcode project:
 

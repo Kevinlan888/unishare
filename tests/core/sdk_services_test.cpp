@@ -254,6 +254,15 @@ struct Socket : ISocket {
     ResultCallback<std::vector<std::uint8_t>> reader;
     std::size_t requested = 0;
     bool closed = false, eof = false;
+    bool hold_writes = false;
+    ResultCallback<void> held_write;
+    void HoldWrites() { std::lock_guard<std::mutex> l(mutex); hold_writes = true; }
+    bool HasHeldWrite() { std::lock_guard<std::mutex> l(mutex); return bool(held_write); }
+    void CompleteHeld() {
+        ResultCallback<void> cb;
+        { std::lock_guard<std::mutex> l(mutex); hold_writes = false; cb = std::exchange(held_write, {}); }
+        CHECK(cb); cb(Result<void>::Success());
+    }
     std::string RemoteEndpoint() const override { return "192.0.2.9"; }
     void Deliver() {
         ResultCallback<std::vector<std::uint8_t>> cb;
@@ -290,6 +299,8 @@ struct Socket : ISocket {
             p->bytes.insert(p->bytes.end(), b.begin(), b.end());
         }
         p->Deliver();
+        { std::lock_guard<std::mutex> l(mutex);
+          if (hold_writes) { CHECK(!held_write); held_write = std::move(cb); return 1; } }
         cb(Result<void>::Success());
         return 1;
     }
@@ -348,6 +359,7 @@ struct Peer {
     std::vector<IncomingOffer> offers;
     std::vector<TransferResult> results;
     std::vector<DiscoveryEvent> discovery;
+    std::shared_ptr<Socket> incoming_socket;
     explicit Peer(std::uint32_t limit = 8) {
         Initialize(sdk, q, limit);
         CHECK(sdk.Connections() && sdk.Transfers());
@@ -377,6 +389,7 @@ struct Peer {
             auto a = std::make_shared<Socket>(), b = std::make_shared<Socket>();
             a->peer = b;
             b->peer = a;
+            peer.incoming_socket = b;
             peer.p.sockets.incoming(Result<std::shared_ptr<ISocket>>::Success(b));
             cb(Result<std::shared_ptr<ISocket>>::Success(a));
         };
@@ -409,6 +422,31 @@ void Connect(Peer &a, Peer &b) {
     CHECK(a.sdk.Discovery()->GetDevices()[0].paired);
 }
 // Missing consent gates, receipt confirmation, or global request routing fail here.
+void ContentBeforePublicConnectionHandlerAttaches() {
+    Peer a, b;
+    a.Discover(b); a.Wire(b);
+    int connected = 0, sent = 0;
+    a.sdk.Connections()->Connect(b.Id(), [&](auto r) { CHECK(r.ok()); ++connected; });
+    Settle(a, b);
+    CHECK(a.pairing.size() == 1 && b.pairing.size() == 1);
+    a.sdk.Connections()->ConfirmPairing(a.pairing.back().id, true, [](auto r) { CHECK(r.ok()); });
+    Settle(a, b);
+    b.incoming_socket->HoldWrites();
+    b.sdk.Connections()->ConfirmPairing(b.pairing.back().id, true, [](auto r) { CHECK(r.ok()); });
+    Settle(a, b);
+    CHECK(connected == 1 && b.incoming_socket->HasHeldWrite() && b.paired.empty());
+    a.sdk.Transfers()->SendText(b.Id(), "early offer", [&](auto r) { CHECK(r.ok()); ++sent; });
+    Settle(a, b);
+    CHECK(b.offers.empty() && b.p.store.trusted.empty() && b.results.empty());
+    b.incoming_socket->CompleteHeld();
+    Settle(a, b);
+    CHECK(b.paired.size() == 1 && b.offers.size() == 1 && sent == 0);
+    auto destination = std::make_shared<Memory>();
+    b.sdk.Transfers()->Accept(b.offers.front().request_id, destination, [](auto r) { CHECK(r.ok()); });
+    Settle(a, b);
+    CHECK(sent == 1 && destination->bytes == std::vector<std::uint8_t>({'e','a','r','l','y',' ','o','f','f','e','r'}));
+    CHECK(a.results.size() == 1 && b.results.size() == 1);
+}
 void ConnectionAndTransfers() {
     Peer a, b;
     Connect(a, b);
@@ -902,7 +940,25 @@ void StreamedTextCapacity() {
     a.sdk.Transfers()->SendTextStream({}, {"", "", 0, source}, [&](auto r){CHECK(!r.ok());++calls;});
     Pump(a.sdk,a.q); CHECK(calls==1&&source->closed);
 }
+void PublicTransferIds() {
+    std::vector<TransferId> observed;
+    for(int run=0;run<2;++run) {
+        Peer a,b; Connect(a,b);
+        TransferId progress{}, completed{};
+        a.sdk.Transfers()->SetProgressHandler([&](auto event){progress=event.id;});
+        a.sdk.Transfers()->SendText(b.Id(), "id", [&](auto result){CHECK(result.ok());completed=result.value();});
+        Settle(a,b); CHECK(b.offers.size()==1);
+        CHECK(progress==b.offers.back().transfer_id);
+        CHECK(std::any_of(progress.bytes.begin(),progress.bytes.begin()+8,[](auto b){return b!=0&&b!=0x75;}));
+        b.sdk.Transfers()->Accept(b.offers.back().request_id,std::make_shared<Memory>(),[](auto r){CHECK(r.ok());});
+        Settle(a,b);
+        CHECK(completed==progress&&a.results.back().id==completed&&b.results.back().id==completed);
+        observed.push_back(completed);
+    }
+    CHECK(observed[0]!=observed[1]);
+}
 int main(int argc, char **argv) {
+    if(argc>1&&std::string(argv[1])=="transfer-ids") { PublicTransferIds(); return 0; }
     if(argc>1&&std::string(argv[1])=="text-capacity") { StreamedTextCapacity(); return 0; }
     if (argc > 1 && std::string(argv[1]) == "retained-budget") {
         RetainedContentBudget();
@@ -929,6 +985,8 @@ int main(int argc, char **argv) {
         return 0;
     }
     StreamedTextCapacity();
+    ContentBeforePublicConnectionHandlerAttaches();
+    PublicTransferIds();
     ClipboardContract();
     ConnectionAndTransfers();
     ReceiptBeforeStop();

@@ -91,6 +91,10 @@ void DnsTests(){
  dns.BrowseEvents("_share._tcp.local.",[&](auto r){std::lock_guard<std::mutex> l(eventsMutex);if(r.ok())found.push_back(r.value());else errors.push_back(r.error());eventChanged.notify_all();},[&](auto id){std::lock_guard<std::mutex> l(eventsMutex);removed.push_back(id);eventChanged.notify_all();});
  auto waitEvents=[&](auto predicate){std::unique_lock<std::mutex> l(eventsMutex);CHECK(eventChanged.wait_for(l,std::chrono::seconds(3),predicate));};
  native->Wait([&]{return native->browses.size()==2;});CHECK(native->browses[0].request.InterfaceIndex==7);CHECK(native->browses[1].request.InterfaceIndex==12);
+ // Keep the public DNS-SD presentation name canonical, but submit the native
+ // browse query without the final dot so Windows reports non-Windows peers.
+ CHECK(std::wstring(native->browses[0].request.QueryName)==L"_share._tcp.local");
+ CHECK(std::wstring(native->browses[1].request.QueryName)==L"_share._tcp.local");
  native->Ptr(0,120);native->Ptr(1,120);native->Wait([&]{return native->resolves.size()==2;});native->Resolved(0);native->Resolved(1);waitEvents([&]{return found.size()==2;});
  {std::lock_guard<std::mutex> l(eventsMutex);CHECK(found[0].interface_id=="7");CHECK(found[1].interface_id=="12");CHECK(found[0].srv_target=="peer-host.local.");CHECK(found[0].port==4321);CHECK(found[0].addresses==std::vector<std::string>({"127.0.0.1","fe80::42%7"}));CHECK(found[0].txt[1].second=="Peer 世界");CHECK(!found[0].txt_bytes.empty());}
  native->Ptr(0,120);native->Wait([&]{return native->resolves.size()==3;});native->Ptr(0,0);waitEvents([&]{return removed.size()==1;});native->Resolved(2);

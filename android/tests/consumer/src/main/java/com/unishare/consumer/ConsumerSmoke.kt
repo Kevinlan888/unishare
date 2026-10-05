@@ -18,16 +18,18 @@ class ConsumerSmoke : Instrumentation() {
         try {
             val callbacks = Executors.newSingleThreadExecutor { Thread(it, "consumer-host-executor") }
             try { ShareSdk(targetContext, "release-consumer", callbacks).use { sdk ->
-                check(sdk.initialize(SdkConfig("Release Kotlin consumer 世界")).result.get(15, TimeUnit.SECONDS).isSuccess)
-                check(sdk.state == SdkState.INITIALIZED)
-                check(sdk.discovery.devices().isEmpty())
-                check(sdk.connections.trustedDevices().isEmpty())
+                val initialized = sdk.initialize(SdkConfig("Release Kotlin consumer 世界")).result.get(15, TimeUnit.SECONDS)
+                check(initialized.isSuccess) { "initialize: ${initialized.error}" }
+                check(sdk.state == SdkState.INITIALIZED) { "initialized state: ${sdk.state}" }
+                check(sdk.discovery.devices().isEmpty()) { "initial discovery" }
+                check(sdk.connections.trustedDevices().isEmpty()) { "initial trust" }
                 val browsing = java.util.concurrent.CountDownLatch(1)
                 val observer = sdk.discovery.observe { event ->
                     check(Thread.currentThread().name == "consumer-host-executor")
                     if (event is DiscoveryEvent.State && event.state == DiscoveryState.BROWSING) browsing.countDown()
                 }
-                check(sdk.start().result.get(15, TimeUnit.SECONDS).error?.category == ErrorCategory.PERMISSION_DENIED)
+                val background = sdk.start().result.get(15, TimeUnit.SECONDS)
+                check(background.error?.category == ErrorCategory.PERMISSION_DENIED) { "background start: ${background.error}" }
                 sdk.setForeground(true)
                 if (Build.VERSION.SDK_INT >= 37 && targetContext.applicationInfo.targetSdkVersion >= 37 &&
                     targetContext.checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) {
@@ -36,9 +38,11 @@ class ConsumerSmoke : Instrumentation() {
                     output.putString("stream", "PASS minified release AAR consumer JNI lifecycle: actual target37 LAN denied\n")
                     finish(-1, output); return
                 }
-                check(sdk.start().result.get(15, TimeUnit.SECONDS).isSuccess)
-                check(browsing.await(15, TimeUnit.SECONDS))
-                check(sdk.stop().result.get(15, TimeUnit.SECONDS).isSuccess)
+                val started = sdk.start().result.get(15, TimeUnit.SECONDS)
+                check(started.isSuccess) { "foreground start: ${started.error}" }
+                check(browsing.await(15, TimeUnit.SECONDS)) { "browsing callback" }
+                val stopped = sdk.stop().result.get(15, TimeUnit.SECONDS)
+                check(stopped.isSuccess) { "stop: ${stopped.error}" }
                 observer.close()
                 check(sdk.stop().result.get(15, TimeUnit.SECONDS).isSuccess)
             } } finally { callbacks.shutdownNow() }
