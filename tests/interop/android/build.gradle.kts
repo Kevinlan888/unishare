@@ -4,7 +4,7 @@ android {
     compileSdk = 36
     defaultConfig { applicationId = "com.unishare.interop"; minSdk = 26; targetSdk = 36 }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    sourceSets.getByName("main").assets.srcDir("../build-fixtures")
+    sourceSets.getByName("main").assets.directories.add("../build-fixtures")
 }
 dependencies {
     implementation(files(providers.gradleProperty("consumedAar").get()))

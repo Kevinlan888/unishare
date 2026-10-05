@@ -23,6 +23,7 @@ if ($Build) {
 # A fresh run isolates SDK identity and logs. This alters only the test app.
 $interopArguments = @('-s',$Serial,'shell','am','instrument','-w','-r','-e','role',$Role,'-e','run',$Run,'-e','peer',$Peer,'-e','testConsent','true','com.unishare.interop/.InteropHost')
 $process = Start-Process -FilePath $adb -ArgumentList $interopArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput "$out/android-console.log" -RedirectStandardError "$out/android-error.log"
+$hostFailure = $null
 try {
     if (!$process.WaitForExit(240000)) {
         & $adb -s $Serial shell am force-stop com.unishare.interop
@@ -32,6 +33,15 @@ try {
     $console = Get-Content -Raw "$out/android-console.log"
     $console | Write-Output
     if ($process.ExitCode -ne 0 -or !$console.Contains('INTEROP_PASS') -or !$console.Contains('INSTRUMENTATION_CODE: -1')) { throw 'Android host failed' }
-} finally {
-    & $adb -s $Serial shell run-as com.unishare.interop cat "files/$Run-$Role.jsonl" | Set-Content -Encoding utf8 "$out/android.jsonl"
+} catch {
+    $hostFailure = $_
 }
+try {
+    $records = & $adb -s $Serial shell run-as com.unishare.interop cat "files/$Run-$Role.jsonl" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Android evidence retrieval failed (adb exit $LASTEXITCODE): $records" }
+    $records | Set-Content -Encoding utf8 "$out/android.jsonl"
+} catch {
+    if ($null -eq $hostFailure) { throw }
+    Write-Warning "Evidence retrieval also failed: $_"
+}
+if ($null -ne $hostFailure) { throw $hostFailure }

@@ -25,6 +25,11 @@ def error(row):
     return {"TRANSFER_REJECTED": "7"}.get(str(value), str(value))
 
 
+def platform(value):
+    key = str(value).lower()
+    return {"0": "windows", "1": "android", "2": "ios", "ios-simulator": "ios"}.get(key, key)
+
+
 def verify(sender, receiver, manifest):
     check(sender and receiver, "two peers are required")
     sas = [one(rows, "pairing").get("sas", "") for rows in (sender, receiver)]
@@ -32,13 +37,18 @@ def verify(sender, receiver, manifest):
     begins = [one(rows, "begin") for rows in (sender, receiver)]
     check(begins[0]["role"] == "sender" and begins[1]["role"] == "receiver", "roles")
     check(begins[0]["run"] == begins[1]["run"], "different runs")
-    check(begins[0]["platform"] != begins[1]["platform"], "cross-platform peers required")
+    check(platform(begins[0]["platform"]) != platform(begins[1]["platform"]), "cross-platform peers required")
     for index, rows in enumerate((sender, receiver)):
+        local, remote = begins[index], begins[1-index]
+        check(local.get("sdkPlatform") in ("windows", "android", "ios") and
+              platform(local["platform"]) == local["sdkPlatform"], "local platform metadata")
+        check(local.get("expectedPeer") == remote["name"], "reciprocal expected name")
         check(not select(rows, "failure") and not select(rows, "duplicate_operation"), "host failure")
         check(all(r.get("run") == begins[0]["run"] and r.get("role") == begins[index]["role"] for r in rows), "mixed log")
         check(int(one(rows, "complete")["terminals"]) == 7, "host did not complete seven transfers")
         discovered = one(rows, "discovered")
         check(discovered["name"] == begins[1-index]["name"], "wrong discovered name")
+        check(platform(discovered.get("platform")) == remote.get("sdkPlatform"), "discovered platform mismatch")
         check(discovered["protocol"] == "1.0" and discovered["addresses"] and 0 < int(discovered["port"]) < 65536, "discovery metadata")
         pairing = one(rows, "pairing")
         check(pairing["id"] == discovered["id"] and pairing["decision"] == "confirm", "pairing peer or decision")
@@ -69,9 +79,18 @@ def verify(sender, receiver, manifest):
     rejected = rejects[0]["id"]
     check({r["id"] for r in offers} == expected_ids | {rejected}, "unexpected offer")
     check({r["id"] for r in consent} == expected_ids | {rejected}, "missing decision")
+    completions = [r for r in select(receiver, "operation") if r["operation"] in ("accept", "reject")]
+    check(len(completions) == 7, "seven public decision completions required")
+    check(len({str(r.get("requestId")) for r in offers}) == 7, "offer request IDs must be unique")
     for decision in consent:
         check(decision["decision"] == ("reject" if decision["id"] == rejected else "accept"), "wrong receiving decision")
         offer = next(r for r in offers if r["id"] == decision["id"])
+        request = str(offer.get("requestId", ""))
+        check(request.isdigit() and int(request) > 0 and str(decision.get("requestId")) == request, "decision request mismatch")
+        completion = [r for r in completions if r.get("id") == decision["id"] and
+                      str(r.get("requestId")) == request and r["operation"] == decision["decision"]]
+        check(len(completion) == 1 and error(completion[0]) == "", "public decision completion missing or mismatched")
+        check(receiver.index(decision) < receiver.index(completion[0]), "completion before public decision")
         check(receiver.index(offer) < receiver.index(decision), "decision before offer")
     for rows in (sender, receiver):
         check({r["id"] for r in select(rows, "terminal")} == expected_ids | {rejected}, "terminal ID mismatch")
@@ -82,7 +101,8 @@ def verify(sender, receiver, manifest):
             decision = next(r for r in consent if r["id"] == row["id"])
             check(receiver.index(decision) < index, "content/terminal before explicit consent")
     return {"status": "PASS", "run": begins[0]["run"], "direction": f'{begins[0]["platform"]}->{begins[1]["platform"]}',
-            "sas": sas[0], "successes": 6, "rejections": 1, "transfer_ids": sorted(expected_ids | {rejected})}
+            "sas": sas[0], "successes": 6, "rejections": 1, "transfer_ids": sorted(expected_ids | {rejected}),
+            "identity_scope": "remote_pairing_matches_same_host_discovery; no reciprocal local DeviceId binding"}
 
 
 def read(path):

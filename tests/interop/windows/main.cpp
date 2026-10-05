@@ -36,11 +36,11 @@ std::string Hash(const std::string& data){
  if(hash)BCryptDestroyHash(hash);BCryptCloseAlgorithmProvider(alg,0);Require(status==0,"sha256");
  std::string result;const char* h="0123456789abcdef";for(auto b:digest){result+=h[b>>4];result+=h[b&15];}return result;
 }
-template<class T,class F> std::future<Result<T>> Submit(std::string name,F f){
+template<class T,class F> std::future<Result<T>> Submit(std::string name,F f,RequestId request=0,std::string transfer=""){
  auto promise=std::make_shared<std::promise<Result<T>>>();auto future=promise->get_future();auto count=std::make_shared<std::atomic<int>>(0);
  {std::lock_guard<std::mutex> lock(stateMutex);callbacks.push_back(count);}
- f([promise,count,name](auto r){if(++*count!=1){failed=true;Log("duplicate_operation",{{"operation",name}});return;}
-  Log("operation",{{"operation",name},{"error",r.ok()?"":std::to_string((int)r.error().code)}});promise->set_value(std::move(r));});return future;
+ f([promise,count,name,request,transfer](auto r){if(++*count!=1){failed=true;Log("duplicate_operation",{{"operation",name}});return;}
+  Log("operation",{{"operation",name},{"requestId",std::to_string(request)},{"id",transfer},{"error",r.ok()?"":std::to_string((int)r.error().code)}});promise->set_value(std::move(r));});return future;
 }
 template<class T> Result<T> Wait(std::future<Result<T>>& f){Require(f.wait_for(std::chrono::seconds(35))==std::future_status::ready,"operation timeout");return f.get();}
 template<class T,class F> Result<T> Await(std::string name,F f){auto v=Submit<T>(name,f);return Wait(v);}
@@ -54,7 +54,7 @@ int main(int argc,char** argv){try{
  Require(argc==7,"usage: interop sender|receiver RUN PEER_NAME ABS_FIXTURES ABS_STATE --test-consent");
  role=argv[1];run=argv[2];std::string expected=argv[3];Require(role=="sender"||role=="receiver","role");Require(std::string(argv[6])=="--test-consent","explicit test consent required");
  auto fixtures=std::filesystem::u8path(argv[4]), root=std::filesystem::u8path(argv[5]);Require(root.is_absolute()&&fixtures.is_absolute(),"absolute paths required");std::filesystem::create_directories(root);
- Log("begin",{{"platform","windows"},{"name","interop-"+run+"-"+role}});
+ Log("begin",{{"platform","windows"},{"sdkPlatform","windows"},{"expectedPeer",expected},{"name","interop-"+run+"-"+role}});
  SdkConfig config;config.device_name="interop-"+run+"-"+role;config.request_timeout=std::chrono::seconds(30);
  WindowsOptions options;options.identity_directory=root/"identity";
  std::optional<DeviceInfo> peer;std::atomic<int> offered{0};
@@ -73,15 +73,15 @@ int main(int argc,char** argv){try{
   Require(role=="receiver","unexpected offer on sender");bool known=false;
   for(auto d:sdk->Discovery()->GetDevices())if(d.id==o.device_id&&d.name==expected)known=true;
   Require(known,"unexpected peer");int index=offered++;
-  Log("offer",{{"id",o.transfer_id.ToString()},{"kind",std::to_string((int)o.content_type)},{"size",std::to_string(o.byte_count)}});
-  if(index==6){Log("consent",{{"id",o.transfer_id.ToString()},{"decision","reject"}});Submit<void>("reject",[&](auto cb){sdk->Transfers()->Reject(o.request_id,cb);});return;}
+  Log("offer",{{"id",o.transfer_id.ToString()},{"requestId",std::to_string(o.request_id)},{"kind",std::to_string((int)o.content_type)},{"size",std::to_string(o.byte_count)}});
+  if(index==6){Log("consent",{{"id",o.transfer_id.ToString()},{"requestId",std::to_string(o.request_id)},{"decision","reject"}});Submit<void>("reject",[&](auto cb){sdk->Transfers()->Reject(o.request_id,cb);},o.request_id,o.transfer_id.ToString());return;}
   Require(index<6,"extra offer");auto expectedBytes=Read(fixtures/names[index]);
   Require(o.byte_count==expectedBytes.size(),"offer size");
   Require(o.content_type==(index==0||index==5?ContentType::Text:index<3?ContentType::Image:ContentType::File),"offer kind");
   auto path=root/("received-"+std::to_string(index));
   {std::lock_guard<std::mutex> lock(stateMutex);received.emplace(o.transfer_id.ToString(),std::make_pair(path,names[index]));}
-  auto stream=Stream(path,true);Log("consent",{{"id",o.transfer_id.ToString()},{"decision","accept"}});
-  Submit<void>("accept",[&](auto cb){sdk->Transfers()->Accept(o.request_id,stream,cb);});
+  auto stream=Stream(path,true);Log("consent",{{"id",o.transfer_id.ToString()},{"requestId",std::to_string(o.request_id)},{"decision","accept"}});
+  Submit<void>("accept",[&](auto cb){sdk->Transfers()->Accept(o.request_id,stream,cb);},o.request_id,o.transfer_id.ToString());
  }catch(const std::exception& e){failed=true;Log("failure",{{"message",e.what()}});}});
  sdk->Transfers()->SetProgressHandler([](auto p){Log("progress",{{"id",p.id.ToString()},{"bytes",std::to_string(p.transferred)},{"size",std::to_string(p.total)}});});
  sdk->Transfers()->SetResultHandler([&](auto r){try{

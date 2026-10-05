@@ -33,14 +33,14 @@ private final class Host {
         var row=fields; row["event"]=event; row["role"]=role; row["run"]=run
         if let data=try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]), let line=String(data:data,encoding:.utf8) { print(line); fflush(stdout) }
     }
-    @discardableResult private func submit(_ name: String, _ body: (@escaping (OperationResult)->Void)->UInt64) -> Pending {
+    @discardableResult private func submit(_ name: String, request: UInt64 = 0, transfer: String = "", _ body: (@escaping (OperationResult)->Void)->UInt64) -> Pending {
         let pending=Pending(); operationLock.lock(); operations.append(pending); operationLock.unlock()
         _ = body { result in
-            self.log("operation", ["operation":name, "operationId":result.operationId, "error": result.error.map { String($0.category.rawValue) } ?? ""])
+            self.log("operation", ["operation":name, "operationId":result.operationId, "requestId":request, "id":transfer, "error": result.error.map { String($0.category.rawValue) } ?? ""])
             pending.receive(result)
         }; return pending
     }
-    @discardableResult private func ok(_ name: String, _ body: (@escaping (OperationResult)->Void)->UInt64) throws -> OperationResult { try submit(name,body).wait() }
+    @discardableResult private func ok(_ name: String, request: UInt64 = 0, transfer: String = "", _ body: (@escaping (OperationResult)->Void)->UInt64) throws -> OperationResult { try submit(name,request:request,transfer:transfer,body).wait() }
     private func snapshot() -> [ShareEvent] { eventLock.lock(); defer { eventLock.unlock() }; return events }
     private func next(_ predicate: (ShareEvent)->Bool, after: Int = 0, timeout: TimeInterval = 60) throws -> ShareEvent {
         let end=Date().addingTimeInterval(timeout)
@@ -50,13 +50,12 @@ private final class Host {
     private func bytes(_ name: String) throws -> Data { try Data(contentsOf: Bundle.main.bundleURL.appendingPathComponent("fixtures/"+name)) }
     private func hash(_ data: Data) -> String { SHA256.hash(data:data).map { String(format:"%02x", $0) }.joined() }
     func execute() throws {
-        log("begin", ["platform":"ios-simulator", "name":"interop-\(run)-\(role)", "os":ProcessInfo.processInfo.operatingSystemVersionString])
+        log("begin", ["platform":"ios-simulator", "sdkPlatform":"ios", "expectedPeer":expected, "name":"interop-\(run)-\(role)", "os":ProcessInfo.processInfo.operatingSystemVersionString])
         let sdk=ShareSdk(keychainService:"com.unishare.interop.\(run).\(role)")
         defer { sdk.close() }
         var config=SdkConfig(deviceName:"interop-\(run)-\(role)"); config.requestTimeoutSeconds=30
         try ok("initialize") { sdk.initialize(config,completion:$0) }
         let observer: (ShareEvent)->Void = { event in
-            self.eventLock.lock(); self.events.append(event); self.eventLock.unlock()
             switch event {
             case .pairingRequest(let peer,let request,let sas):
                 let match=peer.name == self.expected
@@ -64,11 +63,13 @@ private final class Host {
                 self.submit("confirm") { sdk.connections.confirmPairing(request,codeMatches:match,completion:$0) }
             case .online(let peer): self.log("discovery",["id":peer.id.uuidString.lowercased(),"name":peer.name])
             case .discoveryError(let error): self.log("discovery_error",["error":String(describing:error)])
-            case .incomingOffer(_,_,let id,let kind,_,_,let size): self.log("offer",["id":id.uuidString.lowercased(),"kind":kind.rawValue,"size":size])
+            case .incomingOffer(_,let request,let id,let kind,_,_,let size): self.log("offer",["id":id.uuidString.lowercased(),"requestId":request,"kind":kind.rawValue,"size":size])
             case .progress(let id,let count,let size): self.log("progress",["id":id.uuidString.lowercased(),"bytes":count,"size":size])
             case .transferResult(let id,let error): self.log("terminal",["id":id.uuidString.lowercased(),"error":error.map { String($0.category.rawValue) } ?? ""])
             default: break
             }
+            // Publish only after evidence is written: the worker may act immediately.
+            self.eventLock.lock(); self.events.append(event); self.eventLock.unlock()
         }
         let observations=[sdk.discovery.observe(observer),sdk.connections.observe(observer),sdk.transfers.observe(observer)]
         defer { observations.forEach { $0.close() } }
@@ -105,14 +106,14 @@ private final class Host {
                 try require(remote.id == peer.id,"unexpected peer")
                 let sink=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                 try require(!FileManager.default.fileExists(atPath:sink.path),"fresh staging")
-                if index == 6 { log("consent",["id":id.uuidString.lowercased(),"decision":"reject"]); try ok("reject") { sdk.transfers.reject(request,completion:$0) } }
+                if index == 6 { log("consent",["id":id.uuidString.lowercased(),"requestId":request,"decision":"reject"]); try ok("reject",request:request,transfer:id.uuidString.lowercased()) { sdk.transfers.reject(request,completion:$0) } }
                 else {
                     let expectedBytes=try bytes(names[index])
                     try require(count == expectedBytes.count,"offer size")
                     try require(type == (index == 0 || index == 5 ? .text : index < 3 ? .image : .file),"offer type")
                     try require(FileManager.default.createFile(atPath:sink.path,contents:Data()),"staging create")
-                    log("consent",["id":id.uuidString.lowercased(),"decision":"accept"])
-                    try ok("accept") { sdk.transfers.accept(request,stagingURL:sink,completion:$0) }
+                    log("consent",["id":id.uuidString.lowercased(),"requestId":request,"decision":"accept"])
+                    try ok("accept",request:request,transfer:id.uuidString.lowercased()) { sdk.transfers.accept(request,stagingURL:sink,completion:$0) }
                 }
                 let terminal=try next { if case .transferResult(let t,_)=$0 { return t == id }; return false }
                 guard case .transferResult(_,let error)=terminal else { throw HostFailure(message:"terminal") }

@@ -24,21 +24,23 @@ class EvidenceTests(unittest.TestCase):
         def add(index, event, **fields):
             logs[index].append(dict(event=event, run="unit", role=["sender", "receiver"][index], **fields))
         for index in (0, 1):
-            add(index, "begin", platform=["android", "ios-simulator"][index], name=["a", "b"][index])
-            add(index, "discovered", id=["peer-b", "peer-a"][index], name=["b", "a"][index], protocol="1.0", addresses="192.0.2.1", port=12345)
+            add(index, "begin", platform=["android", "ios-simulator"][index], sdkPlatform=["android", "ios"][index], name=["a", "b"][index], expectedPeer=["b", "a"][index])
+            add(index, "discovered", id=["peer-b", "peer-a"][index], name=["b", "a"][index], platform=["IOS", 1][index], protocol="1.0", addresses="192.0.2.1", port=12345)
             add(index, "pairing", id=["peer-b", "peer-a"][index], sas="012345", decision="confirm")
             add(index, "operation", operation="confirm", error="")
         add(0, "clipboard", decision="explicit_read_send")
         for index, fixture in enumerate(manifest):
             transfer = f"transfer-{index}"
-            add(1, "offer", id=transfer, kind=fixture["kind"], size=fixture["size"])
-            add(1, "consent", id=transfer, decision="accept")
+            add(1, "offer", id=transfer, requestId=index+10, kind=fixture["kind"], size=fixture["size"])
+            add(1, "consent", id=transfer, requestId=index+10, decision="accept")
+            add(1, "operation", operation="accept", id=transfer, requestId=index+10, error="")
             for side in (0, 1):
                 add(side, "terminal", id=transfer, error="")
             for side, event in ((0, "sent"), (1, "received")):
                 add(side, event, id=transfer, **{k: fixture[k] for k in ("name", "size", "sha256")})
-        add(1, "offer", id="rejected", kind="text", size=6)
-        add(1, "consent", id="rejected", decision="reject")
+        add(1, "offer", id="rejected", requestId=20, kind="text", size=6)
+        add(1, "consent", id="rejected", requestId=20, decision="reject")
+        add(1, "operation", operation="reject", id="rejected", requestId=20, error="")
         for side in (0, 1):
             add(side, "terminal", id="rejected", error="7")
             add(side, "complete", terminals=7)
@@ -66,6 +68,44 @@ class EvidenceTests(unittest.TestCase):
                 logs, manifest = self.valid_records(); mutate(*logs)
                 with self.assertRaises(ValueError):
                     evidence.verify(*logs, manifest)
+
+    def test_public_decision_completion_is_required_and_correlated(self):
+        for operation in ("accept", "reject"):
+            for mutation in ("omit", "duplicate", "request", "transfer", "error"):
+                with self.subTest(operation=operation, mutation=mutation):
+                    logs, manifest = self.valid_records()
+                    row = next(r for r in logs[1] if r["event"] == "operation" and r["operation"] == operation)
+                    if mutation == "omit": logs[1].remove(row)
+                    elif mutation == "duplicate": logs[1].append(copy.deepcopy(row))
+                    elif mutation == "request": row["requestId"] = 999
+                    elif mutation == "transfer": row["id"] = "unrelated"
+                    else: row["error"] = "11"
+                    with self.assertRaises(ValueError): evidence.verify(*logs, manifest)
+
+    def test_reciprocal_host_metadata_and_discovered_platform(self):
+        for mutation in ("expected name", "local platform", "remote platform", "both remote platforms", "same SDK platform"):
+            with self.subTest(mutation=mutation):
+                logs, manifest = self.valid_records()
+                if mutation == "expected name": logs[0][0]["expectedPeer"] = "unrelated"
+                elif mutation == "local platform": logs[0][0]["platform"] = "windows"
+                elif mutation == "remote platform": logs[0][1]["platform"] = "WINDOWS"
+                elif mutation == "both remote platforms":
+                    logs[0][1]["platform"] = "WINDOWS"
+                    logs[1][1]["platform"] = "WINDOWS"
+                else:
+                    logs[0][0].update(platform="ios", sdkPlatform="ios")
+                    logs[1][1]["platform"] = "IOS"
+                with self.assertRaises(ValueError): evidence.verify(*logs, manifest)
+
+    def test_identity_assertion_is_limited_to_same_host_remote_observation(self):
+        logs, manifest = self.valid_records()
+        logs[0][2]["id"] = "unrelated"
+        with self.assertRaisesRegex(ValueError, "pairing peer"):
+            evidence.verify(*logs, manifest)
+        # No public local-ID accessor exists. Coherently modified remote observations
+        # cannot be detected; the report must explicitly preserve this limitation.
+        logs[0][1]["id"] = "unrelated"
+        self.assertIn("no reciprocal local DeviceId binding", evidence.verify(*logs, manifest)["identity_scope"])
 
 
 if __name__ == "__main__":

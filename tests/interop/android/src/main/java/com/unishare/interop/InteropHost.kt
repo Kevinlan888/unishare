@@ -27,13 +27,13 @@ class InteropHost : Instrumentation() {
         log.appendText(value.toString() + "\n")
         android.util.Log.i("UniShareInterop", value.toString())
     }
-    private fun watch(name: String, operation: Operation): Operation {
+    private fun watch(name: String, operation: Operation, request: Long = 0, transfer: String = ""): Operation {
         val count = AtomicInteger()
         operations.add(operation to count)
         operation.result.thenAccept { result ->
             count.incrementAndGet()
             record("operation", "operation" to name, "operationId" to result.operationId,
-                "error" to (result.error?.category?.name ?: ""))
+                "error" to (result.error?.category?.name ?: ""), "requestId" to request, "id" to transfer)
         }
         return operation
     }
@@ -54,7 +54,7 @@ class InteropHost : Instrumentation() {
             val expected = requireNotNull(args.getString("peer"))
             log = File(targetContext.filesDir, "$run-$role.jsonl"); check(!log.exists()) { "fresh run required" }
             record("begin", "platform" to "android", "os" to android.os.Build.VERSION.RELEASE,
-                "name" to "interop-$run-$role")
+                "name" to "interop-$run-$role", "sdkPlatform" to "android", "expectedPeer" to expected)
             val activity = startActivitySync(Intent(targetContext, HostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
             while (!activity.hasWindowFocus()) { check(System.nanoTime() < deadline) { "foreground focus required" }; Thread.sleep(50) }
@@ -78,7 +78,7 @@ class InteropHost : Instrumentation() {
                         watch("confirm", sdk.connections.confirmPairing(event.requestId, match))
                     } },
                     sdk.transfers.observe { event -> when(event) {
-                        is TransferEvent.IncomingOffer -> { record("offer", "id" to event.transferId.value, "size" to event.byteCount, "kind" to event.contentType.name); offers.add(event) }
+                        is TransferEvent.IncomingOffer -> { record("offer", "id" to event.transferId.value, "requestId" to event.requestId, "size" to event.byteCount, "kind" to event.contentType.name); offers.add(event) }
                         is TransferEvent.Progress -> record("progress", "id" to event.transferId.value, "bytes" to event.transferred, "size" to event.byteCount)
                         is TransferEvent.Result -> { terminals.add(event); incomingResults.add(event); record("terminal", "id" to event.transferId.value, "error" to (event.error?.category?.name ?: "")) }
                     } }
@@ -115,12 +115,12 @@ class InteropHost : Instrumentation() {
                         val offer = checkNotNull(offers.poll(60, TimeUnit.SECONDS)) { "offer timeout" }; check(offer.device.id == peer.id)
                         val id = offer.transferId.value
                         val sink = File(targetContext.cacheDir, "sink-$run-$index"); check(!sink.exists())
-                        if(index == 6) { record("consent", "id" to id, "decision" to "reject"); wait(watch("reject", sdk.transfers.reject(offer.requestId))) }
+                        if(index == 6) { record("consent", "id" to id, "requestId" to offer.requestId, "decision" to "reject"); wait(watch("reject", sdk.transfers.reject(offer.requestId), offer.requestId, id.toString())) }
                         else {
                             val expectedBytes = targetContext.assets.open(names[index]).use { it.readBytes() }
                             check(offer.byteCount == expectedBytes.size.toLong())
                             check(offer.contentType == when(index) { 0,5 -> ContentType.TEXT; 1,2 -> ContentType.IMAGE; else -> ContentType.FILE })
-                            record("consent", "id" to id, "decision" to "accept"); wait(watch("accept", sdk.transfers.accept(offer.requestId, uri(sink))))
+                            record("consent", "id" to id, "requestId" to offer.requestId, "decision" to "accept"); wait(watch("accept", sdk.transfers.accept(offer.requestId, uri(sink)), offer.requestId, id.toString()))
                         }
                         val result = checkNotNull(incomingResults.poll(35, TimeUnit.SECONDS)); check(result.transferId == offer.transferId)
                         if(index == 6) { check(result.error?.category == ErrorCategory.TRANSFER_REJECTED); check(!sink.exists()) }

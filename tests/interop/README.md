@@ -37,6 +37,16 @@ locally generated, never based on remote display names. The seventh rejected
 offer creates no destination. Hosts check operation and terminal counts; the
 coordinator also checks identical transfer-ID sets, one terminal per ID, kinds,
 sizes, explicit decisions and no data/terminal record before the decision.
+Each receiving decision must have exactly one successful public Accept/Reject
+completion correlated by both request ID and transfer ID. A decision-intent log
+alone cannot satisfy the gate.
+
+Hosts record their configured local name, SDK platform and expected peer name.
+The gate checks reciprocal names and discovered platforms against that metadata.
+The public APIs do not expose the local DeviceId: the identity assertion is
+limited to each host's remote pairing ID matching its own discovered remote ID.
+It does **not** claim reciprocal binding to a separately observed local DeviceId.
+Coherently altered logs are not authenticated evidence; preserve original logs.
 
 Active cancellation, interruption cleanup, offline/update, changed identity,
 malformed frame and wrong digest cases remain Task 11b extensions. This first
@@ -75,6 +85,9 @@ does not test the target-37 local-network permission prompt.
 The PowerShell runner uses the provisioned repository Gradle/SDK cache paths;
 adapt those paths for another machine. `-Build` generates fixtures, compiles only
 against the AAR, installs the test app, and launches. Omit it for subsequent runs.
+The provisioned offline toolchain requires `android.aapt2FromMavenOverride`, which
+AGP labels experimental. That isolated build-option warning is expected; the
+host assets use the supported `directories` collection without a deprecation.
 
 ```powershell
 ./tests/interop/run-android.ps1 -Build -Serial 62041JEA316847 -Role receiver -Run wa2 -Peer interop-wa2-sender
@@ -83,7 +96,9 @@ against the AAR, installs the test app, and launches. Omit it for subsequent run
 The wrapper bounds instrumentation to 240 seconds, verifies its success marker
 and instrumentation code, and pulls the app's JSONL to
 `build-interop-wa2/android.jsonl` even on failure. It force-stops only this test app
-on timeout. Use a new run name each time to avoid old trust/logs. Raw equivalent:
+on timeout. Evidence retrieval must also return adb exit0; a retrieval failure
+fails a successful run and is reported alongside, without replacing, an earlier
+host failure. Use a new run name each time to avoid old trust/logs. Raw equivalent:
 
 ```text
 adb -s SERIAL shell am instrument -w -r -e role sender -e run ai2 -e peer interop-ai2-receiver -e testConsent true com.unishare.interop/.InteropHost
