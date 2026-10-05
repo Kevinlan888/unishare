@@ -1,15 +1,26 @@
 # Interoperability evidence
 
 Task11b review follow-up, 2026-10-05, SDK0.1.0, native source `b77f056` plus
-review verifier/host metadata changes. All six directions passed on freshly rebuilt
-final Session-fix packages with Windows, a physical Pixel, and iOS Simulator.
-Physical iPhone interoperability
-remains an open release gate.
+review verifier/host metadata changes from `e8dedd2`. All six physical directions
+passed on freshly rebuilt final Session-fix packages with Windows, a Pixel and an
+iPhone. Four additional iOS Simulator directions passed on the same packages.
+No production or host changes were made between these runs.
+
+## Physical matrix
 
 | Direction | Discovery / SAS | Nine contents, reject, cancel | Restart, isolation, Offline | Run / SAS |
 | --- | --- | --- | --- | --- |
 | Windows → physical Pixel | PASS | PASS | PASS | `wa30` / `351740` |
 | Physical Pixel → Windows | PASS | PASS | PASS | `aw30` / `349277` |
+| Windows → physical iPhone | PASS | PASS | PASS | `wi44` / `098481` |
+| Physical iPhone → Windows | PASS | PASS | PASS | `iw43` / `620024` |
+| Physical Pixel → physical iPhone | PASS | PASS | PASS | `ai43` / `443353` |
+| Physical iPhone → physical Pixel | PASS | PASS | PASS | `ia43` / `374526` |
+
+## Supplemental Simulator matrix
+
+| Direction | Discovery / SAS | Nine contents, reject, cancel | Restart, isolation, Offline | Run / SAS |
+| --- | --- | --- | --- | --- |
 | Windows → iOS Simulator | PASS | PASS | PASS | `wi30` / `866975` |
 | iOS Simulator → Windows | PASS | PASS | PASS | `iw31` / `986259` |
 | Physical Pixel → iOS Simulator | PASS | PASS | PASS | `ai30` / `803145` |
@@ -18,8 +29,8 @@ remains an open release gate.
 [Exact measured records](results-2026-10-05.json) retain discovered DeviceIds,
 platform/protocol/addresses/ports, matching SAS, eleven transfer IDs per run, sizes
 and SHA-256, all recipient decisions/public completions, terminal outcomes, cancel
-progress, staging deletion, Updated events, restart rediscovery and Offline. All six raw logs were rechecked
-with the final [fail-closed coordinator](evidence.py), whose eleven test groups reject
+progress, staging deletion, Updated events, restart rediscovery and Offline.
+All ten raw logs were rechecked with the final [fail-closed coordinator](evidence.py), whose eleven test groups reject
 corrupted evidence. Raw logs and summaries remain ignored in `build-interop-RUN/`.
 [Public package hosts and commands](README.md) use no endpoint injection or alternate
 sharing transport.
@@ -29,6 +40,9 @@ sharing transport.
 - Windows10.0.26200, WLAN192.168.2.160, MSVC14.51, public C++ DLL package.
 - Physical Pixel10a, Android17/API37, host target36, 192.168.2.178, release Kotlin
   AAR with arm64-v8a/armeabi-v7a/x86_64 libraries.
+- Physical iPhoneSE3, iOS17.6.1 (Build21G93), WLAN192.168.2.148, freshly signed
+  public Swift host using the final XCFramework device slice. Each accepted run
+  emitted begin, initialization and Start success on the actual phone.
 - iOS Simulator26.3.1 (Build23D8133), iPhone17Pro runtime26.3,
   Xcode26.3/SDK26.2, Mac Wi-Fi en1 192.168.2.233, public Swift XCFramework.
   Simulator multicast/sockets use the Mac LAN; this does not establish physical
@@ -81,11 +95,11 @@ before the queued Connected observer installed the public transfer handler.
 The fix retains one budgeted frame after bilateral consent, waits for write/pin
 success, and resolves the handler during deferred delivery after Connected.
 Public SDK TDD reproduced the failure; Session tests also cover write failure,
-cancel, pin failure and no early delivery. All six current rows use this final fix.
+cancel, pin failure and no early delivery. All ten current rows use this final fix.
 Earlier `wa13`/`aw12`/`iw10`/`ai14`/`wi20`/`ia20` logs remain historical;
 none supplies a current final-package acceptance row.
 
-## Release gates and physical limits
+## Release gates and remaining acceptance
 
 Final session-fixed Windows Debug/Release CTest passed14/14 each. Android internal
 ports passed10/10 and public contracts7/7 on Pixel17 and Samsung Android15. Release
@@ -100,18 +114,31 @@ Mac core passed10/10 and native ports9/9; final XCFramework device/simulator bui
 clipboard cross-process/network/trust/permission acceptance passed. Native ports
 and final artifact details are retained in the Task11b report.
 
-The physical iPhoneSE3 iOS17.6.1 has a freshly signed installed public interop host
-from the final framework. After user unlock confirmation, the actual `wi41` launch
+Before the accepted physical runs, the actual `wi41` launch
 at 17:49:38 local still returned CoreDeviceError10002 / FBSOpenApplication
 RequestDenied, reason `Locked` (device was not, or could not be, unlocked).
 The app never started; Windows sender was cancelled before discovery and this run
 is excluded. Signing/install is not runtime acceptance.
-Earlier signed public network acceptance has its own narrower scope. Physical
-clipboard and all four iPhone cross-platform directions need an unlocked device;
-no physical iPhone matrix cell is marked passed here.
+Keeping the phone awake enabled actual subsequent launches. `wi43` then started
+successfully: iPhone discovered and emitted Updated for Windows, but Windows
+timed out without discovering iPhone; neither side reached pairing or transfer.
+This failed attempt is retained in the measured results and ignored raw logs, and
+does not contribute a passing matrix cell. Its underlying cause is unestablished.
+The reverse `iw43` passed with Windows receiving first. `wi44` passed with Windows
+browse started before the iPhone receiver, without a production change. Both
+Pixel directions also passed. These outcomes establish the measured physical
+interop scenarios; they do not establish discovery reliability for every launch
+order or explain the earlier timeout.
+
+Physical interop includes explicit same-process clipboard write/read and transport
+of the actual content. The separate physical cross-process clipboard acceptance
+follow-up has not been measured here. Earlier signed public network acceptance
+has its own narrower scope. External document-provider grants, locked Keychain,
+real OS permission denial and physical interface switching are not claimed by
+these matrix runs.
 
 Wrong digest, malicious lengths, changed identity, TLS authentication, timeouts and
 budget failure use owning core/adapter regression evidence. Public APIs cannot
 manufacture invalid encrypted frames or replace a pinned identity, so these are
-not claimed as live cross-platform runs. Physical release acceptance remains
-incomplete until the iPhone gates run.
+not claimed as live cross-platform runs. The six-direction physical interop gate
+is closed; broader unmeasured acceptance remains outside this evidence.

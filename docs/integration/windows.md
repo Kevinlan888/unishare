@@ -64,8 +64,8 @@ dot as the discovery defect: actual Android announcements reached Windows, and
 the same `DnsServiceBrowse` query without the dot received callbacks. The adapter
 now supplies Microsoft's native service-name form `_share._tcp.local` while its
 public service type stays `_share._tcp.local.`. The regression and public package
-LAN matrix pass Windows↔physical Pixel and Windows↔iOS Simulator, including
-discovery, TLS/SAS, all content flows, both clipboard formats, cancellation,
+LAN matrix pass Windows↔physical Pixel, Windows↔physical iPhone and
+Windows↔iOS Simulator, including discovery, TLS/SAS, all content flows, both clipboard formats, cancellation,
 cleanup, rediscovery, trust, isolation and Offline. See the
 [matrix](../../tests/interop/matrix.md) for exact scope and physical iPhone gates.
 

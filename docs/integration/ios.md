@@ -125,11 +125,13 @@ an actual OS grant/denial requires a signed physical host.
 
 The signed iPhone SE3 (iOS 17.6.1) public acceptance `network` run passed Bonjour,
 TLS/SAS, consent, content, rejection, cancellation/cleanup, trust and lifecycle
-checks through CoreDevice. Its clipboard follow-up and cross-platform interop
-launch remain blocked while the phone is locked. Independent public XCFramework
-hosts pass Windows↔iOS Simulator and physical Pixel↔iOS Simulator; see the
+checks through CoreDevice. Independent public XCFramework hosts subsequently
+passed physical iPhone↔Windows and physical iPhone↔Pixel, as well as
+Windows↔iOS Simulator and physical Pixel↔iOS Simulator; see the
 [matrix](../../tests/interop/matrix.md). External document-provider URLs and locked
-Keychain behavior remain outside measured acceptance. UIKit may re-encode clipboard
+Keychain behavior and separate physical cross-process clipboard acceptance remain
+outside this matrix. The matrix retains an earlier Windows→iPhone discovery
+timeout whose cause is unestablished. UIKit may re-encode clipboard
 images; public interop verifies decoded sRGB RGBA pixels and exact transmitted
 readback bytes, while ordinary image fixtures keep exact encoded-byte hashes.
 

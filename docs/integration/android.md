@@ -296,8 +296,9 @@ The test activity and provider are instrumentation-only; release contains no
 business UI or acceptance probe.
 
 The Task11b public release-AAR hosts also passed physical Pixel ↔ Windows and
-Pixel ↔ iOS Simulator, including actual clipboard text/image reads, 5 MiB UTF-8
-text, cancellation cleanup, restart/trust, isolation and Offline. See the
-[measured matrix](../../tests/interop/matrix.md); physical iPhone evidence remains
-pending. Clipboard image checks compare decoded RGBA pixels and transfer the
+Pixel ↔ physical iPhone and Pixel ↔ iOS Simulator, including actual clipboard
+text/image reads, 5 MiB UTF-8 text, cancellation cleanup, restart/trust, isolation
+and Offline. See the
+[measured matrix](../../tests/interop/matrix.md) for exact runs and limitations.
+Clipboard image checks compare decoded RGBA pixels and transfer the
 actual public readback bytes, since an OS may change the image encoding.

@@ -1,12 +1,152 @@
 {
   "date": "2026-10-05",
   "sdk_version": "0.1.0",
-  "source_scope": "All six runs use freshly rebuilt b77f056 native production code plus Task11b review host/verifier update metadata; no production changes after b77f056",
-  "physical_ios_release_gate": "BLOCKED at 2026-10-05 17:49:38 local: fresh signed installed wi41 host launch denied CoreDeviceError10002 / FBSOpenApplication RequestDenied / reason Locked: device was not, or could not be, unlocked; no physical app start or cross-platform run",
+  "source_scope": "All ten runs use freshly rebuilt b77f056 native production code plus e8dedd2 Task11b review host/verifier update metadata; no production or host changes after e8dedd2",
+  "physical_ios_release_gate": "Four physical cross-platform directions PASS on iPhone SE3 iOS17.6.1 Build21G93: wi44, iw43, ai43, ia43. This closes the physical interop matrix gate; separate physical cross-process clipboard and other unmeasured acceptance are not claimed.",
+  "physical_matrix_runs": [
+    "wa30",
+    "aw30",
+    "wi44",
+    "iw43",
+    "ai43",
+    "ia43"
+  ],
+  "simulator_supplemental_runs": [
+    "wi30",
+    "iw31",
+    "ai30",
+    "ia30"
+  ],
+  "excluded_attempts": [
+    {
+      "run": "wi41",
+      "outcome": "CoreDevice launch blocked before app start",
+      "detail": "2026-10-05 17:49:38 local: CoreDeviceError10002 / FBSOpenApplication RequestDenied / reason Locked: device was not, or could not be, unlocked"
+    },
+    {
+      "run": "wi43",
+      "outcome": "FAIL discovery timeout, no pairing or transfer",
+      "windows_records": [
+        {
+          "event": "begin",
+          "role": "sender",
+          "run": "wi43",
+          "platform": "windows",
+          "sdkPlatform": "windows",
+          "scenario": "extended",
+          "expectedPeer": "interop-wi43-receiver",
+          "name": "interop-wi43-sender"
+        },
+        {
+          "event": "operation",
+          "role": "sender",
+          "run": "wi43",
+          "operation": "initialize",
+          "requestId": "0",
+          "id": "",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "sender",
+          "run": "wi43",
+          "operation": "start",
+          "requestId": "0",
+          "id": "",
+          "error": ""
+        },
+        {
+          "event": "failure",
+          "role": "sender",
+          "run": "wi43",
+          "message": "discovery timeout"
+        }
+      ],
+      "ios_records": [
+        {
+          "event": "begin",
+          "expectedPeer": "interop-wi43-sender",
+          "name": "interop-wi43-receiver",
+          "os": "Version 17.6.1 (Build 21G93)",
+          "platform": "ios",
+          "role": "receiver",
+          "run": "wi43",
+          "scenario": "extended",
+          "sdkPlatform": "ios"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "",
+          "operation": "initialize",
+          "operationId": 1,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "wi43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "",
+          "operation": "start",
+          "operationId": 5,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "wi43"
+        },
+        {
+          "event": "discovery",
+          "id": "b671468c-d035-4931-9523-94bd131501f2",
+          "name": "interop-wi43-sender",
+          "paired": false,
+          "port": 14501,
+          "role": "receiver",
+          "run": "wi43"
+        },
+        {
+          "event": "updated",
+          "id": "b671468c-d035-4931-9523-94bd131501f2",
+          "name": "interop-wi43-sender",
+          "paired": false,
+          "port": 14501,
+          "role": "receiver",
+          "run": "wi43"
+        },
+        {
+          "event": "updated",
+          "id": "b671468c-d035-4931-9523-94bd131501f2",
+          "name": "interop-wi43-sender",
+          "paired": false,
+          "port": 14501,
+          "role": "receiver",
+          "run": "wi43"
+        },
+        {
+          "addresses": "fda7:b75:67e1:4ed8:2bd5:e05b:62f0:f332",
+          "event": "discovered",
+          "id": "b671468c-d035-4931-9523-94bd131501f2",
+          "name": "interop-wi43-sender",
+          "platform": 0,
+          "port": 14501,
+          "protocol": "1.0",
+          "role": "receiver",
+          "run": "wi43"
+        },
+        {
+          "event": "failure",
+          "message": "HostFailure(message: \"event timeout\")",
+          "role": "receiver",
+          "run": "wi43"
+        }
+      ],
+      "follow_up": "iw43 passed with Windows receiver started first; wi44 passed with Windows sender/browse started first. No production change; underlying cause of wi43 discovery timeout remains unestablished."
+    }
+  ],
   "environment": {
     "windows": "Windows 10.0.26200, WLAN 192.168.2.160",
     "android": "physical Pixel 10a Android17/API37, target36, 192.168.2.178",
-    "ios": "iOS Simulator26.3.1 Build23D8133, iPhone17Pro runtime26.3, Xcode26.3 SDK26.2, Mac en1 192.168.2.233"
+    "ios_simulator": "iOS Simulator26.3.1 Build23D8133, iPhone17Pro runtime26.3, Xcode26.3 SDK26.2, Mac en1 192.168.2.233",
+    "ios_physical": "iPhone SE3 iOS17.6.1 Build21G93, WLAN192.168.2.148; freshly signed public host from review-final device slice"
   },
   "final_package_sha256": {
     "android\\share-sdk\\build\\outputs\\aar\\share-sdk-release.aar": "1c56fb9d54fef55ece164ab3700a0f501eb4988166e7c57b04c47cb8298c51fb",
@@ -4816,6 +4956,3264 @@
         "run": "ia30",
         "id": "e693919b-f8ef-42f9-b43e-fd6d03c67b93",
         "name": "interop-ia30-sender"
+      }
+    },
+    {
+      "status": "PASS",
+      "run": "wi44",
+      "direction": "windows->ios",
+      "sas": "098481",
+      "successes": 9,
+      "rejections": 1,
+      "cancellations": 1,
+      "transfer_ids": [
+        "11cfd67b-18b5-479f-ecf4-81e097c13fd7",
+        "179f9759-a815-6b23-4ed8-0fe62a354dcb",
+        "19bdf884-0580-37b4-bae9-7d0551318992",
+        "49e0dc4d-44c8-e92b-7829-37eec4751801",
+        "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+        "adec1fc9-7b42-96cb-5fe2-c7f34482aaa0",
+        "b998a702-e3e2-f144-6fcd-84056ddce4e1",
+        "bc09ae3a-07e1-c19e-71ac-dc05f0531434",
+        "c971d1db-485c-abd8-ba6a-1c5ec97ac8f1",
+        "cdc9cce5-7b0a-9d6d-f5d5-130e711d1de5",
+        "dcfd5ce9-7800-78c6-aab3-67b517466470"
+      ],
+      "identity_scope": "remote_pairing_matches_same_host_discovery; no reciprocal local DeviceId binding",
+      "sender": {
+        "host": {
+          "event": "begin",
+          "role": "sender",
+          "run": "wi44",
+          "platform": "windows",
+          "sdkPlatform": "windows",
+          "scenario": "extended",
+          "expectedPeer": "interop-wi44-receiver",
+          "name": "interop-wi44-sender"
+        },
+        "discovered_remote": {
+          "event": "discovered",
+          "role": "sender",
+          "run": "wi44",
+          "id": "8ef496ee-dfdc-4ef6-9c19-3d2d12913f3f",
+          "name": "interop-wi44-receiver",
+          "platform": "2",
+          "protocol": "1.0",
+          "addresses": "192.168.2.148,fe80::456:39ac:4dfc:90e5%15",
+          "port": "59756"
+        }
+      },
+      "receiver": {
+        "host": {
+          "event": "begin",
+          "expectedPeer": "interop-wi44-sender",
+          "name": "interop-wi44-receiver",
+          "os": "Version 17.6.1 (Build 21G93)",
+          "platform": "ios",
+          "role": "receiver",
+          "run": "wi44",
+          "scenario": "extended",
+          "sdkPlatform": "ios"
+        },
+        "discovered_remote": {
+          "addresses": "fda7:b75:67e1:4ed8:2bd5:e05b:62f0:f332",
+          "event": "discovered",
+          "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+          "name": "interop-wi44-sender",
+          "platform": 0,
+          "port": 3661,
+          "protocol": "1.0",
+          "role": "receiver",
+          "run": "wi44"
+        }
+      },
+      "contents": [
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "dcfd5ce9-7800-78c6-aab3-67b517466470",
+          "name": "text.txt",
+          "size": "24",
+          "sha256": "0ef32af6b0165f5c80ad0ecbbbc99e96443146fc3cfe19c2b9a00935768219da",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "adec1fc9-7b42-96cb-5fe2-c7f34482aaa0",
+          "name": "image.png",
+          "size": "130",
+          "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "179f9759-a815-6b23-4ed8-0fe62a354dcb",
+          "name": "image.jpg",
+          "size": "695",
+          "sha256": "5518d9adee1d3db049900ae8f8829e9a57e0f4dc7e0e27d7386d3ab405bc0ce7",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "11cfd67b-18b5-479f-ecf4-81e097c13fd7",
+          "name": "empty.bin",
+          "size": "0",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "b998a702-e3e2-f144-6fcd-84056ddce4e1",
+          "name": "large.bin",
+          "size": "700001",
+          "sha256": "4c47cf2213b62ff9d5b31b83e3d9a7ebbda3cc54d22ee469f640373740bab739",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "49e0dc4d-44c8-e92b-7829-37eec4751801",
+          "name": "clipboard.txt",
+          "size": "24",
+          "sha256": "c1d2af2b6a2962f420b01ae40b5c33363a1925faa8ce99806dc5dd1188e6bdc5",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "bc09ae3a-07e1-c19e-71ac-dc05f0531434",
+          "name": "text-large.txt",
+          "size": "5242888",
+          "sha256": "e57810c5a605bc0fd9cdb3ddb54cc7209df8c07b6aaeb7d0c8e8a8ce678fda92",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "cdc9cce5-7b0a-9d6d-f5d5-130e711d1de5",
+          "name": "clipboard.png",
+          "size": "130",
+          "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206",
+          "pixel_sha256": "80bd4e68af2714bf9b5b3fe21e22163ebd5cd6727001de0dc4ee4d630d8a3bc2"
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "wi44",
+          "id": "c971d1db-485c-abd8-ba6a-1c5ec97ac8f1",
+          "name": "isolation.txt",
+          "size": "14",
+          "sha256": "8f5dce26a0b2358be71da74f0bd8c6d452bf5b74ee7fd07a1aeb73a85079d007"
+        }
+      ],
+      "offers": [
+        {
+          "event": "offer",
+          "id": "dcfd5ce9-7800-78c6-aab3-67b517466470",
+          "kind": 1,
+          "requestId": 2,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 24
+        },
+        {
+          "event": "offer",
+          "id": "adec1fc9-7b42-96cb-5fe2-c7f34482aaa0",
+          "kind": 2,
+          "requestId": 3,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 130
+        },
+        {
+          "event": "offer",
+          "id": "179f9759-a815-6b23-4ed8-0fe62a354dcb",
+          "kind": 2,
+          "requestId": 4,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 695
+        },
+        {
+          "event": "offer",
+          "id": "11cfd67b-18b5-479f-ecf4-81e097c13fd7",
+          "kind": 3,
+          "requestId": 5,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 0
+        },
+        {
+          "event": "offer",
+          "id": "b998a702-e3e2-f144-6fcd-84056ddce4e1",
+          "kind": 3,
+          "requestId": 6,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 700001
+        },
+        {
+          "event": "offer",
+          "id": "49e0dc4d-44c8-e92b-7829-37eec4751801",
+          "kind": 1,
+          "requestId": 7,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 24
+        },
+        {
+          "event": "offer",
+          "id": "bc09ae3a-07e1-c19e-71ac-dc05f0531434",
+          "kind": 1,
+          "requestId": 8,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 5242888
+        },
+        {
+          "event": "offer",
+          "id": "cdc9cce5-7b0a-9d6d-f5d5-130e711d1de5",
+          "kind": 2,
+          "requestId": 9,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 130
+        },
+        {
+          "event": "offer",
+          "id": "19bdf884-0580-37b4-bae9-7d0551318992",
+          "kind": 1,
+          "requestId": 10,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 6
+        },
+        {
+          "event": "offer",
+          "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+          "kind": 3,
+          "requestId": 11,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 8388608
+        },
+        {
+          "event": "offer",
+          "id": "c971d1db-485c-abd8-ba6a-1c5ec97ac8f1",
+          "kind": 1,
+          "requestId": 13,
+          "role": "receiver",
+          "run": "wi44",
+          "size": 14
+        }
+      ],
+      "decisions": [
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "dcfd5ce9-7800-78c6-aab3-67b517466470",
+          "requestId": 2,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "adec1fc9-7b42-96cb-5fe2-c7f34482aaa0",
+          "requestId": 3,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "179f9759-a815-6b23-4ed8-0fe62a354dcb",
+          "requestId": 4,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "11cfd67b-18b5-479f-ecf4-81e097c13fd7",
+          "requestId": 5,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "b998a702-e3e2-f144-6fcd-84056ddce4e1",
+          "requestId": 6,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "49e0dc4d-44c8-e92b-7829-37eec4751801",
+          "requestId": 7,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "bc09ae3a-07e1-c19e-71ac-dc05f0531434",
+          "requestId": 8,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "cdc9cce5-7b0a-9d6d-f5d5-130e711d1de5",
+          "requestId": 9,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "reject",
+          "event": "consent",
+          "id": "19bdf884-0580-37b4-bae9-7d0551318992",
+          "requestId": 10,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+          "requestId": 11,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "c971d1db-485c-abd8-ba6a-1c5ec97ac8f1",
+          "requestId": 13,
+          "role": "receiver",
+          "run": "wi44"
+        }
+      ],
+      "receiver_decision_completions": [
+        {
+          "error": "",
+          "event": "operation",
+          "id": "",
+          "operation": "confirm",
+          "operationId": 6,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "dcfd5ce9-7800-78c6-aab3-67b517466470",
+          "operation": "accept",
+          "operationId": 7,
+          "requestId": 2,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "adec1fc9-7b42-96cb-5fe2-c7f34482aaa0",
+          "operation": "accept",
+          "operationId": 8,
+          "requestId": 3,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "179f9759-a815-6b23-4ed8-0fe62a354dcb",
+          "operation": "accept",
+          "operationId": 9,
+          "requestId": 4,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "11cfd67b-18b5-479f-ecf4-81e097c13fd7",
+          "operation": "accept",
+          "operationId": 10,
+          "requestId": 5,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "b998a702-e3e2-f144-6fcd-84056ddce4e1",
+          "operation": "accept",
+          "operationId": 11,
+          "requestId": 6,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "49e0dc4d-44c8-e92b-7829-37eec4751801",
+          "operation": "accept",
+          "operationId": 12,
+          "requestId": 7,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "bc09ae3a-07e1-c19e-71ac-dc05f0531434",
+          "operation": "accept",
+          "operationId": 13,
+          "requestId": 8,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "cdc9cce5-7b0a-9d6d-f5d5-130e711d1de5",
+          "operation": "accept",
+          "operationId": 14,
+          "requestId": 9,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "19bdf884-0580-37b4-bae9-7d0551318992",
+          "operation": "reject",
+          "operationId": 15,
+          "requestId": 10,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+          "operation": "accept",
+          "operationId": 16,
+          "requestId": 11,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+          "operation": "cancel",
+          "operationId": 17,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "",
+          "operation": "confirm",
+          "operationId": 20,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "c971d1db-485c-abd8-ba6a-1c5ec97ac8f1",
+          "operation": "accept",
+          "operationId": 21,
+          "requestId": 13,
+          "role": "receiver",
+          "run": "wi44"
+        }
+      ],
+      "cancellation": {
+        "bytes": 262144,
+        "event": "cancel",
+        "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+        "role": "receiver",
+        "run": "wi44",
+        "size": 8388608
+      },
+      "cleanup": {
+        "deleted": true,
+        "event": "cleanup",
+        "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+        "role": "receiver",
+        "run": "wi44"
+      },
+      "sender_terminals": [
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "dcfd5ce9-7800-78c6-aab3-67b517466470",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "adec1fc9-7b42-96cb-5fe2-c7f34482aaa0",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "179f9759-a815-6b23-4ed8-0fe62a354dcb",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "11cfd67b-18b5-479f-ecf4-81e097c13fd7",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "b998a702-e3e2-f144-6fcd-84056ddce4e1",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "49e0dc4d-44c8-e92b-7829-37eec4751801",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "bc09ae3a-07e1-c19e-71ac-dc05f0531434",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "cdc9cce5-7b0a-9d6d-f5d5-130e711d1de5",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "19bdf884-0580-37b4-bae9-7d0551318992",
+          "error": "7"
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+          "error": "10"
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "wi44",
+          "id": "c971d1db-485c-abd8-ba6a-1c5ec97ac8f1",
+          "error": ""
+        }
+      ],
+      "receiver_terminals": [
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "dcfd5ce9-7800-78c6-aab3-67b517466470",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "adec1fc9-7b42-96cb-5fe2-c7f34482aaa0",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "179f9759-a815-6b23-4ed8-0fe62a354dcb",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "11cfd67b-18b5-479f-ecf4-81e097c13fd7",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "b998a702-e3e2-f144-6fcd-84056ddce4e1",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "49e0dc4d-44c8-e92b-7829-37eec4751801",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "bc09ae3a-07e1-c19e-71ac-dc05f0531434",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "cdc9cce5-7b0a-9d6d-f5d5-130e711d1de5",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "7",
+          "event": "terminal",
+          "id": "19bdf884-0580-37b4-bae9-7d0551318992",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "8",
+          "event": "terminal",
+          "id": "4f9ab75d-b931-1e38-95f1-2764f2e92bb2",
+          "role": "receiver",
+          "run": "wi44"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "c971d1db-485c-abd8-ba6a-1c5ec97ac8f1",
+          "role": "receiver",
+          "run": "wi44"
+        }
+      ],
+      "restart": {
+        "sender": {
+          "event": "restart",
+          "role": "sender",
+          "run": "wi44",
+          "trustStable": "true"
+        },
+        "receiver": {
+          "event": "restart",
+          "role": "receiver",
+          "run": "wi44",
+          "trustStable": true
+        }
+      },
+      "updates": {
+        "sender": [
+          {
+            "event": "updated",
+            "role": "sender",
+            "run": "wi44",
+            "id": "8ef496ee-dfdc-4ef6-9c19-3d2d12913f3f",
+            "name": "interop-wi44-receiver",
+            "port": "59756",
+            "paired": "true"
+          }
+        ],
+        "receiver": [
+          {
+            "event": "updated",
+            "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+            "name": "interop-wi44-sender",
+            "paired": false,
+            "port": 3661,
+            "role": "receiver",
+            "run": "wi44"
+          },
+          {
+            "event": "updated",
+            "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+            "name": "interop-wi44-sender",
+            "paired": false,
+            "port": 3661,
+            "role": "receiver",
+            "run": "wi44"
+          },
+          {
+            "event": "updated",
+            "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+            "name": "interop-wi44-sender",
+            "paired": true,
+            "port": 3661,
+            "role": "receiver",
+            "run": "wi44"
+          },
+          {
+            "event": "updated",
+            "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+            "name": "interop-wi44-sender",
+            "paired": true,
+            "port": 3684,
+            "role": "receiver",
+            "run": "wi44"
+          },
+          {
+            "event": "updated",
+            "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+            "name": "interop-wi44-sender",
+            "paired": true,
+            "port": 3684,
+            "role": "receiver",
+            "run": "wi44"
+          }
+        ]
+      },
+      "rediscovery": {
+        "sender": {
+          "event": "rediscovered",
+          "role": "sender",
+          "run": "wi44",
+          "id": "8ef496ee-dfdc-4ef6-9c19-3d2d12913f3f",
+          "port": "59757",
+          "paired": "true"
+        },
+        "receiver": {
+          "event": "rediscovered",
+          "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+          "paired": true,
+          "port": 3684,
+          "role": "receiver",
+          "run": "wi44"
+        }
+      },
+      "public_discovery_events": {
+        "sender": [
+          {
+            "event": "discovery",
+            "role": "sender",
+            "run": "wi44",
+            "id": "8ef496ee-dfdc-4ef6-9c19-3d2d12913f3f",
+            "name": "interop-wi44-receiver",
+            "port": "59756",
+            "paired": "false"
+          },
+          {
+            "event": "discovery",
+            "role": "sender",
+            "run": "wi44",
+            "id": "8ef496ee-dfdc-4ef6-9c19-3d2d12913f3f",
+            "name": "interop-wi44-receiver",
+            "port": "59757",
+            "paired": "true"
+          }
+        ],
+        "receiver": [
+          {
+            "event": "discovery",
+            "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+            "name": "interop-wi44-sender",
+            "paired": false,
+            "port": 3661,
+            "role": "receiver",
+            "run": "wi44"
+          },
+          {
+            "event": "discovery",
+            "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+            "name": "interop-wi44-sender",
+            "paired": true,
+            "port": 3684,
+            "role": "receiver",
+            "run": "wi44"
+          }
+        ]
+      },
+      "offline": {
+        "event": "offline",
+        "id": "c1e3561c-deaa-4d72-8209-ba371285b966",
+        "name": "interop-wi44-sender",
+        "role": "receiver",
+        "run": "wi44"
+      }
+    },
+    {
+      "status": "PASS",
+      "run": "iw43",
+      "direction": "ios->windows",
+      "sas": "620024",
+      "successes": 9,
+      "rejections": 1,
+      "cancellations": 1,
+      "transfer_ids": [
+        "3017281f-4bb7-3b06-6688-79c2d39f9b89",
+        "31d18e0a-4065-d869-6716-017458d53898",
+        "440608a5-9263-8555-ef70-83301132f1e6",
+        "5e23026f-f5f8-3b5c-a596-ed9f9239a1ae",
+        "7282cc7e-3375-44ea-815a-20f52468c586",
+        "772aca48-4282-2f98-cee9-9db759191a9b",
+        "79969bbb-7417-4c7a-8261-d124a68c2f7d",
+        "9f0fd986-5dcb-1b7b-dd8a-4b175a6ca632",
+        "a11fdd5e-a802-a4f4-b3e7-aa7ab91b8faa",
+        "ce597042-bf82-c95a-56e9-19ab5947209f",
+        "f98f8408-c3aa-8e09-c4b1-1e9839b83953"
+      ],
+      "identity_scope": "remote_pairing_matches_same_host_discovery; no reciprocal local DeviceId binding",
+      "sender": {
+        "host": {
+          "event": "begin",
+          "expectedPeer": "interop-iw43-receiver",
+          "name": "interop-iw43-sender",
+          "os": "Version 17.6.1 (Build 21G93)",
+          "platform": "ios",
+          "role": "sender",
+          "run": "iw43",
+          "scenario": "extended",
+          "sdkPlatform": "ios"
+        },
+        "discovered_remote": {
+          "addresses": "fda7:b75:67e1:4ed8:2bd5:e05b:62f0:f332",
+          "event": "discovered",
+          "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+          "name": "interop-iw43-receiver",
+          "platform": 0,
+          "port": 5160,
+          "protocol": "1.0",
+          "role": "sender",
+          "run": "iw43"
+        }
+      },
+      "receiver": {
+        "host": {
+          "event": "begin",
+          "role": "receiver",
+          "run": "iw43",
+          "platform": "windows",
+          "sdkPlatform": "windows",
+          "scenario": "extended",
+          "expectedPeer": "interop-iw43-sender",
+          "name": "interop-iw43-receiver"
+        },
+        "discovered_remote": {
+          "event": "discovered",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "e77a8ef1-4302-4a08-93de-529edfc97fad",
+          "name": "interop-iw43-sender",
+          "platform": "2",
+          "protocol": "1.0",
+          "addresses": "192.168.2.148,fe80::456:39ac:4dfc:90e5%15",
+          "port": "59750"
+        }
+      },
+      "contents": [
+        {
+          "event": "sent",
+          "id": "ce597042-bf82-c95a-56e9-19ab5947209f",
+          "name": "text.txt",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "0ef32af6b0165f5c80ad0ecbbbc99e96443146fc3cfe19c2b9a00935768219da",
+          "size": 24
+        },
+        {
+          "event": "sent",
+          "id": "5e23026f-f5f8-3b5c-a596-ed9f9239a1ae",
+          "name": "image.png",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206",
+          "size": 130
+        },
+        {
+          "event": "sent",
+          "id": "772aca48-4282-2f98-cee9-9db759191a9b",
+          "name": "image.jpg",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "5518d9adee1d3db049900ae8f8829e9a57e0f4dc7e0e27d7386d3ab405bc0ce7",
+          "size": 695
+        },
+        {
+          "event": "sent",
+          "id": "79969bbb-7417-4c7a-8261-d124a68c2f7d",
+          "name": "empty.bin",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        {
+          "event": "sent",
+          "id": "f98f8408-c3aa-8e09-c4b1-1e9839b83953",
+          "name": "large.bin",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "4c47cf2213b62ff9d5b31b83e3d9a7ebbda3cc54d22ee469f640373740bab739",
+          "size": 700001
+        },
+        {
+          "event": "sent",
+          "id": "440608a5-9263-8555-ef70-83301132f1e6",
+          "name": "clipboard.txt",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "c1d2af2b6a2962f420b01ae40b5c33363a1925faa8ce99806dc5dd1188e6bdc5",
+          "size": 24
+        },
+        {
+          "event": "sent",
+          "id": "9f0fd986-5dcb-1b7b-dd8a-4b175a6ca632",
+          "name": "text-large.txt",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "e57810c5a605bc0fd9cdb3ddb54cc7209df8c07b6aaeb7d0c8e8a8ce678fda92",
+          "size": 5242888
+        },
+        {
+          "event": "sent",
+          "id": "7282cc7e-3375-44ea-815a-20f52468c586",
+          "name": "clipboard.png",
+          "pixel_sha256": "80bd4e68af2714bf9b5b3fe21e22163ebd5cd6727001de0dc4ee4d630d8a3bc2",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "de42c88aead8e0f5617a0cdfd3c05562c3f7582412469a9e9f84522bccd0c234",
+          "size": 315
+        },
+        {
+          "event": "sent",
+          "id": "a11fdd5e-a802-a4f4-b3e7-aa7ab91b8faa",
+          "name": "isolation.txt",
+          "role": "sender",
+          "run": "iw43",
+          "sha256": "8f5dce26a0b2358be71da74f0bd8c6d452bf5b74ee7fd07a1aeb73a85079d007",
+          "size": 14
+        }
+      ],
+      "offers": [
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "ce597042-bf82-c95a-56e9-19ab5947209f",
+          "requestId": "2",
+          "kind": "1",
+          "size": "24"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "5e23026f-f5f8-3b5c-a596-ed9f9239a1ae",
+          "requestId": "3",
+          "kind": "2",
+          "size": "130"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "772aca48-4282-2f98-cee9-9db759191a9b",
+          "requestId": "4",
+          "kind": "2",
+          "size": "695"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "79969bbb-7417-4c7a-8261-d124a68c2f7d",
+          "requestId": "5",
+          "kind": "3",
+          "size": "0"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "f98f8408-c3aa-8e09-c4b1-1e9839b83953",
+          "requestId": "6",
+          "kind": "3",
+          "size": "700001"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "440608a5-9263-8555-ef70-83301132f1e6",
+          "requestId": "7",
+          "kind": "1",
+          "size": "24"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "9f0fd986-5dcb-1b7b-dd8a-4b175a6ca632",
+          "requestId": "8",
+          "kind": "1",
+          "size": "5242888"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "7282cc7e-3375-44ea-815a-20f52468c586",
+          "requestId": "9",
+          "kind": "2",
+          "size": "315"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "3017281f-4bb7-3b06-6688-79c2d39f9b89",
+          "requestId": "10",
+          "kind": "1",
+          "size": "6"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "31d18e0a-4065-d869-6716-017458d53898",
+          "requestId": "11",
+          "kind": "3",
+          "size": "8388608"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "a11fdd5e-a802-a4f4-b3e7-aa7ab91b8faa",
+          "requestId": "13",
+          "kind": "1",
+          "size": "14"
+        }
+      ],
+      "decisions": [
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "ce597042-bf82-c95a-56e9-19ab5947209f",
+          "requestId": "2",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "5e23026f-f5f8-3b5c-a596-ed9f9239a1ae",
+          "requestId": "3",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "772aca48-4282-2f98-cee9-9db759191a9b",
+          "requestId": "4",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "79969bbb-7417-4c7a-8261-d124a68c2f7d",
+          "requestId": "5",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "f98f8408-c3aa-8e09-c4b1-1e9839b83953",
+          "requestId": "6",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "440608a5-9263-8555-ef70-83301132f1e6",
+          "requestId": "7",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "9f0fd986-5dcb-1b7b-dd8a-4b175a6ca632",
+          "requestId": "8",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "7282cc7e-3375-44ea-815a-20f52468c586",
+          "requestId": "9",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "3017281f-4bb7-3b06-6688-79c2d39f9b89",
+          "requestId": "10",
+          "decision": "reject"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "31d18e0a-4065-d869-6716-017458d53898",
+          "requestId": "11",
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "a11fdd5e-a802-a4f4-b3e7-aa7ab91b8faa",
+          "requestId": "13",
+          "decision": "accept"
+        }
+      ],
+      "receiver_decision_completions": [
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "confirm",
+          "requestId": "0",
+          "id": "",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "2",
+          "id": "ce597042-bf82-c95a-56e9-19ab5947209f",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "3",
+          "id": "5e23026f-f5f8-3b5c-a596-ed9f9239a1ae",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "4",
+          "id": "772aca48-4282-2f98-cee9-9db759191a9b",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "5",
+          "id": "79969bbb-7417-4c7a-8261-d124a68c2f7d",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "6",
+          "id": "f98f8408-c3aa-8e09-c4b1-1e9839b83953",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "7",
+          "id": "440608a5-9263-8555-ef70-83301132f1e6",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "8",
+          "id": "9f0fd986-5dcb-1b7b-dd8a-4b175a6ca632",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "9",
+          "id": "7282cc7e-3375-44ea-815a-20f52468c586",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "reject",
+          "requestId": "10",
+          "id": "3017281f-4bb7-3b06-6688-79c2d39f9b89",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "11",
+          "id": "31d18e0a-4065-d869-6716-017458d53898",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "cancel",
+          "requestId": "0",
+          "id": "31d18e0a-4065-d869-6716-017458d53898",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "confirm",
+          "requestId": "0",
+          "id": "",
+          "error": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "iw43",
+          "operation": "accept",
+          "requestId": "13",
+          "id": "a11fdd5e-a802-a4f4-b3e7-aa7ab91b8faa",
+          "error": ""
+        }
+      ],
+      "cancellation": {
+        "event": "cancel",
+        "role": "receiver",
+        "run": "iw43",
+        "id": "31d18e0a-4065-d869-6716-017458d53898",
+        "bytes": "262144",
+        "size": "8388608"
+      },
+      "cleanup": {
+        "event": "cleanup",
+        "role": "receiver",
+        "run": "iw43",
+        "id": "31d18e0a-4065-d869-6716-017458d53898",
+        "deleted": "true"
+      },
+      "sender_terminals": [
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "ce597042-bf82-c95a-56e9-19ab5947209f",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "5e23026f-f5f8-3b5c-a596-ed9f9239a1ae",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "772aca48-4282-2f98-cee9-9db759191a9b",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "79969bbb-7417-4c7a-8261-d124a68c2f7d",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "f98f8408-c3aa-8e09-c4b1-1e9839b83953",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "440608a5-9263-8555-ef70-83301132f1e6",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "9f0fd986-5dcb-1b7b-dd8a-4b175a6ca632",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "7282cc7e-3375-44ea-815a-20f52468c586",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "7",
+          "event": "terminal",
+          "id": "3017281f-4bb7-3b06-6688-79c2d39f9b89",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "10",
+          "event": "terminal",
+          "id": "31d18e0a-4065-d869-6716-017458d53898",
+          "role": "sender",
+          "run": "iw43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "a11fdd5e-a802-a4f4-b3e7-aa7ab91b8faa",
+          "role": "sender",
+          "run": "iw43"
+        }
+      ],
+      "receiver_terminals": [
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "ce597042-bf82-c95a-56e9-19ab5947209f",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "5e23026f-f5f8-3b5c-a596-ed9f9239a1ae",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "772aca48-4282-2f98-cee9-9db759191a9b",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "79969bbb-7417-4c7a-8261-d124a68c2f7d",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "f98f8408-c3aa-8e09-c4b1-1e9839b83953",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "440608a5-9263-8555-ef70-83301132f1e6",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "9f0fd986-5dcb-1b7b-dd8a-4b175a6ca632",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "7282cc7e-3375-44ea-815a-20f52468c586",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "3017281f-4bb7-3b06-6688-79c2d39f9b89",
+          "error": "7"
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "31d18e0a-4065-d869-6716-017458d53898",
+          "error": "8"
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "a11fdd5e-a802-a4f4-b3e7-aa7ab91b8faa",
+          "error": ""
+        }
+      ],
+      "restart": {
+        "sender": {
+          "event": "restart",
+          "role": "sender",
+          "run": "iw43",
+          "trustStable": true
+        },
+        "receiver": {
+          "event": "restart",
+          "role": "receiver",
+          "run": "iw43",
+          "trustStable": "true"
+        }
+      },
+      "updates": {
+        "sender": [
+          {
+            "event": "updated",
+            "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+            "name": "interop-iw43-receiver",
+            "paired": false,
+            "port": 5160,
+            "role": "sender",
+            "run": "iw43"
+          },
+          {
+            "event": "updated",
+            "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+            "name": "interop-iw43-receiver",
+            "paired": false,
+            "port": 5160,
+            "role": "sender",
+            "run": "iw43"
+          },
+          {
+            "event": "updated",
+            "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+            "name": "interop-iw43-receiver",
+            "paired": true,
+            "port": 5160,
+            "role": "sender",
+            "run": "iw43"
+          },
+          {
+            "event": "updated",
+            "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+            "name": "interop-iw43-receiver",
+            "paired": true,
+            "port": 5186,
+            "role": "sender",
+            "run": "iw43"
+          },
+          {
+            "event": "updated",
+            "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+            "name": "interop-iw43-receiver",
+            "paired": true,
+            "port": 5186,
+            "role": "sender",
+            "run": "iw43"
+          }
+        ],
+        "receiver": [
+          {
+            "event": "updated",
+            "role": "receiver",
+            "run": "iw43",
+            "id": "e77a8ef1-4302-4a08-93de-529edfc97fad",
+            "name": "interop-iw43-sender",
+            "port": "59750",
+            "paired": "true"
+          }
+        ]
+      },
+      "rediscovery": {
+        "sender": {
+          "event": "rediscovered",
+          "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+          "paired": true,
+          "port": 5186,
+          "role": "sender",
+          "run": "iw43"
+        },
+        "receiver": {
+          "event": "rediscovered",
+          "role": "receiver",
+          "run": "iw43",
+          "id": "e77a8ef1-4302-4a08-93de-529edfc97fad",
+          "port": "59751",
+          "paired": "true"
+        }
+      },
+      "public_discovery_events": {
+        "sender": [
+          {
+            "event": "discovery",
+            "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+            "name": "interop-iw43-receiver",
+            "paired": false,
+            "port": 5160,
+            "role": "sender",
+            "run": "iw43"
+          },
+          {
+            "event": "discovery",
+            "id": "073e65ed-14f4-4b38-9c42-b87df082d1bc",
+            "name": "interop-iw43-receiver",
+            "paired": true,
+            "port": 5186,
+            "role": "sender",
+            "run": "iw43"
+          }
+        ],
+        "receiver": [
+          {
+            "event": "discovery",
+            "role": "receiver",
+            "run": "iw43",
+            "id": "e77a8ef1-4302-4a08-93de-529edfc97fad",
+            "name": "interop-iw43-sender",
+            "port": "59750",
+            "paired": "false"
+          },
+          {
+            "event": "discovery",
+            "role": "receiver",
+            "run": "iw43",
+            "id": "e77a8ef1-4302-4a08-93de-529edfc97fad",
+            "name": "interop-iw43-sender",
+            "port": "59751",
+            "paired": "true"
+          }
+        ]
+      },
+      "offline": {
+        "event": "offline",
+        "role": "receiver",
+        "run": "iw43",
+        "id": "e77a8ef1-4302-4a08-93de-529edfc97fad",
+        "name": "interop-iw43-sender",
+        "port": "59751",
+        "paired": "true"
+      }
+    },
+    {
+      "status": "PASS",
+      "run": "ai43",
+      "direction": "android->ios",
+      "sas": "443353",
+      "successes": 9,
+      "rejections": 1,
+      "cancellations": 1,
+      "transfer_ids": [
+        "090ffb91-7789-c36b-231d-52e8b7969e1e",
+        "119a3fe2-35b8-50b3-cbb6-af9231cf94df",
+        "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+        "52557709-9812-a251-19fb-26f792df91e1",
+        "6dfb7ae6-2afa-6320-9a7a-9e7eba187a18",
+        "6fdac088-c588-dcda-1458-03fcf0354784",
+        "85852fcb-abb3-b130-9479-add2a78d4529",
+        "acd8cf50-34de-f181-1498-7436ac6a20aa",
+        "b0e1650a-edb4-de5b-fdba-b1367db1ad7e",
+        "c01a4760-7bc4-7357-2ff8-9f3a50ecfbaa",
+        "e28be6a3-6a4f-db78-e1e2-af7ee5097409"
+      ],
+      "identity_scope": "remote_pairing_matches_same_host_discovery; no reciprocal local DeviceId binding",
+      "sender": {
+        "host": {
+          "event": "begin",
+          "role": "sender",
+          "run": "ai43",
+          "platform": "android",
+          "os": "17",
+          "name": "interop-ai43-sender",
+          "sdkPlatform": "android",
+          "scenario": "extended",
+          "expectedPeer": "interop-ai43-receiver"
+        },
+        "discovered_remote": {
+          "event": "discovered",
+          "role": "sender",
+          "run": "ai43",
+          "id": "ebbab853-9f01-4c7c-9bd9-50ff78217a85",
+          "name": "interop-ai43-receiver",
+          "platform": "IOS",
+          "protocol": "1.0",
+          "addresses": "192.168.2.148,fda7:b75:67e1:4ed8:18ba:42a0:f13:3ee9,fe80::456:39ac:4dfc:90e5%wlan0",
+          "port": 59752
+        }
+      },
+      "receiver": {
+        "host": {
+          "event": "begin",
+          "expectedPeer": "interop-ai43-sender",
+          "name": "interop-ai43-receiver",
+          "os": "Version 17.6.1 (Build 21G93)",
+          "platform": "ios",
+          "role": "receiver",
+          "run": "ai43",
+          "scenario": "extended",
+          "sdkPlatform": "ios"
+        },
+        "discovered_remote": {
+          "addresses": "fe80::90ac:72ff:fe34:61e5%19",
+          "event": "discovered",
+          "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+          "name": "interop-ai43-sender",
+          "platform": 1,
+          "port": 37257,
+          "protocol": "1.0",
+          "role": "receiver",
+          "run": "ai43"
+        }
+      },
+      "contents": [
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "85852fcb-abb3-b130-9479-add2a78d4529",
+          "name": "text.txt",
+          "size": 24,
+          "sha256": "0ef32af6b0165f5c80ad0ecbbbc99e96443146fc3cfe19c2b9a00935768219da",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "52557709-9812-a251-19fb-26f792df91e1",
+          "name": "image.png",
+          "size": 130,
+          "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "6dfb7ae6-2afa-6320-9a7a-9e7eba187a18",
+          "name": "image.jpg",
+          "size": 695,
+          "sha256": "5518d9adee1d3db049900ae8f8829e9a57e0f4dc7e0e27d7386d3ab405bc0ce7",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "e28be6a3-6a4f-db78-e1e2-af7ee5097409",
+          "name": "empty.bin",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "c01a4760-7bc4-7357-2ff8-9f3a50ecfbaa",
+          "name": "large.bin",
+          "size": 700001,
+          "sha256": "4c47cf2213b62ff9d5b31b83e3d9a7ebbda3cc54d22ee469f640373740bab739",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "6fdac088-c588-dcda-1458-03fcf0354784",
+          "name": "clipboard.txt",
+          "size": 24,
+          "sha256": "c1d2af2b6a2962f420b01ae40b5c33363a1925faa8ce99806dc5dd1188e6bdc5",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "b0e1650a-edb4-de5b-fdba-b1367db1ad7e",
+          "name": "text-large.txt",
+          "size": 5242888,
+          "sha256": "e57810c5a605bc0fd9cdb3ddb54cc7209df8c07b6aaeb7d0c8e8a8ce678fda92",
+          "pixel_sha256": ""
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "acd8cf50-34de-f181-1498-7436ac6a20aa",
+          "name": "clipboard.png",
+          "size": 130,
+          "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206",
+          "pixel_sha256": "80bd4e68af2714bf9b5b3fe21e22163ebd5cd6727001de0dc4ee4d630d8a3bc2"
+        },
+        {
+          "event": "sent",
+          "role": "sender",
+          "run": "ai43",
+          "id": "090ffb91-7789-c36b-231d-52e8b7969e1e",
+          "name": "isolation.txt",
+          "size": 14,
+          "sha256": "8f5dce26a0b2358be71da74f0bd8c6d452bf5b74ee7fd07a1aeb73a85079d007"
+        }
+      ],
+      "offers": [
+        {
+          "event": "offer",
+          "id": "85852fcb-abb3-b130-9479-add2a78d4529",
+          "kind": 1,
+          "requestId": 2,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 24
+        },
+        {
+          "event": "offer",
+          "id": "52557709-9812-a251-19fb-26f792df91e1",
+          "kind": 2,
+          "requestId": 3,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 130
+        },
+        {
+          "event": "offer",
+          "id": "6dfb7ae6-2afa-6320-9a7a-9e7eba187a18",
+          "kind": 2,
+          "requestId": 4,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 695
+        },
+        {
+          "event": "offer",
+          "id": "e28be6a3-6a4f-db78-e1e2-af7ee5097409",
+          "kind": 3,
+          "requestId": 5,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 0
+        },
+        {
+          "event": "offer",
+          "id": "c01a4760-7bc4-7357-2ff8-9f3a50ecfbaa",
+          "kind": 3,
+          "requestId": 6,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 700001
+        },
+        {
+          "event": "offer",
+          "id": "6fdac088-c588-dcda-1458-03fcf0354784",
+          "kind": 1,
+          "requestId": 7,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 24
+        },
+        {
+          "event": "offer",
+          "id": "b0e1650a-edb4-de5b-fdba-b1367db1ad7e",
+          "kind": 1,
+          "requestId": 8,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 5242888
+        },
+        {
+          "event": "offer",
+          "id": "acd8cf50-34de-f181-1498-7436ac6a20aa",
+          "kind": 2,
+          "requestId": 9,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 130
+        },
+        {
+          "event": "offer",
+          "id": "119a3fe2-35b8-50b3-cbb6-af9231cf94df",
+          "kind": 1,
+          "requestId": 10,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 6
+        },
+        {
+          "event": "offer",
+          "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+          "kind": 3,
+          "requestId": 11,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 8388608
+        },
+        {
+          "event": "offer",
+          "id": "090ffb91-7789-c36b-231d-52e8b7969e1e",
+          "kind": 1,
+          "requestId": 13,
+          "role": "receiver",
+          "run": "ai43",
+          "size": 14
+        }
+      ],
+      "decisions": [
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "85852fcb-abb3-b130-9479-add2a78d4529",
+          "requestId": 2,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "52557709-9812-a251-19fb-26f792df91e1",
+          "requestId": 3,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "6dfb7ae6-2afa-6320-9a7a-9e7eba187a18",
+          "requestId": 4,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "e28be6a3-6a4f-db78-e1e2-af7ee5097409",
+          "requestId": 5,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "c01a4760-7bc4-7357-2ff8-9f3a50ecfbaa",
+          "requestId": 6,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "6fdac088-c588-dcda-1458-03fcf0354784",
+          "requestId": 7,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "b0e1650a-edb4-de5b-fdba-b1367db1ad7e",
+          "requestId": 8,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "acd8cf50-34de-f181-1498-7436ac6a20aa",
+          "requestId": 9,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "reject",
+          "event": "consent",
+          "id": "119a3fe2-35b8-50b3-cbb6-af9231cf94df",
+          "requestId": 10,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+          "requestId": 11,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "decision": "accept",
+          "event": "consent",
+          "id": "090ffb91-7789-c36b-231d-52e8b7969e1e",
+          "requestId": 13,
+          "role": "receiver",
+          "run": "ai43"
+        }
+      ],
+      "receiver_decision_completions": [
+        {
+          "error": "",
+          "event": "operation",
+          "id": "",
+          "operation": "confirm",
+          "operationId": 6,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "85852fcb-abb3-b130-9479-add2a78d4529",
+          "operation": "accept",
+          "operationId": 7,
+          "requestId": 2,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "52557709-9812-a251-19fb-26f792df91e1",
+          "operation": "accept",
+          "operationId": 8,
+          "requestId": 3,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "6dfb7ae6-2afa-6320-9a7a-9e7eba187a18",
+          "operation": "accept",
+          "operationId": 9,
+          "requestId": 4,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "e28be6a3-6a4f-db78-e1e2-af7ee5097409",
+          "operation": "accept",
+          "operationId": 10,
+          "requestId": 5,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "c01a4760-7bc4-7357-2ff8-9f3a50ecfbaa",
+          "operation": "accept",
+          "operationId": 11,
+          "requestId": 6,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "6fdac088-c588-dcda-1458-03fcf0354784",
+          "operation": "accept",
+          "operationId": 12,
+          "requestId": 7,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "b0e1650a-edb4-de5b-fdba-b1367db1ad7e",
+          "operation": "accept",
+          "operationId": 13,
+          "requestId": 8,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "acd8cf50-34de-f181-1498-7436ac6a20aa",
+          "operation": "accept",
+          "operationId": 14,
+          "requestId": 9,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "119a3fe2-35b8-50b3-cbb6-af9231cf94df",
+          "operation": "reject",
+          "operationId": 15,
+          "requestId": 10,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+          "operation": "accept",
+          "operationId": 16,
+          "requestId": 11,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+          "operation": "cancel",
+          "operationId": 17,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "",
+          "operation": "confirm",
+          "operationId": 20,
+          "requestId": 0,
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "operation",
+          "id": "090ffb91-7789-c36b-231d-52e8b7969e1e",
+          "operation": "accept",
+          "operationId": 21,
+          "requestId": 13,
+          "role": "receiver",
+          "run": "ai43"
+        }
+      ],
+      "cancellation": {
+        "bytes": 262144,
+        "event": "cancel",
+        "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+        "role": "receiver",
+        "run": "ai43",
+        "size": 8388608
+      },
+      "cleanup": {
+        "deleted": true,
+        "event": "cleanup",
+        "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+        "role": "receiver",
+        "run": "ai43"
+      },
+      "sender_terminals": [
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "85852fcb-abb3-b130-9479-add2a78d4529",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "52557709-9812-a251-19fb-26f792df91e1",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "6dfb7ae6-2afa-6320-9a7a-9e7eba187a18",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "e28be6a3-6a4f-db78-e1e2-af7ee5097409",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "c01a4760-7bc4-7357-2ff8-9f3a50ecfbaa",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "6fdac088-c588-dcda-1458-03fcf0354784",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "b0e1650a-edb4-de5b-fdba-b1367db1ad7e",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "acd8cf50-34de-f181-1498-7436ac6a20aa",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "119a3fe2-35b8-50b3-cbb6-af9231cf94df",
+          "error": "TRANSFER_REJECTED"
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+          "error": "NETWORK_LOST"
+        },
+        {
+          "event": "terminal",
+          "role": "sender",
+          "run": "ai43",
+          "id": "090ffb91-7789-c36b-231d-52e8b7969e1e",
+          "error": ""
+        }
+      ],
+      "receiver_terminals": [
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "85852fcb-abb3-b130-9479-add2a78d4529",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "52557709-9812-a251-19fb-26f792df91e1",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "6dfb7ae6-2afa-6320-9a7a-9e7eba187a18",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "e28be6a3-6a4f-db78-e1e2-af7ee5097409",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "c01a4760-7bc4-7357-2ff8-9f3a50ecfbaa",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "6fdac088-c588-dcda-1458-03fcf0354784",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "b0e1650a-edb4-de5b-fdba-b1367db1ad7e",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "acd8cf50-34de-f181-1498-7436ac6a20aa",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "7",
+          "event": "terminal",
+          "id": "119a3fe2-35b8-50b3-cbb6-af9231cf94df",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "8",
+          "event": "terminal",
+          "id": "19ad28b9-e814-86fe-0f0e-f6f5c9289896",
+          "role": "receiver",
+          "run": "ai43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "090ffb91-7789-c36b-231d-52e8b7969e1e",
+          "role": "receiver",
+          "run": "ai43"
+        }
+      ],
+      "restart": {
+        "sender": {
+          "event": "restart",
+          "role": "sender",
+          "run": "ai43",
+          "trustStable": true
+        },
+        "receiver": {
+          "event": "restart",
+          "role": "receiver",
+          "run": "ai43",
+          "trustStable": true
+        }
+      },
+      "updates": {
+        "sender": [
+          {
+            "event": "updated",
+            "role": "sender",
+            "run": "ai43",
+            "id": "ebbab853-9f01-4c7c-9bd9-50ff78217a85",
+            "name": "interop-ai43-receiver",
+            "port": 59752,
+            "paired": true
+          },
+          {
+            "event": "updated",
+            "role": "sender",
+            "run": "ai43",
+            "id": "ebbab853-9f01-4c7c-9bd9-50ff78217a85",
+            "name": "interop-ai43-receiver",
+            "port": 59753,
+            "paired": true
+          }
+        ],
+        "receiver": [
+          {
+            "event": "updated",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": false,
+            "port": 37257,
+            "role": "receiver",
+            "run": "ai43"
+          },
+          {
+            "event": "updated",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": false,
+            "port": 37257,
+            "role": "receiver",
+            "run": "ai43"
+          },
+          {
+            "event": "updated",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": true,
+            "port": 37257,
+            "role": "receiver",
+            "run": "ai43"
+          },
+          {
+            "event": "updated",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": true,
+            "port": 37257,
+            "role": "receiver",
+            "run": "ai43"
+          },
+          {
+            "event": "updated",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": true,
+            "port": 37257,
+            "role": "receiver",
+            "run": "ai43"
+          },
+          {
+            "event": "updated",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": true,
+            "port": 47117,
+            "role": "receiver",
+            "run": "ai43"
+          }
+        ]
+      },
+      "rediscovery": {
+        "sender": {
+          "event": "rediscovered",
+          "role": "sender",
+          "run": "ai43",
+          "id": "ebbab853-9f01-4c7c-9bd9-50ff78217a85",
+          "port": 59753,
+          "paired": true
+        },
+        "receiver": {
+          "event": "rediscovered",
+          "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+          "paired": true,
+          "port": 47117,
+          "role": "receiver",
+          "run": "ai43"
+        }
+      },
+      "public_discovery_events": {
+        "sender": [
+          {
+            "event": "discovery",
+            "role": "sender",
+            "run": "ai43",
+            "id": "ebbab853-9f01-4c7c-9bd9-50ff78217a85",
+            "name": "interop-ai43-receiver",
+            "port": 59752,
+            "paired": false
+          },
+          {
+            "event": "discovery",
+            "role": "sender",
+            "run": "ai43",
+            "id": "ebbab853-9f01-4c7c-9bd9-50ff78217a85",
+            "name": "interop-ai43-receiver",
+            "port": 59752,
+            "paired": true
+          }
+        ],
+        "receiver": [
+          {
+            "event": "discovery",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": false,
+            "port": 37257,
+            "role": "receiver",
+            "run": "ai43"
+          },
+          {
+            "event": "discovery",
+            "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+            "name": "interop-ai43-sender",
+            "paired": true,
+            "port": 37257,
+            "role": "receiver",
+            "run": "ai43"
+          }
+        ]
+      },
+      "offline": {
+        "event": "offline",
+        "id": "b43b27c6-63c2-457b-b8ef-44ad8303ff96",
+        "name": "interop-ai43-sender",
+        "role": "receiver",
+        "run": "ai43"
+      }
+    },
+    {
+      "status": "PASS",
+      "run": "ia43",
+      "direction": "ios->android",
+      "sas": "374526",
+      "successes": 9,
+      "rejections": 1,
+      "cancellations": 1,
+      "transfer_ids": [
+        "05182824-f013-0d43-dd8f-f00b13a493ab",
+        "08c868b4-cdbc-314f-8427-870f413b924b",
+        "20797872-70f3-4d4c-ba6e-ce0483f63466",
+        "403fe687-aed6-566d-f497-6fcfa6536afc",
+        "6428e2a8-4455-50ff-b51c-fcee6d1163a6",
+        "81437f72-9d0d-1ad6-00b0-51f1b3ebb5ce",
+        "85759dfb-5df1-30f0-d0a0-90458efa55d3",
+        "8e216303-6c2e-04de-11cb-5b1cbc7b303d",
+        "8e4f2fca-4e8b-c67c-b22b-428ae17a0867",
+        "d1d55c22-fcdf-a977-1e11-c6c68617ced9",
+        "e90d32de-7237-610b-3dd9-93b0a3b549ad"
+      ],
+      "identity_scope": "remote_pairing_matches_same_host_discovery; no reciprocal local DeviceId binding",
+      "sender": {
+        "host": {
+          "event": "begin",
+          "expectedPeer": "interop-ia43-receiver",
+          "name": "interop-ia43-sender",
+          "os": "Version 17.6.1 (Build 21G93)",
+          "platform": "ios",
+          "role": "sender",
+          "run": "ia43",
+          "scenario": "extended",
+          "sdkPlatform": "ios"
+        },
+        "discovered_remote": {
+          "addresses": "fe80::90ac:72ff:fe34:61e5%19",
+          "event": "discovered",
+          "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+          "name": "interop-ia43-receiver",
+          "platform": 1,
+          "port": 56529,
+          "protocol": "1.0",
+          "role": "sender",
+          "run": "ia43"
+        }
+      },
+      "receiver": {
+        "host": {
+          "event": "begin",
+          "role": "receiver",
+          "run": "ia43",
+          "platform": "android",
+          "os": "17",
+          "name": "interop-ia43-receiver",
+          "sdkPlatform": "android",
+          "scenario": "extended",
+          "expectedPeer": "interop-ia43-sender"
+        },
+        "discovered_remote": {
+          "event": "discovered",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "67d84362-2c2f-46cc-97e7-e9aff9639039",
+          "name": "interop-ia43-sender",
+          "platform": "IOS",
+          "protocol": "1.0",
+          "addresses": "192.168.2.148,fda7:b75:67e1:4ed8:18ba:42a0:f13:3ee9,fe80::456:39ac:4dfc:90e5%wlan0",
+          "port": 59754
+        }
+      },
+      "contents": [
+        {
+          "event": "sent",
+          "id": "8e4f2fca-4e8b-c67c-b22b-428ae17a0867",
+          "name": "text.txt",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "0ef32af6b0165f5c80ad0ecbbbc99e96443146fc3cfe19c2b9a00935768219da",
+          "size": 24
+        },
+        {
+          "event": "sent",
+          "id": "05182824-f013-0d43-dd8f-f00b13a493ab",
+          "name": "image.png",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "379b68ca5fd23a9d7268080e4454892985e646f63773696797f17ac5c5a6f206",
+          "size": 130
+        },
+        {
+          "event": "sent",
+          "id": "403fe687-aed6-566d-f497-6fcfa6536afc",
+          "name": "image.jpg",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "5518d9adee1d3db049900ae8f8829e9a57e0f4dc7e0e27d7386d3ab405bc0ce7",
+          "size": 695
+        },
+        {
+          "event": "sent",
+          "id": "d1d55c22-fcdf-a977-1e11-c6c68617ced9",
+          "name": "empty.bin",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        {
+          "event": "sent",
+          "id": "08c868b4-cdbc-314f-8427-870f413b924b",
+          "name": "large.bin",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "4c47cf2213b62ff9d5b31b83e3d9a7ebbda3cc54d22ee469f640373740bab739",
+          "size": 700001
+        },
+        {
+          "event": "sent",
+          "id": "8e216303-6c2e-04de-11cb-5b1cbc7b303d",
+          "name": "clipboard.txt",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "c1d2af2b6a2962f420b01ae40b5c33363a1925faa8ce99806dc5dd1188e6bdc5",
+          "size": 24
+        },
+        {
+          "event": "sent",
+          "id": "20797872-70f3-4d4c-ba6e-ce0483f63466",
+          "name": "text-large.txt",
+          "pixel_sha256": "",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "e57810c5a605bc0fd9cdb3ddb54cc7209df8c07b6aaeb7d0c8e8a8ce678fda92",
+          "size": 5242888
+        },
+        {
+          "event": "sent",
+          "id": "e90d32de-7237-610b-3dd9-93b0a3b549ad",
+          "name": "clipboard.png",
+          "pixel_sha256": "80bd4e68af2714bf9b5b3fe21e22163ebd5cd6727001de0dc4ee4d630d8a3bc2",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "de42c88aead8e0f5617a0cdfd3c05562c3f7582412469a9e9f84522bccd0c234",
+          "size": 315
+        },
+        {
+          "event": "sent",
+          "id": "85759dfb-5df1-30f0-d0a0-90458efa55d3",
+          "name": "isolation.txt",
+          "role": "sender",
+          "run": "ia43",
+          "sha256": "8f5dce26a0b2358be71da74f0bd8c6d452bf5b74ee7fd07a1aeb73a85079d007",
+          "size": 14
+        }
+      ],
+      "offers": [
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "8e4f2fca-4e8b-c67c-b22b-428ae17a0867",
+          "requestId": 2,
+          "size": 24,
+          "kind": "TEXT"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "05182824-f013-0d43-dd8f-f00b13a493ab",
+          "requestId": 3,
+          "size": 130,
+          "kind": "IMAGE"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "403fe687-aed6-566d-f497-6fcfa6536afc",
+          "requestId": 4,
+          "size": 695,
+          "kind": "IMAGE"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "d1d55c22-fcdf-a977-1e11-c6c68617ced9",
+          "requestId": 5,
+          "size": 0,
+          "kind": "FILE"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "08c868b4-cdbc-314f-8427-870f413b924b",
+          "requestId": 6,
+          "size": 700001,
+          "kind": "FILE"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "8e216303-6c2e-04de-11cb-5b1cbc7b303d",
+          "requestId": 7,
+          "size": 24,
+          "kind": "TEXT"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "20797872-70f3-4d4c-ba6e-ce0483f63466",
+          "requestId": 8,
+          "size": 5242888,
+          "kind": "TEXT"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "e90d32de-7237-610b-3dd9-93b0a3b549ad",
+          "requestId": 9,
+          "size": 315,
+          "kind": "IMAGE"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "81437f72-9d0d-1ad6-00b0-51f1b3ebb5ce",
+          "requestId": 10,
+          "size": 6,
+          "kind": "TEXT"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6",
+          "requestId": 11,
+          "size": 8388608,
+          "kind": "FILE"
+        },
+        {
+          "event": "offer",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "85759dfb-5df1-30f0-d0a0-90458efa55d3",
+          "requestId": 13,
+          "size": 14,
+          "kind": "TEXT"
+        }
+      ],
+      "decisions": [
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "8e4f2fca-4e8b-c67c-b22b-428ae17a0867",
+          "requestId": 2,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "05182824-f013-0d43-dd8f-f00b13a493ab",
+          "requestId": 3,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "403fe687-aed6-566d-f497-6fcfa6536afc",
+          "requestId": 4,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "d1d55c22-fcdf-a977-1e11-c6c68617ced9",
+          "requestId": 5,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "08c868b4-cdbc-314f-8427-870f413b924b",
+          "requestId": 6,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "8e216303-6c2e-04de-11cb-5b1cbc7b303d",
+          "requestId": 7,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "20797872-70f3-4d4c-ba6e-ce0483f63466",
+          "requestId": 8,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "e90d32de-7237-610b-3dd9-93b0a3b549ad",
+          "requestId": 9,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "81437f72-9d0d-1ad6-00b0-51f1b3ebb5ce",
+          "requestId": 10,
+          "decision": "reject"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6",
+          "requestId": 11,
+          "decision": "accept"
+        },
+        {
+          "event": "consent",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "85759dfb-5df1-30f0-d0a0-90458efa55d3",
+          "requestId": 13,
+          "decision": "accept"
+        }
+      ],
+      "receiver_decision_completions": [
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "confirm",
+          "operationId": 6,
+          "error": "",
+          "requestId": 0,
+          "id": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 7,
+          "error": "",
+          "requestId": 2,
+          "id": "8e4f2fca-4e8b-c67c-b22b-428ae17a0867"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 8,
+          "error": "",
+          "requestId": 3,
+          "id": "05182824-f013-0d43-dd8f-f00b13a493ab"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 9,
+          "error": "",
+          "requestId": 4,
+          "id": "403fe687-aed6-566d-f497-6fcfa6536afc"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 10,
+          "error": "",
+          "requestId": 5,
+          "id": "d1d55c22-fcdf-a977-1e11-c6c68617ced9"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 11,
+          "error": "",
+          "requestId": 6,
+          "id": "08c868b4-cdbc-314f-8427-870f413b924b"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 12,
+          "error": "",
+          "requestId": 7,
+          "id": "8e216303-6c2e-04de-11cb-5b1cbc7b303d"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 13,
+          "error": "",
+          "requestId": 8,
+          "id": "20797872-70f3-4d4c-ba6e-ce0483f63466"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 14,
+          "error": "",
+          "requestId": 9,
+          "id": "e90d32de-7237-610b-3dd9-93b0a3b549ad"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "reject",
+          "operationId": 15,
+          "error": "",
+          "requestId": 10,
+          "id": "81437f72-9d0d-1ad6-00b0-51f1b3ebb5ce"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 16,
+          "error": "",
+          "requestId": 11,
+          "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "cancel",
+          "operationId": 17,
+          "error": "",
+          "requestId": 0,
+          "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6"
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "confirm",
+          "operationId": 20,
+          "error": "",
+          "requestId": 0,
+          "id": ""
+        },
+        {
+          "event": "operation",
+          "role": "receiver",
+          "run": "ia43",
+          "operation": "accept",
+          "operationId": 21,
+          "error": "",
+          "requestId": 13,
+          "id": "85759dfb-5df1-30f0-d0a0-90458efa55d3"
+        }
+      ],
+      "cancellation": {
+        "event": "cancel",
+        "role": "receiver",
+        "run": "ia43",
+        "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6",
+        "bytes": 262144,
+        "size": 8388608
+      },
+      "cleanup": {
+        "event": "cleanup",
+        "role": "receiver",
+        "run": "ia43",
+        "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6",
+        "deleted": true
+      },
+      "sender_terminals": [
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "8e4f2fca-4e8b-c67c-b22b-428ae17a0867",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "05182824-f013-0d43-dd8f-f00b13a493ab",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "403fe687-aed6-566d-f497-6fcfa6536afc",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "d1d55c22-fcdf-a977-1e11-c6c68617ced9",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "08c868b4-cdbc-314f-8427-870f413b924b",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "8e216303-6c2e-04de-11cb-5b1cbc7b303d",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "20797872-70f3-4d4c-ba6e-ce0483f63466",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "e90d32de-7237-610b-3dd9-93b0a3b549ad",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "7",
+          "event": "terminal",
+          "id": "81437f72-9d0d-1ad6-00b0-51f1b3ebb5ce",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "10",
+          "event": "terminal",
+          "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6",
+          "role": "sender",
+          "run": "ia43"
+        },
+        {
+          "error": "",
+          "event": "terminal",
+          "id": "85759dfb-5df1-30f0-d0a0-90458efa55d3",
+          "role": "sender",
+          "run": "ia43"
+        }
+      ],
+      "receiver_terminals": [
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "8e4f2fca-4e8b-c67c-b22b-428ae17a0867",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "05182824-f013-0d43-dd8f-f00b13a493ab",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "403fe687-aed6-566d-f497-6fcfa6536afc",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "d1d55c22-fcdf-a977-1e11-c6c68617ced9",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "08c868b4-cdbc-314f-8427-870f413b924b",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "8e216303-6c2e-04de-11cb-5b1cbc7b303d",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "20797872-70f3-4d4c-ba6e-ce0483f63466",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "e90d32de-7237-610b-3dd9-93b0a3b549ad",
+          "error": ""
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "81437f72-9d0d-1ad6-00b0-51f1b3ebb5ce",
+          "error": "TRANSFER_REJECTED"
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "6428e2a8-4455-50ff-b51c-fcee6d1163a6",
+          "error": "CANCELLED"
+        },
+        {
+          "event": "terminal",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "85759dfb-5df1-30f0-d0a0-90458efa55d3",
+          "error": ""
+        }
+      ],
+      "restart": {
+        "sender": {
+          "event": "restart",
+          "role": "sender",
+          "run": "ia43",
+          "trustStable": true
+        },
+        "receiver": {
+          "event": "restart",
+          "role": "receiver",
+          "run": "ia43",
+          "trustStable": true
+        }
+      },
+      "updates": {
+        "sender": [
+          {
+            "event": "updated",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": false,
+            "port": 56529,
+            "role": "sender",
+            "run": "ia43"
+          },
+          {
+            "event": "updated",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": false,
+            "port": 56529,
+            "role": "sender",
+            "run": "ia43"
+          },
+          {
+            "event": "updated",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": true,
+            "port": 56529,
+            "role": "sender",
+            "run": "ia43"
+          },
+          {
+            "event": "updated",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": true,
+            "port": 56529,
+            "role": "sender",
+            "run": "ia43"
+          },
+          {
+            "event": "updated",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": true,
+            "port": 56529,
+            "role": "sender",
+            "run": "ia43"
+          },
+          {
+            "event": "updated",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": true,
+            "port": 52223,
+            "role": "sender",
+            "run": "ia43"
+          }
+        ],
+        "receiver": [
+          {
+            "event": "updated",
+            "role": "receiver",
+            "run": "ia43",
+            "id": "67d84362-2c2f-46cc-97e7-e9aff9639039",
+            "name": "interop-ia43-sender",
+            "port": 59754,
+            "paired": true
+          },
+          {
+            "event": "updated",
+            "role": "receiver",
+            "run": "ia43",
+            "id": "67d84362-2c2f-46cc-97e7-e9aff9639039",
+            "name": "interop-ia43-sender",
+            "port": 59755,
+            "paired": true
+          }
+        ]
+      },
+      "rediscovery": {
+        "sender": {
+          "event": "rediscovered",
+          "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+          "paired": true,
+          "port": 52223,
+          "role": "sender",
+          "run": "ia43"
+        },
+        "receiver": {
+          "event": "rediscovered",
+          "role": "receiver",
+          "run": "ia43",
+          "id": "67d84362-2c2f-46cc-97e7-e9aff9639039",
+          "port": 59755,
+          "paired": true
+        }
+      },
+      "public_discovery_events": {
+        "sender": [
+          {
+            "event": "discovery",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": false,
+            "port": 56529,
+            "role": "sender",
+            "run": "ia43"
+          },
+          {
+            "event": "discovery",
+            "id": "eb7c0fd9-2222-498a-97f4-30d7beb2f1c7",
+            "name": "interop-ia43-receiver",
+            "paired": true,
+            "port": 56529,
+            "role": "sender",
+            "run": "ia43"
+          }
+        ],
+        "receiver": [
+          {
+            "event": "discovery",
+            "role": "receiver",
+            "run": "ia43",
+            "id": "67d84362-2c2f-46cc-97e7-e9aff9639039",
+            "name": "interop-ia43-sender",
+            "port": 59754,
+            "paired": false
+          },
+          {
+            "event": "discovery",
+            "role": "receiver",
+            "run": "ia43",
+            "id": "67d84362-2c2f-46cc-97e7-e9aff9639039",
+            "name": "interop-ia43-sender",
+            "port": 59754,
+            "paired": true
+          }
+        ]
+      },
+      "offline": {
+        "event": "offline",
+        "role": "receiver",
+        "run": "ia43",
+        "id": "67d84362-2c2f-46cc-97e7-e9aff9639039",
+        "name": "interop-ia43-sender"
       }
     }
   ]

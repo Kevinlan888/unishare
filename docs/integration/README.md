@@ -10,8 +10,9 @@ The public package hosts now exercise real LAN discovery, TLS/SAS confirmation,
 recipient decisions, text, PNG/JPEG, empty and multichunk files, explicit clipboard
 text/image, active cancellation and staging cleanup, trust across Stop/Start,
 rediscovery, failure isolation and Offline. The matrix distinguishes physical
-Pixel results from iOS Simulator results. Physical iPhone interop remains a
-release gate while its signed host cannot launch on the locked device.
+Pixel and iPhone results from iOS Simulator results. All six physical directions
+passed; the matrix retains an earlier Windows→iPhone discovery timeout and the
+scope of remaining acceptance.
 
 Text transfer supports the configured 8 MiB default through bounded streaming
 on every platform while native buffers remain capped at 4 MiB. Kotlin/Swift
