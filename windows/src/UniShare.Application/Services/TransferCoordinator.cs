@@ -74,9 +74,10 @@ public sealed class TransferCoordinator
         {
             work = RequireIncoming(activity);
             if (work.Acceptance is not null) return work.Acceptance;
-            if (work.Cancelled || work.Rejecting || IsTerminal(Record(work).Status)) throw new InvalidOperationException("Offer is already finished.");
+            if (work.Phase != ReceivePhase.Pending || work.Cancelled || work.Rejecting || IsTerminal(Record(work).Status)) throw new InvalidOperationException("Offer is already finished.");
             completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             work.Acceptance = completion.Task;
+            work.Phase = ReceivePhase.Preparing;
         }
         // Install the shared owner before any destination or Changed callback
         // can reenter; the body and notifications run outside this gate.
@@ -90,7 +91,6 @@ public sealed class TransferCoordinator
         {
             if (!await ReceiveAsync(work, cancellationToken).ConfigureAwait(false))
             {
-                lock (gate) if (work.Acceptance == completion.Task) work.Acceptance = null;
                 completion.TrySetException(new IOException("Unable to prepare incoming content. Check the receive directory."));
                 return;
             }
@@ -98,7 +98,15 @@ public sealed class TransferCoordinator
         }
         catch
         {
-            tracker.Complete(work.Id, Failed(work.Offer.TransferId));
+            TransferTerminal terminal;
+            lock (gate)
+            {
+                terminal = work.PendingTerminal ?? (work.Cancelled || cancellationToken.IsCancellationRequested
+                    ? Cancelled(work.Offer.TransferId) : Failed(work.Offer.TransferId));
+                work.Phase = ReceivePhase.Finishing;
+            }
+            tracker.Complete(work.Id, terminal);
+            lock (gate) work.Phase = ReceivePhase.Terminal;
             completion.TrySetException(new IOException("Unable to receive incoming content."));
         }
     }
@@ -111,7 +119,7 @@ public sealed class TransferCoordinator
         {
             work = RequireIncoming(activity);
             if (work.Acceptance is not null) throw new InvalidOperationException("Offer is already being received.");
-            if (work.Rejecting || IsTerminal(Record(work).Status)) return;
+            if (work.Phase is ReceivePhase.Finishing or ReceivePhase.Terminal || work.Rejecting || IsTerminal(Record(work).Status)) return;
             work.Rejecting = true;
         }
         try
@@ -135,7 +143,7 @@ public sealed class TransferCoordinator
             if (receive is null && send is null) throw new InvalidOperationException("Activity has no live transfer source.");
             if (receive is not null)
             {
-                if (IsTerminal(Record(receive).Status)) return;
+                if (receive.Phase is ReceivePhase.Finishing or ReceivePhase.Terminal || IsTerminal(Record(receive).Status)) return;
                 receive.Cancelled = true; receive.Cancellation.Cancel(); transfer = receive.Offer.TransferId;
             }
             else
@@ -150,8 +158,16 @@ public sealed class TransferCoordinator
         catch { throw new IOException("Unable to cancel content transfer."); }
         // An accepted native operation keeps ownership until its completion
         // task settles. A caller cancelling its wait cannot release its sink.
-        if (receive is not null && receive.Acceptance is null)
+        if (receive is not null)
+        {
+            lock (gate)
+            {
+                if (receive.Phase != ReceivePhase.Pending) return;
+                receive.Phase = ReceivePhase.Finishing;
+            }
             tracker.Complete(receive.Id, Cancelled(transfer));
+            lock (gate) receive.Phase = ReceivePhase.Terminal;
+        }
     }
 
     public Task<ActivityId> RetryAsync(ActivityId activity, CancellationToken cancellationToken)
@@ -238,6 +254,7 @@ public sealed class TransferCoordinator
         ShareContent? preview = null;
         var preparingDestination = false;
         var preparationFailed = false;
+        var submitCancellation = false;
         using var cancellation = cancellationToken.Register(() => _ = RequestCancellationAsync(work.Id));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, work.Cancellation.Token);
         var contentCancellation = linked.Token;
@@ -258,11 +275,12 @@ public sealed class TransferCoordinator
                 // A reentrant cancel during progress must retire the prepared
                 // sink without submitting acceptance after the request ended.
                 contentCancellation.ThrowIfCancellationRequested();
-                if (IsTerminal(Record(work).Status)) throw new OperationCanceledException();
+                if (work.PendingTerminal is not null || IsTerminal(Record(work).Status)) throw new OperationCanceledException();
+                work.Phase = ReceivePhase.Submitted;
                 accepted = sdk.AcceptAsync(work.Offer.RequestId, text?.Path ?? receive!.StagingPath, CancellationToken.None);
             }
             await accepted.ConfigureAwait(false);
-            lock (gate) if (work.Cancelled || IsTerminal(Record(work).Status)) throw new OperationCanceledException();
+            lock (gate) if (work.Cancelled || work.PendingTerminal is not null || IsTerminal(Record(work).Status)) throw new OperationCanceledException();
             if (text is not null)
             {
                 var bytes = await File.ReadAllBytesAsync(text.Path, contentCancellation).ConfigureAwait(false);
@@ -283,7 +301,7 @@ public sealed class TransferCoordinator
         catch (OperationCanceledException) { terminal = Cancelled(work.Offer.TransferId); }
         catch
         {
-            if (preparingDestination) preparationFailed = true;
+            if (preparingDestination && work.Offer.Kind is ContentKind.Image or ContentKind.File) preparationFailed = true;
             else terminal = Failed(work.Offer.TransferId);
         }
         finally
@@ -295,13 +313,34 @@ public sealed class TransferCoordinator
             }
             catch { preparationFailed = false; terminal = Failed(work.Offer.TransferId); finalPath = null; }
         }
-        if (preparationFailed)
+        lock (gate)
         {
-            lock (gate)
+            // Cleanup has finished, but its owner still guards admission/control.
+            // Rollback and cancellation/native termination arbitrate at this
+            // single transition; no later caller can erase a winning terminal.
+            if (finalPath is not null) terminal = new(work.Offer.TransferId, null);
+            else if (work.PendingTerminal is { } pending) terminal = pending;
+            else if (work.Cancelled || cancellationToken.IsCancellationRequested)
             {
-                if (!work.Cancelled) return false; // The native request remains pending and can be retried/rejected.
+                terminal = Cancelled(work.Offer.TransferId);
+                // A caller-token callback may still be queued behind this gate.
+                // Claim its native cancellation here before terminalizing, so
+                // that callback cannot lose the request or submit it twice.
+                submitCancellation = !work.Cancelled;
+                work.Cancelled = true;
             }
-            terminal = Cancelled(work.Offer.TransferId);
+            else if (preparationFailed)
+            {
+                work.Phase = ReceivePhase.Pending;
+                work.Acceptance = null;
+                return false; // Only a still-live Image/File prompt can repair its directory.
+            }
+            work.Phase = ReceivePhase.Finishing;
+        }
+        if (submitCancellation)
+        {
+            try { await sdk.CancelAsync(work.Offer.TransferId, CancellationToken.None).ConfigureAwait(false); }
+            catch { /* Terminal cancellation retains no native error payload. */ }
         }
         if (finalPath is not null)
         {
@@ -309,15 +348,16 @@ public sealed class TransferCoordinator
             // cleanup or cancellable work can turn an exposed final into failure.
             try { if (preview is not null) tracker.PublishIncomingPreview(work.Id, preview); }
             finally { tracker.Complete(work.Id, new(work.Offer.TransferId, null), finalPath); }
+            lock (gate) work.Phase = ReceivePhase.Terminal;
             try { await receive!.DisposeAsync().ConfigureAwait(false); } catch { }
             return true;
         }
         if (terminal.Failure is null && preview is not null)
         {
-            if (contentCancellation.IsCancellationRequested) terminal = Cancelled(work.Offer.TransferId);
-            else tracker.PublishIncomingPreview(work.Id, preview);
+            tracker.PublishIncomingPreview(work.Id, preview);
         }
         tracker.Complete(work.Id, terminal, finalPath);
+        lock (gate) work.Phase = ReceivePhase.Terminal;
         return true;
     }
 
@@ -341,13 +381,31 @@ public sealed class TransferCoordinator
         }
         if (value is ShareSdkEvent.TransferCompleted completed)
         {
+            Incoming? prompt = null;
+            var apply = false;
             lock (gate)
             {
-                // Incoming prompts have no accepted operation completion task.
-                // Their remote failure therefore terminates through the event.
-                if (completed.Terminal.Failure is not null && completed.Terminal.TransferId is { } transfer && incomingTransfers.Contains(transfer) &&
-                    !incoming.Values.Any(work => work.Offer.TransferId == transfer && work.Acceptance is not null))
-                    tracker.Apply(value);
+                if (completed.Terminal.Failure is not null && completed.Terminal.TransferId is { } transfer && incomingTransfers.Contains(transfer))
+                {
+                    var work = incoming.Values.FirstOrDefault(work => work.Offer.TransferId == transfer);
+                    if (work?.Phase is ReceivePhase.Preparing or ReceivePhase.Submitted)
+                    {
+                        // The receive owner must retire its destination before
+                        // releasing drain. Retain only kind + stable diagnostics.
+                        work.PendingTerminal ??= new(transfer, new(completed.Terminal.Failure.Kind, "Content transfer failed."));
+                    }
+                    else if (work is null || work.Phase == ReceivePhase.Pending)
+                    {
+                        prompt = work;
+                        if (prompt is not null) prompt.Phase = ReceivePhase.Finishing;
+                        apply = true;
+                    }
+                }
+            }
+            if (apply)
+            {
+                tracker.Apply(value);
+                if (prompt is not null) lock (gate) prompt.Phase = ReceivePhase.Terminal;
             }
             return; // Accepted completion tasks own resource lifetimes.
         }
@@ -407,7 +465,10 @@ public sealed class TransferCoordinator
     {
         public ActivityId Id { get; } = id; public IncomingOffer Offer { get; } = offer;
         public Task? Acceptance { get; set; } public bool Cancelled { get; set; } public bool Rejecting { get; set; }
+        public ReceivePhase Phase { get; set; }
+        public TransferTerminal? PendingTerminal { get; set; }
         public CancellationTokenSource Cancellation { get; } = new();
         public string? PublishedPath { get; set; }
     }
+    private enum ReceivePhase { Pending, Preparing, Submitted, Finishing, Terminal }
 }
