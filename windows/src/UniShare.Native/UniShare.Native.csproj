@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../UniShare.Application/UniShare.Application.csproj" />
+    <InternalsVisibleTo Include="UniShare.Native.Tests" />
+  </ItemGroup>
+</Project>
