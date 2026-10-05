@@ -228,3 +228,56 @@ URI ownership, callback races and mapping. The independent consuming project
 compiles and shrinks against the release AAR. Physical LAN interop, older API
 coverage and network-switch/large-file acceptance belong to Task 9c/11.
 Generated SDKs, caches, binaries, keys, consumer builds and APKs remain ignored.
+
+## Android acceptance evidence (2026-10-05)
+
+MuMu Android 15/API 35 (`127.0.0.1:16384`, reported model SM_G9900) and an
+attached physical Pixel 10a Android 17/API 37 (`62041JEA316847`) exercised two
+independent native SDK instances in one app. Real NSD produced one matching
+Online record with UUID/name/platform/version, resolved numeric addresses and
+the usable bound port; TLS pairing agreed on six digits. Approved UTF-8 text,
+image and a 524289-byte file matched destination bytes. Offers delivered no
+result or staging data before approval. Rejection, cancellation before approval,
+and receiver cancellation during a 16 MiB file were checked. Active cancellation
+removed staging and retained source data. The cancelling receiver reports
+Cancelled; the remote sender reports NetworkLost because core cancellation
+immediately closes the TLS session. Reconnect requires receiving consent.
+
+Real service Stop produced Offline, and restarted storage retained DeviceId,
+certificate material and trust fingerprints; trusted reconnect succeeded.
+Corrupt encrypted identity and an unusable identity directory reported
+StorageFailed through public initialization without silently replacing identity.
+URI acquisition/Stop/Close and late callback ownership are covered by the public
+instrumentation cases. Foreground-denied Start reports PermissionDenied.
+
+An empty focused test activity on MuMu verified actual ClipboardManager text,
+image ContentResolver bytes, and unsupported intent clipboard InvalidInput.
+The phone clipboard focus case requires an unlocked, awake phone; headless
+instrumentation alone does not meet Android's focus requirement. Adapter tests
+also cover explicit clipboard conversion and unsupported formats at an injected
+framework boundary.
+
+The independently compiled, R8-minified release AAR consumer uses a configured
+host Executor and observes Browsing/Start/Stop/Close. A target 37 consumer on the
+physical API 37 phone verified actual ACCESS_LOCAL_NETWORK denial and successful
+Start after an ADB test grant, then restored the denied permission. This tests
+permission state handling, not the host's runtime permission dialog UI.
+
+These same-device sessions use NSD-advertised local endpoints. They do not prove
+two-device LAN delivery, physical multicast across peers, interface switching,
+real service metadata Updated events, API 26 behavior, or hardware-backed TLS
+key custody. No API 26 device was attached. Task 11 owns cross-platform pairwise
+acceptance. A MuMu combined run observed one NetworkLost before text delivery;
+the isolated connected gate passed without a network workaround. Keep that
+transient emulator result distinct from the physical passing cases.
+
+For a focused installed public test run:
+
+```powershell
+adb -s 127.0.0.1:16384 shell am instrument -w -r -e case acceptance com.unishare.sdk.test/com.unishare.sdk.PublicApiTests
+adb -s 127.0.0.1:16384 shell am instrument -w -r -e case focusedClipboard com.unishare.sdk.test/com.unishare.sdk.PublicApiTests
+```
+
+`identityAcceptance` checks real core-generated identity and storage failures.
+The test activity and provider are instrumentation-only; release contains no
+business UI or acceptance probe.

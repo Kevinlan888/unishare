@@ -9,7 +9,8 @@ import java.util.concurrent.Executor
 
 /** Public consumer tests deliberately use only business API in nativeLifecycle. */
 class PublicApiTests : Instrumentation() {
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
+    private var selectedCase: String? = null
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); selectedCase = arguments?.getString("case"); start() }
     private fun check(value: Boolean, why: String) { if (!value) throw AssertionError(why) }
     private fun nativeLifecycle() {
         val sdk = ShareSdk(targetContext, "public-${UUID.randomUUID()}", Executor { it.run() })
@@ -74,11 +75,35 @@ class PublicApiTests : Instrumentation() {
         check(com.unishare.sdk.internal.ProbeProvider.delayedDelete.await(5, TimeUnit.SECONDS), "late destination was not deleted")
         check(callbacks.get() == 1 && !java.io.File(targetContext.cacheDir, uri.lastPathSegment!!).exists(), "late destination cleanup/no callback after Close")
     }
+    private fun focusedClipboard() {
+        ClipboardHostActivity.focused = java.util.concurrent.CountDownLatch(1)
+        val activity = startActivitySync(android.content.Intent(targetContext, ClipboardHostActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            check(ClipboardHostActivity.focused.await(10, TimeUnit.SECONDS), "clipboard test host focus unavailable")
+            ShareSdk(targetContext, "clipboard-${UUID.randomUUID()}").use { sdk ->
+                check(sdk.initialize(SdkConfig("clipboard")).result.get(15, TimeUnit.SECONDS).isSuccess, "clipboard initialize")
+                val text = "explicit 世界"
+                check(sdk.clipboard.writeContent(ShareContent.Text(text)).result.get(5, TimeUnit.SECONDS).isSuccess, "focused text write")
+                val readText = sdk.clipboard.readShareableContent().result.get(5, TimeUnit.SECONDS)
+                check(readText.isSuccess && (readText.content as ShareContent.Text).text == text, "focused ClipboardManager text roundtrip: $readText")
+                val bytes = android.util.Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9GQAAAAASUVORK5CYII=", android.util.Base64.DEFAULT)
+                check(sdk.clipboard.writeContent(ShareContent.Image("image/png", bytes)).result.get(5, TimeUnit.SECONDS).isSuccess, "focused image write")
+                val readImage = sdk.clipboard.readShareableContent().result.get(5, TimeUnit.SECONDS)
+                check(readImage.isSuccess && (readImage.content as ShareContent.Image).bytes.contentEquals(bytes), "focused ClipboardManager image/ContentResolver roundtrip")
+                runOnMainSync { targetContext.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newIntent("unsupported", android.content.Intent("fixture"))) }
+                check(sdk.clipboard.readShareableContent().result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.INVALID_INPUT, "actual unsupported clipboard InvalidInput")
+            }
+        } finally { runOnMainSync { activity.finish() } }
+    }
     override fun onStart() {
         val result = Bundle()
         try {
             for ((name, test) in listOf("nativeLifecycle" to ::nativeLifecycle, "delayedUriClose" to ::delayedUriClose,
-                "apiContract" to ApiContractCases::run, "stopDuringUri" to ApiContractCases::stopDuringUri)) {
+                "apiContract" to ApiContractCases::run, "stopDuringUri" to ApiContractCases::stopDuringUri,
+                "identityAcceptance" to { com.unishare.sdk.internal.IdentityAcceptance.run(targetContext) },
+                "focusedClipboard" to ::focusedClipboard,
+                "acceptance" to { AcceptanceCases.run(targetContext) })) {
+                if (selectedCase != null && selectedCase != name) continue
                 val status = Bundle(); status.putString("class", javaClass.name); status.putString("test", name)
                 sendStatus(1, status); test(); sendStatus(0, status)
             }

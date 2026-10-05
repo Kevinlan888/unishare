@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
  <application>
+  <activity android:name="com.unishare.sdk.ClipboardHostActivity" android:exported="false" />
   <provider android:name="com.unishare.sdk.internal.ProbeProvider" android:authorities="${applicationId}.probe" android:exported="false" />
  </application>
 </manifest>

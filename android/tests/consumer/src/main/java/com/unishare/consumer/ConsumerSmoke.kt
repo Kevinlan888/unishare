@@ -6,6 +6,9 @@ import android.os.Bundle
 import com.unishare.sdk.*
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import android.os.Build
+import android.content.pm.PackageManager
 
 /** This project has no SDK sources or project dependency: it consumes only the AAR. */
 class ConsumerSmoke : Instrumentation() {
@@ -13,18 +16,32 @@ class ConsumerSmoke : Instrumentation() {
     override fun onStart() {
         val output = Bundle()
         try {
-            ShareSdk(targetContext, "release-consumer").use { sdk ->
+            val callbacks = Executors.newSingleThreadExecutor { Thread(it, "consumer-host-executor") }
+            try { ShareSdk(targetContext, "release-consumer", callbacks).use { sdk ->
                 check(sdk.initialize(SdkConfig("Release Kotlin consumer 世界")).result.get(15, TimeUnit.SECONDS).isSuccess)
                 check(sdk.state == SdkState.INITIALIZED)
                 check(sdk.discovery.devices().isEmpty())
                 check(sdk.connections.trustedDevices().isEmpty())
                 val browsing = java.util.concurrent.CountDownLatch(1)
-                sdk.discovery.observe { event -> if (event is DiscoveryEvent.State && event.state == DiscoveryState.BROWSING) browsing.countDown() }
+                val observer = sdk.discovery.observe { event ->
+                    check(Thread.currentThread().name == "consumer-host-executor")
+                    if (event is DiscoveryEvent.State && event.state == DiscoveryState.BROWSING) browsing.countDown()
+                }
+                check(sdk.start().result.get(15, TimeUnit.SECONDS).error?.category == ErrorCategory.PERMISSION_DENIED)
                 sdk.setForeground(true)
+                if (Build.VERSION.SDK_INT >= 37 && targetContext.applicationInfo.targetSdkVersion >= 37 &&
+                    targetContext.checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED) {
+                    check(sdk.start().result.get(15, TimeUnit.SECONDS).error?.category == ErrorCategory.PERMISSION_DENIED)
+                    observer.close()
+                    output.putString("stream", "PASS minified release AAR consumer JNI lifecycle: actual target37 LAN denied\n")
+                    finish(-1, output); return
+                }
                 check(sdk.start().result.get(15, TimeUnit.SECONDS).isSuccess)
                 check(browsing.await(15, TimeUnit.SECONDS))
                 check(sdk.stop().result.get(15, TimeUnit.SECONDS).isSuccess)
-            }
+                observer.close()
+                check(sdk.stop().result.get(15, TimeUnit.SECONDS).isSuccess)
+            } } finally { callbacks.shutdownNow() }
             output.putString("stream", "PASS minified release AAR consumer JNI lifecycle\n"); finish(-1, output)
         } catch (failure: Throwable) { output.putString("stream", android.util.Log.getStackTraceString(failure)); finish(0, output) }
     }

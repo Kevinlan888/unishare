@@ -172,7 +172,7 @@ public final class PortTests extends Instrumentation {
         boolean unsupported=false;try{clipboard.read();}catch(PortFailure e){unsupported=e.code==13;}check(unsupported,"unsupported clipboard must be InvalidInput");
         class Policy implements PermissionPolicy.Boundary {boolean front=true,grant=false;int sdk=37,target=37;public boolean foreground(){return front;}public int sdk(){return sdk;}public int target(){return target;}public boolean granted(){return grant;}}
         Policy policy=new Policy();boolean denied=false;try{PermissionPolicy.check(policy);}catch(PortFailure e){denied=e.code==1;}check(denied,"target37 local-network denial");
-        policy.target=36;PermissionPolicy.check(policy);policy.front=false;denied=false;try{PermissionPolicy.check(policy);}catch(PortFailure e){denied=e.code==10;}check(denied,"background lifecycle must reject network Start");
+        policy.target=36;PermissionPolicy.check(policy);policy.front=false;denied=false;try{PermissionPolicy.check(policy);}catch(PortFailure e){denied=e.code==1;}check(denied,"background lifecycle must reject network Start as PermissionDenied");
     }
     void nativeBridge()throws Exception{try(NativeBridge bridge=new NativeBridge(getTargetContext(),"native-"+UUID.randomUUID())){
         check(bridge.platformHandle()!=0,"JNI must register a retained C ABI platform");
