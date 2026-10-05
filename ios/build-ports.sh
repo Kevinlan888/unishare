@@ -25,9 +25,9 @@ if [[ "$sdk" == iphonesimulator ]]; then
  # Simulator Security reads the simulator entitlement section, as in Xcode's
  # simulator link. Do not add device-only restricted entitlements to the host
  # macOS ad-hoc code signature.
- xcrun --sdk "$sdk" clang++ "${flags[@]}" -fobjc-arc -fblocks ios/Tests/PortsTest.mm "${objects[@]}" "$prefix/lib/libssl.a" "$prefix/lib/libcrypto.a" -framework Foundation -framework UIKit -framework Security -framework Network -framework ImageIO -Wl,-sectcreate,__TEXT,__entitlements,ios/Tests/Simulator.entitlements -o "$out/PortsTest.app/PortsTest"
+ xcrun --sdk "$sdk" clang++ "${flags[@]}" -fobjc-arc -fblocks ios/Tests/*.mm "${objects[@]}" "$prefix/lib/libssl.a" "$prefix/lib/libcrypto.a" -framework Foundation -framework UIKit -framework Security -framework Network -framework ImageIO -Wl,-sectcreate,__TEXT,__entitlements,ios/Tests/Simulator.entitlements -o "$out/PortsTest.app/PortsTest"
 else
- xcrun --sdk "$sdk" clang++ "${flags[@]}" -fobjc-arc -fblocks ios/Tests/PortsTest.mm "${objects[@]}" "$prefix/lib/libssl.a" "$prefix/lib/libcrypto.a" -framework Foundation -framework UIKit -framework Security -framework Network -framework ImageIO -o "$out/PortsTest.app/PortsTest"
+ xcrun --sdk "$sdk" clang++ "${flags[@]}" -fobjc-arc -fblocks ios/Tests/*.mm "${objects[@]}" "$prefix/lib/libssl.a" "$prefix/lib/libcrypto.a" -framework Foundation -framework UIKit -framework Security -framework Network -framework ImageIO -o "$out/PortsTest.app/PortsTest"
 fi
 cp ios/Tests/Info.plist "$out/PortsTest.app/Info.plist"
 if [[ "$sdk" == iphonesimulator ]]; then

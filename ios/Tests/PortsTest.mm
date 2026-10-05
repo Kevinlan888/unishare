@@ -10,6 +10,8 @@
 
 using namespace unishare;
 using namespace unishare::ios;
+void ReentrantSocketStop();
+void ReentrantListenerStop();
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL %s:%d %s\n",__FILE__,__LINE__,#x); throw std::runtime_error(#x); } } while(0)
 template<class T, class F> Result<T> Await(F f) {
  auto p=std::make_shared<std::promise<Result<T>>>(); auto result=p->get_future();
@@ -161,7 +163,10 @@ static void BridgeOwnership() {
 - (BOOL)application:(UIApplication*)app didFinishLaunchingWithOptions:(NSDictionary*)options {
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
   int failures=0;
-  for(auto test:{Identity,Files,Sockets,ClipboardAndLifecycle,Bonjour,BonjourUpdates,BridgeOwnership}) { @autoreleasepool {try {test();fprintf(stderr,"PASS port case\n");}catch(const std::exception& e){fprintf(stderr,"FAILED %s\n",e.what());++failures;}} }
+  std::vector<void(*)()> cases={Identity,Files,Sockets,ClipboardAndLifecycle,Bonjour,BonjourUpdates,BridgeOwnership,ReentrantSocketStop,ReentrantListenerStop};
+  if([NSProcessInfo.processInfo.arguments containsObject:@"--reentrant-sockets"])cases={ReentrantSocketStop};
+  if([NSProcessInfo.processInfo.arguments containsObject:@"--reentrant-listeners"])cases={ReentrantListenerStop};
+  for(auto test:cases) { @autoreleasepool {try {test();fprintf(stderr,"PASS port case\n");}catch(const std::exception& e){fprintf(stderr,"FAILED %s\n",e.what());++failures;}} }
   fprintf(stderr,"PORTS_RESULT failures=%d\n",failures); fflush(stderr); exit(failures?1:0);
  }); return YES;
 }

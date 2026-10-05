@@ -24,12 +24,23 @@ struct SocketState {
  ResultCallback<std::vector<uint8_t>> reading;ResultCallback<void> writing;
  std::function<void(Result<std::shared_ptr<ISocket>>)> ready;
  std::string remote;
- void FinishRead(Result<std::vector<uint8_t>> result) {auto cb=std::exchange(reading,{});readId=0;Deliver(cb,std::move(result));}
- void FinishWrite(Result<void> result) {auto cb=std::exchange(writing,{});writeId=0;Deliver(cb,std::move(result));}
+ void FinishRead(Result<std::vector<uint8_t>> result) {
+  auto callback=std::exchange(reading,{});
+  readId=0;
+  Deliver(callback,std::move(result));
+ }
+ void FinishWrite(Result<void> result) {
+  auto callback=std::exchange(writing,{});
+  writeId=0;
+  Deliver(callback,std::move(result));
+ }
  void Stop(ShareError error) {
-  if(closed)return;closed=true;
-  auto cb=std::exchange(ready,{});Deliver(cb,Result<std::shared_ptr<ISocket>>::Failure(error));
-  FinishRead(Result<std::vector<uint8_t>>::Failure(error));FinishWrite(Result<void>::Failure(error));
+  if(closed)return;
+  closed=true;
+  auto callback=std::exchange(ready,{});
+  Deliver(callback,Result<std::shared_ptr<ISocket>>::Failure(error));
+  FinishRead(Result<std::vector<uint8_t>>::Failure(error));
+  FinishWrite(Result<void>::Failure(error));
   nw_connection_cancel(connection);
  }
 };
@@ -77,7 +88,13 @@ public:
 struct Listener {
  nw_listener_t native;ResultCallback<uint16_t> ready;
  std::function<void(Result<std::shared_ptr<ISocket>>)> accept;bool stopped=false;
- void Stop() {if(stopped)return;stopped=true;auto cb=std::exchange(ready,{});Deliver(cb,Result<uint16_t>::Failure(Cancelled()));nw_listener_cancel(native);}
+ void Stop() {
+  if(stopped)return;
+  stopped=true;
+  auto callback=std::exchange(ready,{});
+  Deliver(callback,Result<uint16_t>::Failure(Cancelled()));
+  nw_listener_cancel(native);
+ }
 };
 struct FactoryState {
  std::shared_ptr<Queue> queue=std::make_shared<Queue>("com.unishare.network");
@@ -140,7 +157,18 @@ public:
   });return id;
  }
  void Stop() override {
-  auto s=state_;s->queue->Sync([s] {for(auto& l:s->listeners)l->Stop();s->listeners.clear();for(auto& w:s->sockets)if(auto socket=w.lock())socket->Stop(Cancelled());s->sockets.clear();});
+  auto state=state_;
+  state->queue->Sync([state] {
+   // Cancellation invokes client callbacks synchronously on this queue. Detach
+   // BOTH collections before any callback can recursively Stop this factory.
+   // Local snapshots keep iteration valid even if callbacks retire other ports.
+   auto listeners=std::exchange(state->listeners,{});
+   auto sockets=std::exchange(state->sockets,{});
+   for(const auto& listener:listeners)listener->Stop();
+   for(const auto& weak:sockets) {
+    if(auto socket=weak.lock())socket->Stop(Cancelled());
+   }
+  });
  }
 };
 }
