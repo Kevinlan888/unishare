@@ -6,6 +6,17 @@ passed on freshly rebuilt final Session-fix packages with Windows, a Pixel and a
 iPhone. Four additional iOS Simulator directions passed on the same packages.
 No production or host changes were made between these runs.
 
+The hashes attached to these rows are the artifacts that actually executed the
+matrix: Android AAR `1c56fb9d...51fb`, Windows DLL `5c65f817...87e5`, and iOS
+XCFramework tree `93b9c3fa...59f8`. Commit `ed78e76` was applied after the runs
+and changes only Kotlin/Swift event decoding and public event models plus mobile
+initialization retry state. It does not change transport, wire, TLS, discovery,
+transfer state, or the Windows package. The matrix was not rerun on `ed78e76`.
+Post-review public wrapper/package gates passed with Android AAR
+`b177516d...182c`, the unchanged Windows DLL, and XCFramework tree
+`07e82c40...ffae`; these hashes are recorded separately in the
+[measured results](results-2026-10-05.json).
+
 ## Physical matrix
 
 | Direction | Discovery / SAS | Nine contents, reject, cancel | Restart, isolation, Offline | Run / SAS |
@@ -101,7 +112,7 @@ none supplies a current final-package acceptance row.
 
 ## Release gates and remaining acceptance
 
-Final session-fixed Windows Debug/Release CTest passed14/14 each. Android internal
+The a046692 session-fixed Windows Debug/Release CTest passed14/14 each. Android internal
 ports passed10/10 and public contracts7/7 on Pixel17 and Samsung Android15. Release
 AAR architecture/dependency/JNI/no-probe inspection and minified target36 consumer
 passed. The consumer initially surfaced PermissionDenied because its test-app UID
@@ -113,6 +124,14 @@ Mac core passed10/10 and native ports9/9; final XCFramework device/simulator bui
 (five groups including8MiB), public consumer normal/permission, and Simulator
 clipboard cross-process/network/trust/permission acceptance passed. Native ports
 and final artifact details are retained in the Task11b report.
+
+After `ed78e76`, Windows Debug CTest passed14/14, Android public contracts passed
+8/8 on Samsung Android15, the three-ABI AAR inspection and minified public
+consumer passed, and the updated Android interop host compiled against that AAR.
+On Mac, all six Swift contract groups passed, a fresh device/Simulator
+XCFramework built, and the independent public consumer reported zero failures.
+These gates cover the wrapper-only changes; they are not represented as a new
+cross-platform interop run.
 
 Before the accepted physical runs, the actual `wi41` launch
 at 17:49:38 local still returned CoreDeviceError10002 / FBSOpenApplication

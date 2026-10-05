@@ -1,7 +1,30 @@
 {
   "date": "2026-10-05",
   "sdk_version": "0.1.0",
-  "source_scope": "All ten runs use freshly rebuilt b77f056 native production code plus e8dedd2 Task11b review host/verifier update metadata; no production or host changes after e8dedd2",
+  "source_scope": "All ten runs used freshly rebuilt b77f056 native production code plus e8dedd2 Task11b review host/verifier update metadata; no production or host changes were made during the recorded matrix after e8dedd2",
+  "interop_run_source_commit": "a0466923eef0d254ef3909bf4bacf3bf6d4c018f",
+  "post_review_source_commit": "ed78e76438ce87fe1ab0743ed7d3bd03952a5bba",
+  "post_review_scope": "ed78e76 changes only Kotlin/Swift event decoding and public event models plus mobile initialization retry state. It does not change core transport, wire protocol, TLS, discovery, transfer state, or the Windows package. The six-direction interop matrix was not rerun after ed78e76; its transport/core/wire evidence remains the a046692 evidence below. Current Android and Swift public runtime/package gates separately cover the changed wrappers.",
+  "interop_run_package_sha256": {
+    "android\\share-sdk\\build\\outputs\\aar\\share-sdk-release.aar": "1c56fb9d54fef55ece164ab3700a0f501eb4988166e7c57b04c47cb8298c51fb",
+    "build-interop-sdk\\unishare.dll": "5c65f817a56b8d60cb2dbaba6ca764a87d1f666cb0b7238844cda7af6eec87e5"
+  },
+  "interop_run_ios_xcframework_tree_sha256": {
+    "sha256": "93b9c3fadd9d3082d676fa7f3e2d25bb83f689c7c4030732ffd4d5ffb94059f8",
+    "method": "SHA256 over sorted relative path UTF-8, NUL, then file bytes for every regular file",
+    "artifact": "build-ios-xcframework-review-final/UniShareSDK.xcframework",
+    "source": "Actual a046692 interop-run artifact hash supplied by coordinator"
+  },
+  "post_review_final_package_sha256": {
+    "android\\share-sdk\\build\\outputs\\aar\\share-sdk-release.aar": "b177516ddb15849a129aac301881104250c5d13aa98b7ebb684b5232cfe4182c",
+    "build-interop-sdk\\unishare.dll": "5c65f817a56b8d60cb2dbaba6ca764a87d1f666cb0b7238844cda7af6eec87e5"
+  },
+  "post_review_final_ios_xcframework_tree_sha256": {
+    "sha256": "07e82c40de62a6b2a3ae1cb3361bea2c7db91ed05ee1cc4207ceb05a75b7ffae",
+    "method": "SHA256 over sorted relative path UTF-8, NUL, then file bytes for every regular file",
+    "artifact": "build-ios-final-fixes-20261005/UniShareSDK.xcframework",
+    "source": "ed78e76 post-review artifact hash supplied by coordinator"
+  },
   "physical_ios_release_gate": "Four physical cross-platform directions PASS on iPhone SE3 iOS17.6.1 Build21G93: wi44, iw43, ai43, ia43. This closes the physical interop matrix gate; separate physical cross-process clipboard and other unmeasured acceptance are not claimed.",
   "physical_matrix_runs": [
     "wa30",
@@ -147,16 +170,6 @@
     "android": "physical Pixel 10a Android17/API37, target36, 192.168.2.178",
     "ios_simulator": "iOS Simulator26.3.1 Build23D8133, iPhone17Pro runtime26.3, Xcode26.3 SDK26.2, Mac en1 192.168.2.233",
     "ios_physical": "iPhone SE3 iOS17.6.1 Build21G93, WLAN192.168.2.148; freshly signed public host from review-final device slice"
-  },
-  "final_package_sha256": {
-    "android\\share-sdk\\build\\outputs\\aar\\share-sdk-release.aar": "1c56fb9d54fef55ece164ab3700a0f501eb4988166e7c57b04c47cb8298c51fb",
-    "build-interop-sdk\\unishare.dll": "5c65f817a56b8d60cb2dbaba6ca764a87d1f666cb0b7238844cda7af6eec87e5"
-  },
-  "ios_xcframework_tree_sha256": {
-    "sha256": "93b9c3fadd9d3082d676fa7f3e2d25bb83f689c7c4030732ffd4d5ffb94059f8",
-    "method": "SHA256 over sorted relative path UTF-8, NUL, then file bytes for every regular file",
-    "artifact": "build-ios-xcframework-review-final/UniShareSDK.xcframework",
-    "source": "Mac final artifact hash supplied by coordinator"
   },
   "runs": [
     {
