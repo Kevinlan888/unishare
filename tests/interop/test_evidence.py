@@ -84,9 +84,28 @@ class EvidenceTests(unittest.TestCase):
                 add("pairing",id="peer-a",sas="999999",decision="confirm")
                 add("operation",operation="confirm",error="")
             add("restart",trustStable=True)
+            add("updated",id=["peer-b","peer-a"][index],port=12345,paired=True)
+            add("discovery",id=["peer-b","peer-a"][index],port=23456,paired=True)
+            add("rediscovered",id=["peer-b","peer-a"][index],port=23456,paired=True)
             rows[-1:-1]=isolation
             if index==1:add("offline",id="peer-a")
         return logs,manifest
+
+    def test_restart_requires_peer_update_and_fresh_public_rediscovery(self):
+        mutations={
+            "missing update":lambda rows:rows.remove(next(r for r in rows if r["event"]=="updated")),
+            "wrong update peer":lambda rows:next(r for r in rows if r["event"]=="updated").update(id="other"),
+            "missing rediscovery":lambda rows:rows.remove(next(r for r in rows if r["event"]=="rediscovered")),
+            "old port":lambda rows:next(r for r in rows if r["event"]=="rediscovered").update(port=12345),
+            "wrong rediscovery peer":lambda rows:next(r for r in rows if r["event"]=="rediscovered").update(id="other"),
+            "rediscovery before restart":lambda rows:rows.insert(0,rows.pop(next(i for i,r in enumerate(rows) if r["event"]=="rediscovered"))),
+            "no public rediscovery event":lambda rows:rows.remove(next(r for r in rows if r["event"]=="discovery")),
+        }
+        for side in (0,1):
+            for name,mutate in mutations.items():
+                with self.subTest(side=side,mutation=name):
+                    logs,manifest=self.extended_records();mutate(logs[side])
+                    with self.assertRaises(ValueError):evidence.verify(*logs,manifest)
 
     def test_extended_valid_and_corruption_checks(self):
         logs,manifest=self.extended_records()

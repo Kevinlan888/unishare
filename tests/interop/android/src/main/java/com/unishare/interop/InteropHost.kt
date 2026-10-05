@@ -84,9 +84,9 @@ class InteropHost : Instrumentation() {
                 val observations = listOf(
                     sdk.discovery.observe { event ->
                         when (event) {
-                            is DiscoveryEvent.Online -> { record("discovery", "id" to event.device.id.value, "name" to event.device.name); if(event.device.name == expected) peers.add(event.device) }
+                            is DiscoveryEvent.Online -> { record("discovery", "id" to event.device.id.value, "name" to event.device.name,"port" to event.device.port,"paired" to event.device.paired); if(event.device.name == expected) peers.add(event.device) }
                             is DiscoveryEvent.Error -> record("discovery_error", "error" to event.error.toString())
-                            is DiscoveryEvent.Updated -> record("updated","id" to event.device.id.value,"name" to event.device.name)
+                            is DiscoveryEvent.Updated -> record("updated","id" to event.device.id.value,"name" to event.device.name,"port" to event.device.port,"paired" to event.device.paired)
                             is DiscoveryEvent.Offline -> {record("offline","id" to event.device.id.value,"name" to event.device.name);offline.add(event.device.id)}
                             else -> {}
                         }
@@ -165,15 +165,18 @@ class InteropHost : Instrumentation() {
                 val trust=sdk.connections.trustedDevices();check(trust.size==1&&trust[0].id==peer.id)
                 wait(watch("restart_stop",sdk.stop()));wait(watch("restart_start",sdk.start()))
                 val restored=sdk.connections.trustedDevices();check(restored.size==1&&restored[0].id==trust[0].id&&restored[0].publicKeyFingerprint.contentEquals(trust[0].publicKeyFingerprint));record("restart","trustStable" to true)
+                fun recordFresh() { val fresh=sdk.discovery.devices().first {it.id==peer.id&&it.port!=peer.port};record("rediscovered","id" to fresh.id.value,"port" to fresh.port,"paired" to fresh.paired) }
                 if(role=="sender"){
                     val until=System.nanoTime()+TimeUnit.SECONDS.toNanos(60)
                     while(sdk.discovery.devices().none {it.id==peer.id&&it.port!=peer.port}) {check(System.nanoTime()<until){"new listener discovery timeout"};Thread.sleep(20)}
+                    recordFresh()
                     wait(watch("reconnect",sdk.connections.connect(peer.id)))
                     val bytes=targetContext.assets.open("isolation.txt").use {it.readBytes()}
                     val result=wait(watch("send",sdk.transfers.sendText(peer.id,bytes.toString(Charsets.UTF_8))))
                     record("sent","id" to requireNotNull(result.transferId).value,"name" to "isolation.txt","size" to bytes.size,"sha256" to hash(bytes))
                 }else{
                     val rediscover=System.nanoTime()+TimeUnit.SECONDS.toNanos(60);while(sdk.discovery.devices().none {it.id==peer.id&&it.port!=peer.port}) {check(System.nanoTime()<rediscover){"receiver restart discovery"};Thread.sleep(20)}
+                    recordFresh()
                     val offer=checkNotNull(offers.poll(60,TimeUnit.SECONDS));check(offer.device.id==peer.id&&offer.contentType==ContentType.TEXT&&offer.byteCount==14L)
                     val sink=File(targetContext.cacheDir,"sink-$run-isolation");check(!sink.exists())
                     record("consent","id" to offer.transferId.value,"requestId" to offer.requestId,"decision" to "accept");wait(watch("accept",sdk.transfers.accept(offer.requestId,uri(sink)),offer.requestId,offer.transferId.value.toString()))

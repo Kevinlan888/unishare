@@ -1,23 +1,25 @@
 # Interoperability evidence
 
-Task11b, 2026-10-05, SDK0.1.0, changes based on `f5f0890`. Six directions passed
-with Windows, a physical Pixel, and iOS Simulator. Physical iPhone interoperability
+Task11b review follow-up, 2026-10-05, SDK0.1.0, native source `b77f056` plus
+review verifier/host metadata changes. All six directions passed on freshly rebuilt
+final Session-fix packages with Windows, a physical Pixel, and iOS Simulator.
+Physical iPhone interoperability
 remains an open release gate.
 
 | Direction | Discovery / SAS | Nine contents, reject, cancel | Restart, isolation, Offline | Run / SAS |
 | --- | --- | --- | --- | --- |
-| Windows → physical Pixel | PASS | PASS | PASS | `wa13` / `272066` |
-| Physical Pixel → Windows | PASS | PASS | PASS | `aw12` / `858239` |
-| Windows → iOS Simulator | PASS | PASS | PASS | `wi20` / `772115` |
-| iOS Simulator → Windows | PASS | PASS | PASS | `iw10` / `752960` |
-| Physical Pixel → iOS Simulator | PASS | PASS | PASS | `ai14` / `503098` |
-| iOS Simulator → physical Pixel | PASS | PASS | PASS | `ia20` / `950604` |
+| Windows → physical Pixel | PASS | PASS | PASS | `wa30` / `351740` |
+| Physical Pixel → Windows | PASS | PASS | PASS | `aw30` / `349277` |
+| Windows → iOS Simulator | PASS | PASS | PASS | `wi30` / `866975` |
+| iOS Simulator → Windows | PASS | PASS | PASS | `iw31` / `986259` |
+| Physical Pixel → iOS Simulator | PASS | PASS | PASS | `ai30` / `803145` |
+| iOS Simulator → physical Pixel | PASS | PASS | PASS | `ia30` / `805518` |
 
 [Exact measured records](results-2026-10-05.json) retain discovered DeviceIds,
 platform/protocol/addresses/ports, matching SAS, eleven transfer IDs per run, sizes
 and SHA-256, all recipient decisions/public completions, terminal outcomes, cancel
-progress, staging deletion, restart and Offline. All six raw logs were rechecked
-with the final [fail-closed coordinator](evidence.py), whose ten test groups reject
+progress, staging deletion, Updated events, restart rediscovery and Offline. All six raw logs were rechecked
+with the final [fail-closed coordinator](evidence.py), whose eleven test groups reject
 corrupted evidence. Raw logs and summaries remain ignored in `build-interop-RUN/`.
 [Public package hosts and commands](README.md) use no endpoint injection or alternate
 sharing transport.
@@ -42,7 +44,13 @@ terminal was Cancelled or NetworkLost. Another offer was rejected. Each peer had
 exactly eleven matching terminals: nine successes, one rejection, one cancellation.
 Both peers retained trusted DeviceId/fingerprint through Stop/Start, rediscovered
 the new listener, reconnected with recipient consent and completed isolation.
-Receiver observed the sender Offline after the final successful transfer.
+Receiver observed the sender Offline after the final successful transfer. The gate
+requires a genuine public Updated event for the paired remote on each host and a
+fresh paired snapshot with a changed listener port after restart, backed by public
+Online or Updated since Stop. `share_sdk.cpp` explicitly clears catalog and paired
+metadata on Stop; `DeviceCatalog::Apply` emits Online for the first inserted record.
+Therefore the first restarted sighting is normally Online. The independent Updated
+requirement records the paired-state change without inventing an Updated restart event.
 
 Ordinary files/images require exact fixture bytes/hashes. Clipboard image checks
 require meaningful image/png readback, the expected normalized 2×2 RGBA pixel hash,
@@ -73,8 +81,9 @@ before the queued Connected observer installed the public transfer handler.
 The fix retains one budgeted frame after bilateral consent, waits for write/pin
 success, and resolves the handler during deferred delivery after Connected.
 Public SDK TDD reproduced the failure; Session tests also cover write failure,
-cancel, pin failure and no early delivery. `ia20` and `wi20` include this final fix;
-the other four passing runs precede it and are measured historical evidence.
+cancel, pin failure and no early delivery. All six current rows use this final fix.
+Earlier `wa13`/`aw12`/`iw10`/`ai14`/`wi20`/`ia20` logs remain historical;
+none supplies a current final-package acceptance row.
 
 ## Release gates and physical limits
 
@@ -91,8 +100,12 @@ Mac core passed10/10 and native ports9/9; final XCFramework device/simulator bui
 clipboard cross-process/network/trust/permission acceptance passed. Native ports
 and final artifact details are retained in the Task11b report.
 
-The physical iPhoneSE3 iOS17.6.1 has a signed installed public interop host, but
-CoreDevice launch returned `Locked`. Signing/install is not runtime acceptance.
+The physical iPhoneSE3 iOS17.6.1 has a freshly signed installed public interop host
+from the final framework. After user unlock confirmation, the actual `wi41` launch
+at 17:49:38 local still returned CoreDeviceError10002 / FBSOpenApplication
+RequestDenied, reason `Locked` (device was not, or could not be, unlocked).
+The app never started; Windows sender was cancelled before discovery and this run
+is excluded. Signing/install is not runtime acceptance.
 Earlier signed public network acceptance has its own narrower scope. Physical
 clipboard and all four iPhone cross-platform directions need an unlocked device;
 no physical iPhone matrix cell is marked passed here.

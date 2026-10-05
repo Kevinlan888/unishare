@@ -125,7 +125,12 @@ def verify(sender, receiver, manifest):
         check(len(commands)==1 and error(commands[0])=="", "extended public cancel missing")
         check(sender.index(next(r for r in select(sender,"terminal") if r["id"]==cancelled))<sender.index(sent[-1]), "extended failure isolation")
         for rows in (sender,receiver):
-            check(str(one(rows,"restart").get("trustStable")).lower()=="true", "extended restart trust")
+            restart=one(rows,"restart"); peer=one(rows,"discovered"); fresh=one(rows,"rediscovered")
+            check(str(restart.get("trustStable")).lower()=="true", "extended restart trust")
+            check(any(r.get("id")==peer["id"] and str(r.get("paired")).lower()=="true" and 0<int(r.get("port",0))<65536 for r in select(rows,"updated")),"extended peer Updated missing")
+            check(fresh.get("id")==peer["id"] and 0<int(fresh.get("port",0))<65536 and int(fresh["port"])!=int(peer["port"]) and str(fresh.get("paired")).lower()=="true" and rows.index(fresh)>rows.index(restart),"extended restart rediscovery missing")
+            stopped=next((r for r in select(rows,"operation") if r.get("operation")=="restart_stop"),restart)
+            check(any(r.get("id")==fresh["id"] and int(r.get("port",0))==int(fresh["port"]) and rows.index(stopped)<rows.index(r)<rows.index(fresh) for r in select(rows,"discovery")+select(rows,"updated")),"extended public rediscovery event missing")
         for name in ("clipboard_write","clipboard_read"):
             check(len([r for r in select(sender,"operation") if r["operation"]==name])==2,"extended public clipboard completion missing")
         final=next(r for r in select(receiver,"terminal") if r["id"]==received[-1]["id"])

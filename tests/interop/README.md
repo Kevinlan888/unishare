@@ -179,6 +179,11 @@ python -m unittest discover -s tests/interop -p test_evidence.py
 ```
 
 The verifier emits a JSON PASS summary only after both logs meet the scenario.
+Extended evidence requires a public Updated event for the paired remote DeviceId
+on each host, plus a fresh paired snapshot with a changed listener port after
+Stop/Start, backed by a public Online or Updated event after Stop. Stop clears
+the local catalog, so the first sighting on restart is normally Online; requiring
+Updated for that first sighting would contradict the catalog's public semantics.
 Keep that summary with the raw logs, SDK hashes, OS/tool versions and command
 lines. Records contain `event`, `run`, `role`, discovered ID/platform/protocol/
 addresses/port, SAS/decision, transfer ID, kind, byte count, SHA-256, progress,

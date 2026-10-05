@@ -80,7 +80,7 @@ int main(int argc,char** argv){try{
  auto sdk=CreateWindowsShareSdk(config,options);
  Require(Await<void>("initialize",[&](auto cb){sdk->Initialize({},cb);}).ok(),"initialize");
  sdk->Discovery()->SetErrorHandler([](auto e){Log("discovery_error",{{"error",std::to_string((int)e.code)},{"native",std::to_string(e.platform_error.value_or(0))}});});
- sdk->Discovery()->SetEventHandler([&](auto e){Log(e.kind==DiscoveryEventKind::Offline?"offline":e.kind==DiscoveryEventKind::Updated?"updated":"discovery",{{"id",e.device.id.ToString()},{"name",e.device.name}});if(e.kind==DiscoveryEventKind::Offline&&e.device.name==expected)peerOffline=true;});
+ sdk->Discovery()->SetEventHandler([&](auto e){Log(e.kind==DiscoveryEventKind::Offline?"offline":e.kind==DiscoveryEventKind::Updated?"updated":"discovery",{{"id",e.device.id.ToString()},{"name",e.device.name},{"port",std::to_string(e.device.port)},{"paired",e.device.paired?"true":"false"}});if(e.kind==DiscoveryEventKind::Offline&&e.device.name==expected)peerOffline=true;});
  auto confirm=[&](auto p,bool match){Log("pairing",{{"id",p.device.id.ToString()},{"sas",p.verification_code},{"decision",match?"confirm":"reject"}});Submit<void>("confirm",[&](auto cb){sdk->Connections()->ConfirmPairing(p.id,match,cb);});};
  sdk->Connections()->SetPairingRequestHandler([&](auto p){
   bool ready=false,match=false;{std::lock_guard<std::mutex> lock(stateMutex);if(peer){ready=true;match=p.device.id==peer->id;}else pendingPairing.push_back(p);}
@@ -135,9 +135,11 @@ int main(int argc,char** argv){try{
  Require(Await<void>("restart_stop",[&](auto cb){sdk->Stop(cb);}).ok(),"restart stop");Require(Await<void>("restart_start",[&](auto cb){sdk->Start(cb);}).ok(),"restart start");auto restored=sdk->Connections()->GetTrustedDevices();Require(restored.size()==1&&restored[0].id==trusted[0].id&&restored[0].public_key_fingerprint==trusted[0].public_key_fingerprint,"trust restart");Log("restart",{{"trustStable","true"}});
  if(role=="sender"){
   Eventually([&]{for(auto d:sdk->Discovery()->GetDevices())if(d.name==expected&&d.id==peer->id&&d.port!=peer->port){peer=d;return true;}return false;},"restart discovery");
+  Log("rediscovered",{{"id",peer->id.ToString()},{"port",std::to_string(peer->port)},{"paired",peer->paired?"true":"false"}});
   Require(Await<void>("reconnect",[&](auto cb){sdk->Connections()->Connect(peer->id,cb);}).ok(),"reconnect");auto bytes=Read(fixtures/names[8]);auto result=Await<TransferId>("send",[&](auto cb){sdk->Transfers()->SendText(peer->id,bytes,cb);});Require(result.ok(),"isolation send");Log("sent",{{"id",result.value().ToString()},{"name",names[8]},{"size",std::to_string(bytes.size())},{"sha256",Hash(bytes)}});
  }else{
-  Eventually([&]{for(auto d:sdk->Discovery()->GetDevices())if(d.id==peer->id&&d.port!=peer->port)return true;return false;},"receiver restart discovery");
+  Eventually([&]{for(auto d:sdk->Discovery()->GetDevices())if(d.id==peer->id&&d.port!=peer->port){peer=d;return true;}return false;},"receiver restart discovery");
+  Log("rediscovered",{{"id",peer->id.ToString()},{"port",std::to_string(peer->port)},{"paired",peer->paired?"true":"false"}});
   Eventually([&]{std::lock_guard<std::mutex> lock(stateMutex);return isolationOffer.has_value();},"isolation offer");
   IncomingOffer o;{std::lock_guard<std::mutex> lock(stateMutex);o=*isolationOffer;}Require(o.content_type==ContentType::Text&&o.byte_count==14,"isolation metadata");auto path=root/"received-10";{std::lock_guard<std::mutex> lock(stateMutex);received.emplace(o.transfer_id.ToString(),std::make_pair(path,names[8]));}auto stream=Stream(path,true);Log("consent",{{"id",o.transfer_id.ToString()},{"requestId",std::to_string(o.request_id)},{"decision","accept"}});auto acceptance=Submit<void>("accept",[&](auto cb){sdk->Transfers()->Accept(o.request_id,stream,cb);},o.request_id,o.transfer_id.ToString());Require(Wait(acceptance).ok(),"isolation accept");
  }

@@ -82,8 +82,8 @@ private final class Host {
                         self.submit("confirm") { sdk.connections.confirmPairing(request,codeMatches:match,completion:$0) }
                     }catch{self.log("failure",["message":"pairing discovery timeout"])}
                 }
-            case .online(let peer): self.log("discovery",["id":peer.id.uuidString.lowercased(),"name":peer.name])
-            case .updated(let peer): self.log("updated",["id":peer.id.uuidString.lowercased(),"name":peer.name])
+            case .online(let peer): self.log("discovery",["id":peer.id.uuidString.lowercased(),"name":peer.name,"port":peer.port,"paired":peer.paired])
+            case .updated(let peer): self.log("updated",["id":peer.id.uuidString.lowercased(),"name":peer.name,"port":peer.port,"paired":peer.paired])
             case .offline(let peer): self.log("offline",["id":peer.id.uuidString.lowercased(),"name":peer.name])
             case .discoveryError(let error): self.log("discovery_error",["error":String(describing:error)])
             case .incomingOffer(_,let request,let id,let kind,_,_,let size): self.log("offer",["id":id.uuidString.lowercased(),"requestId":request,"kind":kind.rawValue,"size":size])
@@ -170,15 +170,18 @@ private final class Host {
         let trust=try sdk.connections.getTrustedDevices();try require(trust.count==1 && trust[0].id==peer.id,"trust before restart")
         try ok("restart_stop"){sdk.stop(completion:$0)};try ok("restart_start"){sdk.start(completion:$0)}
         try require(sdk.connections.getTrustedDevices()==trust,"restart trust");log("restart",["trustStable":true])
+        func recordFresh() throws { guard let fresh=try sdk.discovery.getDevices().first(where:{$0.id==peer.id && $0.port != peer.port}) else {throw HostFailure(message:"fresh discovery snapshot")};log("rediscovered",["id":fresh.id.uuidString.lowercased(),"port":fresh.port,"paired":fresh.paired]) }
         if role=="sender"{
             let end=Date().addingTimeInterval(60)
             while try !sdk.discovery.getDevices().contains(where:{$0.id==peer.id && $0.port != peer.port}){try require(Date()<end,"restart discovery");Thread.sleep(forTimeInterval:0.02)}
+            try recordFresh()
             try ok("reconnect"){sdk.connections.connect(peer.id,completion:$0)}
             let data=try bytes("isolation.txt");let result=try ok("send"){sdk.transfers.sendText(String(decoding:data,as:UTF8.self),to:peer.id,completion:$0)}
             try require(result.transferId != nil,"isolation ID");log("sent",["id":result.transferId!.uuidString.lowercased(),"name":"isolation.txt","size":data.count,"sha256":hash(data)])
         }else{
             let rediscover=Date().addingTimeInterval(60)
             while try !sdk.discovery.getDevices().contains(where:{$0.id==peer.id && $0.port != peer.port}){try require(Date()<rediscover,"receiver restart discovery");Thread.sleep(forTimeInterval:0.02)}
+            try recordFresh()
             let end=Date().addingTimeInterval(60)
             func allOffers()->[ShareEvent]{snapshot().filter{if case .incomingOffer=$0{return true};return false}}
             while allOffers().count<11{try require(Date()<end,"isolation offer timeout");Thread.sleep(forTimeInterval:0.02)}
