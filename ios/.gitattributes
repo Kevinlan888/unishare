@@ -1,0 +1,2 @@
+# Preserve reproducible macOS shell scripts in Windows checkouts.
+*.sh text eol=lf

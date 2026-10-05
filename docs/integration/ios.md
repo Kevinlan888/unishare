@@ -1,0 +1,97 @@
+# iOS integration
+
+`UniShareSDK.xcframework` provides `import UniShareSDK` and the Swift `ShareSdk`, `DeviceDiscovery`, `ConnectionManager`, `TransferService`, and `ClipboardService` APIs. Minimum deployment target: iOS 15. Device and Simulator slices both support arm64. The framework includes the Objective-C++ adapter, C++ core, and static OpenSSL; embed and sign the framework in the host application. It has no application UI or background discovery service.
+
+## Build and integrate
+
+On macOS with Xcode selected, prepare OpenSSL static libraries (`lib/libssl.a`, `lib/libcrypto.a`, and `include/`) separately for arm64 iOS and arm64 iOS Simulator. Then run from the repository:
+
+```sh
+OPENSSL_IOS_DEVICE=/tmp/openssl-ios-device \
+OPENSSL_IOS_SIM=/tmp/openssl-ios-sim \
+OUTPUT_DIR=build-ios-release bash ios/build-xcframework.sh
+```
+
+This reproducible compiler project uses the selected SDK, Swift library evolution, and `xcodebuild -create-xcframework`. Use a fresh output directory for each completed archive. The artifact is `build-ios-release/UniShareSDK.xcframework`. Add it to the app target's Frameworks, Libraries, and Embedded Content with **Embed & Sign**. The script's ad-hoc signature is for build validation; device applications use the host's own signing identity and entitlements. Intel Simulator is not included.
+
+Declare the host's reason for local networking and service type in `Info.plist`:
+
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>Find nearby devices you choose to share with.</string>
+<key>NSBonjourServices</key>
+<array><string>_share._tcp</string></array>
+```
+
+The host supplies any photo-library or document-picker UI and relevant usage descriptions. The SDK never requests photo-library access by itself. Local-network authorization is exercised by real Bonjour activity; a successful initialization is not a promise that the user has granted it. Missing declarations report `permissionDenied`, background start reports `networkLost`, and native failures preserve `platformError` when supplied by the platform.
+
+## Lifecycle and callbacks
+
+Construction is lightweight and may occur on any thread. `initialize` internally schedules UIKit setup on main, so keep the main run loop running and never block it waiting for completion. Wait for successful initialization before calling services. Use one stable, app-specific Keychain service name per installation identity; reusing it preserves the core DeviceId and trust records. Keychain failures never silently create a replacement identity.
+
+```swift
+import UniShareSDK
+
+let sdk = ShareSdk(keychainService: "com.example.myapp.share",
+                   callbackQueue: .main)
+let events = sdk.observe { event in
+    switch event {
+    case .pairingRequest(_, let requestId, let code):
+        // Present the six-digit code, preserving leading zeros.
+        // Save requestId for your UI. Only after explicit user approval,
+        // call sdk.connections.confirmPairing(requestId, codeMatches: true, ...).
+        // A decline uses rejectPairing(requestId, ...).
+    default: break
+    }
+}
+sdk.initialize(SdkConfig(deviceName: "My iPhone")) { result in
+    guard result.isSuccess else { return }
+    sdk.start { result in /* Ready to discover and share after success. */ }
+}
+```
+
+Keep observation tokens alive; `EventObservation.close()` or token deinitialization unregisters the listener. Discovery exposes snapshots and Online/Updated/Offline/error/state events. Devices preserve UUID, protocol version, addresses including IPv6 scopes, and discovery timestamp. Connections expose Connect, Confirm/RejectPairing, trusted-device snapshots, and Forget. Pairing and incoming transfer approval are explicit host decisions.
+
+Every asynchronous submission returns an instance-scoped `UInt64` operation ID. Its completion carries the same ID, optional `ShareError`, transfer ID, and clipboard content. Accepted submissions and validation failures complete once. All host callbacks run asynchronously in order on an SDK serial queue targeted at `callbackQueue`; the default is an SDK serial queue. Even synchronous native rejection never invokes host code on the submitting stack. Do not block that queue waiting for another completion.
+
+`stop` cancels unfinished native work and delivers its terminal results. UIKit background notifications interrupt native operations and leave the SDK stopped. After the app becomes active, explicitly call `start` again. The host owns its application lifecycle; there is no guarantee of work while suspended.
+
+`close` retires pending completions and observations, discards queued callbacks, and waits for a host callback already running on another thread. Calling it inside a callback is safe. No new host callback begins after it returns. Native cancellation/file cleanup proceeds on a worker and retains its resources through late callbacks. Close intentionally suppresses undelivered results; call and await `stop` first if the host needs cancellation results. After close, only `state` and repeated `close` are supported; new async submissions are programmer errors.
+
+## Explicit content and file ownership
+
+```swift
+sdk.transfers.sendText("Hello 👋", to: deviceId) { result in /* terminal send */ }
+sdk.transfers.sendImage(imageURL, to: deviceId, mimeType: "image/png",
+                        byteCount: imageBytes) { result in /* terminal send */ }
+sdk.transfers.sendFile(fileURL, to: deviceId, displayName: "report.pdf",
+                       byteCount: fileBytes) { result in /* terminal send */ }
+```
+
+Images accept an optional displayName (default "image"); files accept an optional mimeType (default "application/octet-stream"). Sources must be explicit regular file URLs and sizes must describe the actual content. The adapter streams bounded chunks and retains security-scoped access for the stream lifetime. For persisted document-provider access, resolve the host's security-scoped bookmark with Foundation, handle stale bookmarks in the host, and pass the resulting file URL. Do not revoke grants or modify source content during a transfer. SDK source close preserves the file.
+
+For `.incomingOffer`, create an empty regular staging file in a location the host owns exclusively and call `accept(requestId, stagingURL:)`, or call `reject`. Never construct the staging pathname from the peer's display name. Accept completion acknowledges the decision; `.transferResult` reports the eventual incoming transfer terminal outcome. After successful transfer result the host decides the final filename/location. Failed Accept, cancellation, and failed transfer discard partial staging content. The inherited void cleanup interface cannot report deletion failure; the host should reconcile leftovers in its exclusively owned staging directory. `cancel(transferId:)` interrupts active transfers. Progress events include bytes transferred and total.
+
+Clipboard access is explicit, generally from a user action:
+
+```swift
+sdk.clipboard.readShareableContent { result in /* .text or .image */ }
+sdk.clipboard.writeContent(.text("Chosen text")) { result in /* done */ }
+```
+
+Only UTF-8 text and PNG/JPEG images are supported. Unsupported clipboard content returns `invalidInput`. System pasteboard prompts remain under iOS control. No clipboard observer or automatic synchronization is installed.
+
+Default configured limits are text 8 MiB, image 100 MiB, file 20 GiB, subject to core resource limits and stricter host configuration. **Current C ABI v1 direct text submission copies at most 4 MiB**, so `sendText` over 4 MiB returns `resourceLimit` even with the default 8 MiB configured text limit. C ABI v1 clipboard writes also impose a 4 MiB aggregate limit on text, image bytes and MIME metadata. These inherited cross-layer limits do not restrict the file-URL streaming path to 4 MiB, and this is not an 8 MiB direct-text capability claim.
+
+## Verification and remaining acceptance
+
+```sh
+bash ios/test-swift-contracts.sh
+bash ios/test-consumer.sh build-ios-release/UniShareSDK.xcframework
+bash ios/test-consumer.sh build-ios-release/UniShareSDK.xcframework \
+  071982EE-2278-42D1-AEEF-B1DDE4E53FF4 permission
+```
+
+The independent UIKit consumer compiles using only the delivered XCFramework. Tests exercise lifecycle, UTF-8 and image clipboard, unsupported formats, explicit file URLs/rejection cleanup, foreground interruption, and missing host declarations. Native port tests remain in `ios/build-ports.sh`; core gates remain in `ios/test-core.sh`.
+
+Simulator coverage is not physical-device or cross-platform LAN acceptance. Actual local-network consent/denial prompts, real app suspension, locked Keychain, external document-provider grants, physical interface changes, and Windows/Android/iOS pairing/transfers remain the broader acceptance gate. Framework device compile/link does not claim physical execution.

@@ -1,6 +1,8 @@
-# Internal iOS ports
+# iOS sharing SDK
 
-Task 10a provides Objective-C++ platform ports. Public Swift services and XCFramework distribution are separate work.
+Public Swift services ship as `UniShareSDK.xcframework`. See [iOS integration](../docs/integration/ios.md) for the API, packaging, host permissions and callback/ownership rules. Build the framework with `bash ios/build-xcframework.sh` on macOS.
+
+The remaining notes describe the internal Objective-C++ platform ports and their standalone regression harness.
 
 Build on macOS with Xcode selected, an arm64 static OpenSSL installation, and an iOS Simulator runtime:
 
