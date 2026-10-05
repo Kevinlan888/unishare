@@ -95,3 +95,33 @@ bash ios/test-consumer.sh build-ios-release/UniShareSDK.xcframework \
 The independent UIKit consumer compiles using only the delivered XCFramework. Tests exercise lifecycle, UTF-8 and image clipboard, unsupported formats, explicit file URLs/rejection cleanup, foreground interruption, and missing host declarations. Native port tests remain in `ios/build-ports.sh`; core gates remain in `ios/test-core.sh`.
 
 Simulator coverage is not physical-device or cross-platform LAN acceptance. Actual local-network consent/denial prompts, real app suspension, locked Keychain, external document-provider grants, physical interface changes, and Windows/Android/iOS pairing/transfers remain the broader acceptance gate. Framework device compile/link does not claim physical execution.
+
+## Public Swift acceptance host
+
+Use the delivered production XCFramework, an Apple Silicon Mac and a booted iOS Simulator. No SDK source files or internal APIs are compiled into the host:
+
+```sh
+bash ios/test-acceptance.sh build-ios-release/UniShareSDK.xcframework \
+  071982EE-2278-42D1-AEEF-B1DDE4E53FF4 all
+bash ios/test-acceptance.sh build-ios-release/UniShareSDK.xcframework \
+  071982EE-2278-42D1-AEEF-B1DDE4E53FF4 permission
+```
+
+Replace the UUID with a booted arm64 Simulator from `xcrun simctl list devices`. Modes `network` and `clipboard` run the focused subsets. The script compiles for iOS 15, installs a minimal UIKit application and launches after it becomes active. It uses the existing test bundle identifier `com.unishare.ports` and replaces that test application. Its synthetic Keychain entitlement is Simulator-only. Generated apps and complete console logs are kept under ignored `build-ios-acceptance-<mode>/`; a missing result marker, crash or 240-second process timeout fails the script.
+
+The network host creates two independent Keychain identities inside one foreground process. They discover each other through system Bonjour and connect through the production TCP/TLS stack. It checks DeviceId deduplication, snapshots/address/version metadata, matching six-digit SAS and explicit bilateral pairing, incoming offer consent, UTF-8/NUL text, PNG/JPEG bytes, empty and multichunk files, rejection, cancellation after received data, staging cleanup, terminal counts, Offline/Stop/restart and Keychain identity/trust across SDK recreation. The runner then starts a separate `trust-read` process, which verifies the same identities and public trust fingerprints persisted. Received bytes and SHA-256 are compared with the source. This success-path checksum coverage does not inject a malicious wire checksum; negative checksum coverage is in the core transfer tests.
+
+The clipboard subset first writes UTF-8/NUL text and a valid PNG using the public API, then exits the writer process. A separately launched reader decodes the persistent clipboard image and compares all four fixture pixels. Logs include both process IDs. This goes beyond immediate same-process readback but uses the same application bundle; it does not exercise another app's paste-consent prompt.
+
+The background case posts UIKit lifecycle notifications and verifies interrupted work, denied background Start, and explicit foreground restart. It does not claim actual OS suspension. The permission mode removes the Bonjour declaration and expects `permissionDenied`; an actual OS local-network grant/denial requires a signed physical host. Physical iPhone execution, external document-provider URLs, locked Keychain and Windows/Android interoperability remain pending.
+
+For a connected iPhone, stage the same host as an Xcode project:
+
+```sh
+bash ios/build-acceptance-device.sh build-ios-release/UniShareSDK.xcframework com.example.shareacceptance
+open build-ios-acceptance-device/AcceptanceHost.xcodeproj
+```
+
+In Xcode select your team, a unique bundle identifier and the connected iPhone; use the `Acceptance` scheme. The staging script deliberately supplies no Simulator entitlements. With an existing development certificate/profile, optional third and fourth script arguments supply the team identifier and Xcode device identifier for an automatic-signing build. The app is produced at `build-ios-acceptance-device/DerivedData/Build/Products/Debug-iphoneos/Acceptance.app` for the command-line build. User account credentials and signing material are never included in this project.
+
+Run with the scheme launch argument `network` and grant Local Network access when prompted, then separately run `trust-read`. Run `clipboard-write`, let it exit, then run `clipboard-read` to test clipboard persistence. For real OS denial, disable the app's Local Network access in iOS Settings and run with `denied`; it expects `permissionDenied` from Start or a discovery error and prints the native status when available. Restore permission before further network tests. These are manual physical-device steps; the Simulator runner cannot grant or deny the iPhone's permission.
