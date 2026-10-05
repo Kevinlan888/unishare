@@ -11,6 +11,79 @@ public sealed class ShareSessionTests
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     [TestMethod]
+    public async Task PauseAndResumeWithEmptyCatalogKeepTrustedDeviceOfflineAndNotTransferable()
+    {
+        var device = new DeviceSnapshot(new(Guid.NewGuid()), "Phone", DevicePlatform.Android,
+            1, 0, System.Collections.Immutable.ImmutableArray.Create("192.0.2.10"), 9999,
+            true, DateTimeOffset.Parse("2026-10-05T00:00:00Z"));
+        var sdk = new FakeShareSdkClient
+        {
+            Devices = [device],
+            Trusted = new HashSet<DeviceId> { device.Id }
+        };
+        var session = new ShareSession(sdk, new FakeTransferDrain());
+        await session.InitializeAsync(new());
+        await session.StartAsync();
+        var entry = session.Devices.Devices.Single();
+        session.Devices.SelectedDevice = entry;
+        sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Connected, null));
+        Assert.IsTrue(entry.CanTransfer);
+        Assert.IsTrue(entry.IsConnected);
+
+        // Native explicit Stop clears discovery and detaches event delivery;
+        // there will be no offline/disconnected events to update the store.
+        sdk.Stopping = () => { sdk.Devices = []; return Task.CompletedTask; };
+        await session.PauseAsync();
+        Assert.IsFalse(entry.IsOnline);
+        Assert.IsFalse(entry.IsConnected);
+        Assert.IsFalse(entry.CanTransfer);
+        Assert.AreSame(entry, session.Devices.TrustedDevices.Single());
+        Assert.AreSame(entry, session.Devices.SelectedDevice);
+
+        await session.ResumeAsync();
+        Assert.AreEqual(SessionState.Running, session.State);
+        Assert.IsFalse(entry.IsOnline);
+        Assert.IsFalse(entry.IsConnected);
+        Assert.IsFalse(entry.CanTransfer);
+        Assert.AreSame(entry, session.Devices.TrustedDevices.Single());
+        Assert.AreSame(entry, session.Devices.SelectedDevice);
+        await session.ExitAsync();
+    }
+
+    [TestMethod]
+    public async Task FreshStartSnapshotRestoresDiscoveryOnSameEntryWithoutEventDelivery()
+    {
+        var device = new DeviceSnapshot(new(Guid.NewGuid()), "Phone", DevicePlatform.Android,
+            1, 0, System.Collections.Immutable.ImmutableArray.Create("192.0.2.10"), 9999,
+            true, DateTimeOffset.Parse("2026-10-05T00:00:00Z"));
+        var sdk = new FakeShareSdkClient
+        {
+            Devices = [device],
+            Trusted = new HashSet<DeviceId> { device.Id }
+        };
+        var session = new ShareSession(sdk, new FakeTransferDrain());
+        await session.InitializeAsync(new());
+        await session.StartAsync();
+        var entry = session.Devices.Devices.Single();
+        session.Devices.SelectedDevice = entry;
+        sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        sdk.Stopping = () => { sdk.Devices = []; return Task.CompletedTask; };
+        await session.PauseAsync();
+
+        var updated = device with { Name = "Rediscovered phone", LastSeen = device.LastSeen.AddMinutes(1) };
+        sdk.Starting = () => { sdk.Devices = [updated]; return Task.CompletedTask; };
+        await session.ResumeAsync();
+        Assert.AreSame(entry, session.Devices.Devices.Single());
+        Assert.AreSame(entry, session.Devices.SelectedDevice);
+        Assert.IsTrue(entry.IsOnline);
+        Assert.IsTrue(entry.CanTransfer);
+        Assert.IsFalse(entry.IsConnected);
+        Assert.AreEqual("Rediscovered phone", entry.Name);
+        Assert.AreEqual(updated.LastSeen, entry.Snapshot!.LastSeen);
+        await session.ExitAsync();
+    }
+
+    [TestMethod]
     public async Task ConcurrentWindowActivationInitializesAndStartsOneSdk()
     {
         var sdk = new FakeShareSdkClient();

@@ -144,8 +144,10 @@ public sealed class DeviceStore : IDisposable
                     Block(changed.Device);
                     break;
                 case ShareSdkEvent.PairingCompleted { Failure: null } paired:
-                    // An event racing a forget cannot restore the old trust.
-                    if (!forgetting.Contains(paired.Device))
+                    // Completion/event queues are independent: even a successful
+                    // pairing can arrive after a later forget has removed trust.
+                    // Only the SDK's current persisted trust can clear the marker.
+                    if (!forgetting.Contains(paired.Device) && sdk.GetTrustedDevices().Contains(paired.Device))
                     {
                         forgotten.Remove(paired.Device);
                         var pairedEntry = GetOrAdd(paired.Device);

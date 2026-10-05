@@ -123,6 +123,7 @@ public sealed class ShareSession : IAsyncDisposable
             Interlocked.Increment(ref generation);
             needsStop = true;
             await sdk.StartAsync(CancellationToken.None).ConfigureAwait(false);
+            Devices.Refresh();
             hasStarted = true;
             SetState(SessionState.Running);
             transfers.AllowNewTransfers();
@@ -141,6 +142,9 @@ public sealed class ShareSession : IAsyncDisposable
         await sdk.StopAsync(CancellationToken.None).ConfigureAwait(false);
         needsStop = false;
         Interlocked.Increment(ref generation);
+        // Explicit native Stop clears discovery and retires event delivery, so
+        // no later offline/disconnected events can reconcile the old entries.
+        Devices.Refresh();
     }
 
     public async Task ExitAsync(CancellationToken cancellationToken = default)
@@ -153,9 +157,12 @@ public sealed class ShareSession : IAsyncDisposable
             SetState(SessionState.Exiting);
             transfers.BlockNewTransfers();
             sdk.EventReceived -= OnSdkEvent;
-            Devices.Dispose();
             try { await StopCoreAsync().ConfigureAwait(false); }
-            finally { await sdk.DisposeAsync().ConfigureAwait(false); }
+            finally
+            {
+                Devices.Dispose();
+                await sdk.DisposeAsync().ConfigureAwait(false);
+            }
         }
         finally { lifecycle.Release(); }
     }

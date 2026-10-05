@@ -122,6 +122,7 @@ public sealed class DeviceStoreTests
         await store.ForgetDeviceAsync(device.Id);
         sdk.Emit(new ShareSdkEvent.DeviceUpdated(device));
         Assert.IsFalse(entry.IsTrusted);
+        sdk.Trusted = new HashSet<DeviceId> { device.Id };
         sdk.Emit(new ShareSdkEvent.PairingCompleted(new(2), device.Id, null));
         Assert.IsTrue(entry.IsTrusted);
         sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Connected, null));
@@ -142,5 +143,35 @@ public sealed class DeviceStoreTests
         sdk.Emit(new ShareSdkEvent.DeviceUpdated(device));
         Assert.IsFalse(entry.Snapshot!.IsTrusted);
         Assert.IsFalse(entry.IsTrusted);
+    }
+
+    [TestMethod]
+    public async Task DelayedPairingCompletionCannotRestoreForgottenTrustWithoutSdkTrust()
+    {
+        var sdk = new FakeShareSdkClient();
+        using var store = new DeviceStore(sdk);
+        var device = Device();
+        sdk.Trusted = new HashSet<DeviceId> { device.Id };
+        sdk.Emit(new ShareSdkEvent.DeviceOnline(device));
+        var entry = store.Devices.Single();
+        var previousPairing = new ShareSdkEvent.PairingCompleted(new(1), device.Id, null);
+
+        await store.ForgetDeviceAsync(device.Id);
+        Assert.IsFalse(sdk.GetTrustedDevices().Contains(device.Id));
+        // The SDK persisted the pairing before forget, but its managed event
+        // queue delivers that completion only after forget's operation completes.
+        sdk.Emit(previousPairing);
+        Assert.IsFalse(entry.IsTrusted);
+        sdk.Emit(new ShareSdkEvent.DeviceUpdated(device));
+        Assert.IsFalse(entry.IsTrusted);
+        Assert.IsFalse(entry.Snapshot!.IsTrusted);
+
+        // A new pairing has persisted trust before its completion is delivered.
+        sdk.Emit(new ShareSdkEvent.PairingRequested(new(2), device with { IsTrusted = false }, "123456"));
+        sdk.Trusted = new HashSet<DeviceId> { device.Id };
+        sdk.Emit(new ShareSdkEvent.PairingCompleted(new(2), device.Id, null));
+        Assert.IsTrue(entry.IsTrusted);
+        Assert.IsTrue(entry.Snapshot!.IsTrusted);
+        Assert.AreSame(entry, store.TrustedDevices.Single());
     }
 }
