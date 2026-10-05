@@ -166,11 +166,190 @@ public sealed class ActivityTrackerTests
         tracker.Apply(new ShareSdkEvent.ProgressReceived(new(Transfer, 10, 100)));
         tracker.Apply(new ShareSdkEvent.TransferCompleted(new(Transfer, null)));
         Assert.AreEqual(1, tracker.GetDeviceSnapshot(Device).Count);
+        Assert.AreEqual(ActivityStatus.Transferring, tracker.GetDeviceSnapshot(Device).Single().Status);
+        tracker.Complete(incoming.Id, new(Transfer, null), "C:\\Downloads\\report.txt");
         Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
         var outgoing = Begin(tracker, 2);
         var another = new TransferId(Guid.NewGuid());
         tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(2), another));
         Assert.AreEqual(another, tracker.GetDeviceSnapshot(Device).Single(value => value.Id == outgoing.Id).TransferId);
+        tracker.Apply(new ShareSdkEvent.TransferCompleted(new(another, null)));
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single(value => value.Id == outgoing.Id).Status);
+    }
+
+    [TestMethod]
+    public void RegistrationBeforeAdmissionIsRetainedAndReconciled()
+    {
+        var tracker = Create();
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(1), Transfer));
+        tracker.Apply(new ShareSdkEvent.ProgressReceived(new(Transfer, 45, 100)));
+        tracker.Apply(new ShareSdkEvent.ProgressReceived(new(Transfer, 15, 100)));
+        var admitted = Begin(tracker);
+        Assert.AreEqual(Transfer, admitted.TransferId);
+        Assert.AreEqual(ActivityStatus.Transferring, admitted.Status);
+        Assert.AreEqual(45UL, admitted.TransferredBytes);
+        tracker.Apply(new ShareSdkEvent.ProgressReceived(new(Transfer, 65, 100)));
+        Assert.AreEqual(65UL, tracker.GetDeviceSnapshot(Device).Single().TransferredBytes);
+        tracker.Apply(new ShareSdkEvent.TransferCompleted(new(Transfer, null)));
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
+        Assert.AreEqual(0, tracker.ActiveCount);
+    }
+
+    [TestMethod]
+    public void StopClearsEarlyRegistrationsAndPermitsFreshOperationReuse()
+    {
+        var tracker = Create();
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(2), Transfer));
+        var old = Begin(tracker, 1);
+        tracker.Complete(old.Id, Failure(ShareErrorKind.Timeout));
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(1), new(Guid.NewGuid())));
+        tracker.Apply(new ShareSdkEvent.DiscoveryStateChanged(DiscoveryState.Stopped));
+        var reused = Begin(tracker, 1);
+        var withoutOldRegistration = Begin(tracker, 2);
+        Assert.IsNull(reused.TransferId);
+        Assert.IsNull(withoutOldRegistration.TransferId);
+        var fresh = new TransferId(Guid.NewGuid());
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(1), fresh));
+        Assert.AreEqual(fresh, tracker.GetDeviceSnapshot(Device).Single(value => value.Id == reused.Id).TransferId);
+        Assert.AreEqual(ActivityStatus.Failed, tracker.GetDeviceSnapshot(Device).Single(value => value.Id == old.Id).Status);
+    }
+
+    [TestMethod]
+    public void TerminalBeforeAdmissionClearsEarlyRegistration()
+    {
+        var tracker = Create();
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(1), Transfer));
+        tracker.Apply(new ShareSdkEvent.TransferCompleted(new(Transfer, null)));
+        Assert.IsNull(Begin(tracker).TransferId);
+        var fresh = new TransferId(Guid.NewGuid());
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(1), fresh));
+        Assert.AreEqual(fresh, tracker.GetDeviceSnapshot(Device).Single().TransferId);
+    }
+
+    [TestMethod]
+    public void DrainedAdmissionBlockClearsUnadmittedAndRetiredOperationBindings()
+    {
+        var tracker = Create();
+        var old = Begin(tracker, 1);
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(2), Transfer));
+        tracker.BlockNewTransfers();
+        tracker.Complete(old.Id, Failure(ShareErrorKind.Cancelled));
+        tracker.Apply(new ShareSdkEvent.OutgoingTransferRegistered(new(1), Transfer));
+        tracker.AllowNewTransfers();
+        Assert.IsNull(Begin(tracker, 1).TransferId);
+        Assert.IsNull(Begin(tracker, 2).TransferId);
+    }
+
+    [TestMethod]
+    public async Task IncomingNativeSuccessStaysActiveUntilOwnerPublishesFinalFile()
+    {
+        var repository = new Repository();
+        var tracker = Create(repository);
+        var record = tracker.AddIncomingOffer(Offer());
+        tracker.ApplyProgress(new(Transfer, 100, 100));
+        var idle = tracker.WaitForIdleAsync(default);
+        tracker.Apply(new ShareSdkEvent.TransferCompleted(new(Transfer, null)));
+        tracker.Apply(new ShareSdkEvent.TransferCompleted(new(Transfer, null)));
+        Assert.IsFalse(idle.IsCompleted);
+        Assert.AreEqual(1, tracker.ActiveCount);
+        Assert.AreEqual(ActivityStatus.Transferring, tracker.GetDeviceSnapshot(Device).Single().Status);
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(0, repository.Writes.Count(value => ActivityTransition.IsTerminal(value.Status)));
+        Assert.IsTrue(tracker.Complete(record.Id, new(Transfer, null), "C:\\Downloads\\report.txt"));
+        await idle.WaitAsync(TimeSpan.FromSeconds(5));
+        await tracker.SavePendingAsync();
+        Assert.AreEqual("C:\\Downloads\\report.txt", repository.Records[record.Id].ReceivedFilePath);
+        Assert.AreEqual(1, repository.Writes.Count(value => ActivityTransition.IsTerminal(value.Status)));
+    }
+
+    [TestMethod]
+    public async Task IncomingRenameFailureAfterNativeSuccessIsTerminalStorageFailure()
+    {
+        var repository = new Repository();
+        var tracker = Create(repository);
+        var record = tracker.AddIncomingOffer(Offer());
+        tracker.Apply(new ShareSdkEvent.TransferCompleted(new(Transfer, null)));
+        Assert.IsTrue(tracker.Complete(record.Id, Failure(ShareErrorKind.StorageFailed, Transfer)));
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(ActivityStatus.Failed, repository.Records[record.Id].Status);
+        Assert.AreEqual(ShareErrorKind.StorageFailed, repository.Records[record.Id].ErrorKind);
+        Assert.IsNull(repository.Records[record.Id].ReceivedFilePath);
+        Assert.IsFalse(tracker.HasActiveTransfers);
+    }
+
+    [TestMethod]
+    public void IncomingNativeFailuresRejectionAndCancellationStillTerminate()
+    {
+        foreach (var (kind, status) in new[] {
+            (ShareErrorKind.NetworkLost, ActivityStatus.Failed),
+            (ShareErrorKind.TransferRejected, ActivityStatus.Rejected),
+            (ShareErrorKind.Cancelled, ActivityStatus.Cancelled) })
+        {
+            var tracker = Create();
+            tracker.AddIncomingOffer(Offer());
+            tracker.Apply(new ShareSdkEvent.TransferCompleted(Failure(kind, Transfer)));
+            Assert.AreEqual(status, tracker.GetDeviceSnapshot(Device).Single().Status);
+            Assert.AreEqual(0, tracker.ActiveCount);
+        }
+    }
+
+    [TestMethod]
+    public async Task ReplayWhileHistoryLoadIsPendingUsesOneCanonicalTerminalActivity()
+    {
+        var repository = new Repository();
+        var original = Create(repository);
+        var canonical = original.AddIncomingOffer(Offer());
+        original.Complete(canonical.Id, new(Transfer, null), "C:\\Downloads\\report.txt");
+        await original.SavePendingAsync();
+        repository.Loading = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tracker = Create(repository);
+        var loading = tracker.LoadDeviceAsync(Device);
+        var replay = tracker.AddIncomingOffer(Offer());
+        Assert.IsFalse(tracker.GetDeviceSnapshot(Device).Any(value => value.Id == replay.Id));
+        await tracker.SavePendingAsync();
+        Assert.IsFalse(repository.Writes.Any(value => value.Id == replay.Id));
+        var idle = tracker.WaitForIdleAsync(default);
+        repository.Loading.SetResult(new[] { repository.Records[canonical.Id] });
+        await loading;
+        Assert.AreEqual(1, tracker.GetDeviceSnapshot(Device).Count);
+        Assert.AreEqual(canonical.Id, tracker.GetDeviceSnapshot(Device).Single().Id);
+        Assert.IsFalse(tracker.GetDeviceSnapshot(Device).Any(value => value.Id == replay.Id));
+        Assert.AreEqual(0, tracker.ActiveCount);
+        await idle.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsFalse(tracker.Complete(replay.Id, Failure(ShareErrorKind.StorageFailed, Transfer)));
+        await tracker.SavePendingAsync();
+        Assert.IsFalse(repository.Writes.Any(value => value.Id == replay.Id));
+        Assert.AreEqual(1, repository.Records.Count);
+        Assert.AreEqual(canonical.Id, tracker.AddIncomingOffer(Offer()).Id);
+        Assert.AreEqual("C:\\Downloads\\report.txt", tracker.GetDeviceSnapshot(Device).Single().ReceivedFilePath);
+    }
+
+    [TestMethod]
+    public async Task ReplayOwnerCanFinalizeCanonicalPendingActivityUsingProvisionalId()
+    {
+        var repository = new Repository();
+        var original = Create(repository);
+        var canonical = original.AddIncomingOffer(Offer());
+        original.ApplyProgress(new(Transfer, 90, 100));
+        await original.SavePendingAsync();
+        repository.Loading = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tracker = Create(repository);
+        var loading = tracker.LoadDeviceAsync(Device);
+        var replay = tracker.AddIncomingOffer(Offer());
+        tracker.ApplyProgress(new(Transfer, 80, 100));
+        repository.Loading.SetResult(new[] { repository.Records[canonical.Id] });
+        await loading;
+        Assert.AreEqual(canonical.Id, tracker.GetDeviceSnapshot(Device).Single().Id);
+        Assert.AreEqual(90UL, tracker.GetDeviceSnapshot(Device).Single().TransferredBytes);
+        Assert.AreEqual(1, tracker.ActiveCount);
+        var idle = tracker.WaitForIdleAsync(default);
+        Assert.IsTrue(tracker.Complete(replay.Id, new(Transfer, null), "C:\\Downloads\\report.txt"));
+        await idle.WaitAsync(TimeSpan.FromSeconds(5));
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(ActivityStatus.Completed, repository.Records[canonical.Id].Status);
+        Assert.IsFalse(repository.Writes.Any(value => value.Id == replay.Id));
+        Assert.AreEqual(1, repository.Records.Count);
+        Assert.AreEqual(0, tracker.ActiveCount);
     }
 
     [TestMethod]
