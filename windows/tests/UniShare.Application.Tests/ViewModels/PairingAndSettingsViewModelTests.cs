@@ -8,6 +8,21 @@ namespace UniShare.Application.Tests.ViewModels;
 public sealed class PairingAndSettingsViewModelTests
 {
     [TestMethod]
+    public async Task QueuedAdmissionConfirmsAOnDispatcherEvenWhenBReplacesItBeforeContinuation()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(); using var vm = new PairingViewModel(f.Sdk, f.Dispatcher);
+        f.Sdk.IsDispatching = () => f.Dispatcher.IsDispatching;
+        f.Sdk.Emit(new ShareSdkEvent.PairingRequested(new(1), device.Snapshot!, "111 111"));
+        f.Dispatcher.Queue = true; f.Dispatcher.HoldCompletions = true;
+        var confirmation = vm.ConfirmMatchesCommand.ExecuteAsync(null);
+        Assert.AreEqual(0, f.Sdk.Calls.Count);
+        f.Sdk.Emit(new ShareSdkEvent.PairingRequested(new(2), device.Snapshot!, "222 222"));
+        f.Dispatcher.Drain(); f.Dispatcher.Queue = false; f.Dispatcher.HoldCompletions = false; f.Dispatcher.ReleaseCompletions();
+        await confirmation.WaitAsync(TimeSpan.FromSeconds(5));
+        CollectionAssert.AreEqual(new[] { "confirm:1:True" }, f.Sdk.Calls);
+        Assert.IsTrue(f.Sdk.ConfirmationWasDispatched); Assert.AreEqual(new RequestId(2), vm.PendingRequest!.Request);
+    }
+    [TestMethod]
     public async Task SaveValidatesImmutableCandidateAndRejectsConcurrentSave()
     {
         using var f = new ViewModelFixture(); var gate = new TaskCompletionSource<bool>(); f.Ui.Validation = _ => gate.Task;

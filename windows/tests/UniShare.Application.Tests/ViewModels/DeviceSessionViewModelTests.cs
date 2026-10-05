@@ -7,6 +7,76 @@ namespace UniShare.Application.Tests.ViewModels;
 public sealed class DeviceSessionViewModelTests
 {
     [TestMethod]
+    public async Task UnsafeGenerationRetiresStagedClipboardImageEvenIfDeviceIsOnlineAgainBeforeDispatch()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(); using var vm = f.Session(device);
+        f.Sdk.Clipboard = new(ContentKind.Image, null, "image/png", [1, 2]);
+        var staging = new TaskCompletionSource<UniShare.Application.Models.TransientSource>(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Files.Staging = _ => staging.Task;
+        var sending = vm.SendClipboardCommand.ExecuteAsync(null); Assert.IsTrue(f.Tracker.HasActiveTransfers);
+        f.Dispatcher.Queue = true; f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        f.Sdk.Emit(new ShareSdkEvent.DeviceOnline(device.Snapshot!)); f.Dispatcher.Drain(); f.Dispatcher.Queue = false;
+        var image = new ViewModelFixture.TestFiles.StagedImage(); staging.SetResult(image); await sending;
+        Assert.AreEqual(1, image.Disposals); Assert.AreEqual(0, f.Sdk.Completions.Count);
+        Assert.AreEqual(0, vm.Activities.Count); Assert.IsFalse(f.Tracker.HasActiveTransfers);
+        Assert.IsTrue(vm.SendClipboardCommand.CanExecute(null));
+    }
+
+    [TestMethod]
+    public async Task UnsafeEventCancelsAcceptedSendWithoutReleasingCoordinatorOwnershipEarly()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(); using var vm = f.Session(device); vm.ComposerText = "accepted";
+        await vm.SendTextCommand.ExecuteAsync(null); var transfer = new TransferId(Guid.NewGuid());
+        f.Sdk.Emit(new ShareSdkEvent.OutgoingTransferRegistered(new(1), transfer));
+        f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        Assert.AreEqual(1, f.Sdk.Calls.Count(x => x.StartsWith("cancel:")));
+        Assert.IsTrue(f.Tracker.HasActiveTransfers); Assert.IsFalse(f.Sdk.Completions.Single().Task.IsCompleted);
+        f.Sdk.Completions.Single().SetResult(new(transfer, new(ShareErrorKind.Cancelled, "private")));
+        await f.Tracker.WaitForIdleAsync(default);
+        Assert.AreEqual(ActivityStatus.Cancelled, f.Tracker.GetDeviceSnapshot(device.Id).Single().Status);
+        Assert.AreEqual(1, f.Tracker.GetDeviceSnapshot(device.Id).Count);
+    }
+    [TestMethod]
+    public async Task CancelRunsDuringManualAcceptanceButDoesNotReleaseReceiveBeforeNativeCompletion()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(false); using var vm = f.Session(device);
+        var offer = new IncomingOffer(new(71), new(Guid.NewGuid()), device.Id, ContentKind.File, "large.bin", "application/octet-stream", 100);
+        f.Sdk.Emit(new ShareSdkEvent.OfferReceived(offer)); var id = vm.Activities.Single().Id;
+        var native = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Sdk.Accepting = () => native.Task; f.Sdk.Cancelling = () => cancel.Task;
+        var acceptance = vm.AcceptCommand.ExecuteAsync(id);
+        Assert.IsFalse(acceptance.IsCompleted); Assert.IsTrue(vm.CancelCommand.CanExecute(id));
+        var cancellation = vm.CancelCommand.ExecuteAsync(id);
+        await vm.CancelCommand.ExecuteAsync(id); await vm.AcceptCommand.ExecuteAsync(id); await vm.RejectCommand.ExecuteAsync(id);
+        Assert.AreEqual(1, f.Sdk.Calls.Count(x => x.StartsWith("cancel:")));
+        Assert.AreEqual(1, f.Sdk.Calls.Count(x => x == "accept:71")); Assert.IsFalse(f.Sdk.Calls.Contains("reject:71"));
+        cancel.SetResult(); await cancellation;
+        Assert.IsFalse(acceptance.IsCompleted); Assert.AreEqual(0, f.Files.Aborted); Assert.AreEqual(0, f.Files.Published);
+        Assert.IsTrue(f.Tracker.HasActiveTransfers); Assert.IsFalse(vm.CancelCommand.CanExecute(id));
+        native.SetResult(); await acceptance; Assert.AreEqual(1, f.Files.Aborted); Assert.AreEqual(0, f.Files.Published);
+        Assert.AreEqual(ActivityStatus.Cancelled, vm.Activities.Single().Record.Status); Assert.IsFalse(f.Tracker.HasActiveTransfers);
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task UnsafeDeviceEventRevokesPendingClipboardBeforeSubmission(bool identityChanged)
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(); using var vm = f.Session(device);
+        var read = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); f.Sdk.Wait = () => read.Task;
+        var sending = vm.SendClipboardCommand.ExecuteAsync(null); Assert.AreEqual("clipboard", f.Sdk.Calls.Single());
+        f.Dispatcher.Queue = true;
+        if (identityChanged) f.Sdk.Emit(new ShareSdkEvent.IdentityChanged(device.Id)); else f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        f.Dispatcher.Drain(); f.Dispatcher.Queue = false;
+        read.SetResult(); await sending;
+        Assert.AreEqual(1, f.Sdk.Calls.Count); Assert.AreEqual(0, f.Tracker.GetDeviceSnapshot(device.Id).Count);
+        Assert.IsFalse(vm.SendClipboardCommand.CanExecute(null));
+        if (identityChanged) await vm.ForgetCommand.ExecuteAsync(null);
+        f.Sdk.Emit(new ShareSdkEvent.DeviceOnline(device.Snapshot!)); f.Sdk.Wait = null;
+        await vm.SendClipboardCommand.ExecuteAsync(null); Assert.AreEqual("text:clipboard", f.Sdk.Calls.Last());
+    }
+    [TestMethod]
     public async Task CancellationRemainsDisabledUntilOutgoingNativeCompletion()
     {
         using var f = new ViewModelFixture(); using var vm = f.Session(f.Online()); vm.ComposerText = "cancel me";

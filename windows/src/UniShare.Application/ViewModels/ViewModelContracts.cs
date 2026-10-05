@@ -23,34 +23,60 @@ public interface IViewModelFiles
 public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : ObservableObject
 {
     private readonly List<IRelayCommand> commands = [];
-    private int busy;
+    private readonly CommandLane defaultLane = new();
+    private readonly List<CommandLane> additionalLanes = [];
     private string? errorResourceKey;
     protected IViewModelDispatcher Dispatcher { get; } = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-    public bool IsBusy => Volatile.Read(ref busy) != 0;
+    public bool IsBusy => defaultLane.IsBusy || additionalLanes.Any(lane => lane.IsBusy);
     public string? ErrorResourceKey { get => errorResourceKey; private set => SetProperty(ref errorResourceKey, value); }
+
+    protected sealed class CommandLane
+    {
+        internal int Busy;
+        internal bool IsBusy => Volatile.Read(ref Busy) != 0;
+    }
+
+    // A separate lane is only for explicitly safe operations such as cancelling
+    // a receive whose acceptance is still awaiting native completion.
+    protected CommandLane CreateCommandLane()
+    {
+        var lane = new CommandLane(); additionalLanes.Add(lane); return lane;
+    }
 
     protected IAsyncRelayCommand Command(Func<Task> action, Func<bool> enabled, string errorKey)
     {
-        var command = new AsyncRelayCommand(() => RunAsync(action, enabled, errorKey), () => !IsBusy && enabled());
+        var command = new AsyncRelayCommand(() => RunAsync(action, enabled, errorKey, defaultLane), () => !defaultLane.IsBusy && enabled());
         commands.Add(command); return command;
     }
 
-    protected IAsyncRelayCommand<T> Command<T>(Func<T?, Task> action, Predicate<T?> enabled, string errorKey)
+    protected IAsyncRelayCommand<T> Command<T>(Func<T?, Task> action, Predicate<T?> enabled, string errorKey, CommandLane? lane = null)
     {
-        var command = new AsyncRelayCommand<T>(value => RunAsync(() => action(value), () => enabled(value), errorKey),
-            value => !IsBusy && enabled(value));
+        var admissionLane = lane ?? defaultLane;
+        var command = new AsyncRelayCommand<T>(value => RunAsync(() => action(value), () => enabled(value), errorKey, admissionLane),
+            value => !admissionLane.IsBusy && enabled(value));
         commands.Add(command); return command;
     }
 
-    // CanExecute is advisory in ICommand. The atomic gate also protects callers
-    // that use ExecuteAsync directly, including repeated/cross-command calls.
-    private async Task RunAsync(Func<Task> action, Func<bool> enabled, string errorKey)
+    // Eligibility, lane admission, and the synchronous start of the operation
+    // share one dispatcher action. Async methods capture their binding inputs
+    // before their first await; a later event cannot replace those inputs while
+    // a dispatch completion/continuation is pending. Await only the resulting
+    // operation outside the binding thread. CanExecute itself is a UI query.
+    private async Task RunAsync(Func<Task> action, Func<bool> enabled, string errorKey, CommandLane lane)
     {
-        if (!enabled() || Interlocked.CompareExchange(ref busy, 1, 0) != 0) return;
+        var admitted = false;
+        Task? operation = null;
         try
         {
-            await Dispatcher.InvokeAsync(() => { ErrorResourceKey = null; NotifyCommands(); }).ConfigureAwait(false);
-            if (enabled()) await action().ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!enabled() || Interlocked.CompareExchange(ref lane.Busy, 1, 0) != 0) return;
+                admitted = true;
+                ErrorResourceKey = null;
+                operation = action();
+                NotifyCommands();
+            }).ConfigureAwait(false);
+            if (operation is not null) await operation.ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -58,8 +84,8 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
         }
         finally
         {
-            Volatile.Write(ref busy, 0);
-            await Dispatcher.InvokeAsync(NotifyCommands).ConfigureAwait(false);
+            if (admitted)
+                await Dispatcher.InvokeAsync(() => { Volatile.Write(ref lane.Busy, 0); NotifyCommands(); }).ConfigureAwait(false);
         }
     }
 

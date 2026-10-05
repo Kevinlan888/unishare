@@ -62,6 +62,10 @@ internal sealed class ViewModelFixture : IDisposable
         public List<TaskCompletionSource<TransferTerminal>> Completions { get; } = [];
         public bool FailSend;
         public Func<Task>? Wait;
+        public Func<Task>? Accepting;
+        public Func<Task>? Cancelling;
+        public bool ConfirmationWasDispatched;
+        public Func<bool>? IsDispatching;
         public ShareContent Clipboard = new(ContentKind.Text, "clipboard", "text/plain", []);
         public void Emit(ShareSdkEvent value) => EventReceived?.Invoke(this, value);
         public Task InitializeAsync(SdkOptions options, CancellationToken token) => Task.CompletedTask;
@@ -70,7 +74,7 @@ internal sealed class ViewModelFixture : IDisposable
         public IReadOnlyList<DeviceSnapshot> GetDevices() => Devices;
         public IReadOnlySet<DeviceId> GetTrustedDevices() => Trusted;
         public Task ConnectAsync(DeviceId device, CancellationToken token) { Calls.Add("connect"); return Wait?.Invoke() ?? Task.CompletedTask; }
-        public Task ConfirmPairingAsync(RequestId request, bool matches, CancellationToken token) { Calls.Add($"confirm:{request.Value}:{matches}"); return Wait?.Invoke() ?? Task.CompletedTask; }
+        public Task ConfirmPairingAsync(RequestId request, bool matches, CancellationToken token) { ConfirmationWasDispatched = IsDispatching?.Invoke() ?? false; Calls.Add($"confirm:{request.Value}:{matches}"); return Wait?.Invoke() ?? Task.CompletedTask; }
         public Task RejectPairingAsync(RequestId request, CancellationToken token) { Calls.Add($"pair-reject:{request.Value}"); return Wait?.Invoke() ?? Task.CompletedTask; }
         public Task ForgetDeviceAsync(DeviceId device, CancellationToken token) { Calls.Add("forget"); Trusted.Remove(device); return Task.CompletedTask; }
         public PendingSend BeginSendText(DeviceId device, string text) => Begin($"text:{text}");
@@ -81,19 +85,27 @@ internal sealed class ViewModelFixture : IDisposable
             Calls.Add(call); var completion = new TaskCompletionSource<TransferTerminal>(TaskCreationOptions.RunContinuationsAsynchronously);
             Completions.Add(completion); return new(new((ulong)Completions.Count), completion.Task);
         }
-        public Task AcceptAsync(RequestId request, string path, CancellationToken token) { Calls.Add($"accept:{request.Value}"); return Wait?.Invoke() ?? Task.CompletedTask; }
+        public Task AcceptAsync(RequestId request, string path, CancellationToken token) { Calls.Add($"accept:{request.Value}"); return Accepting?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask; }
         public Task RejectAsync(RequestId request, CancellationToken token) { Calls.Add($"reject:{request.Value}"); return Wait?.Invoke() ?? Task.CompletedTask; }
-        public Task CancelAsync(TransferId transfer, CancellationToken token) { Calls.Add($"cancel:{transfer.Value}"); return Wait?.Invoke() ?? Task.CompletedTask; }
+        public Task CancelAsync(TransferId transfer, CancellationToken token) { Calls.Add($"cancel:{transfer.Value}"); return Cancelling?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask; }
         public async Task<ShareContent> ReadClipboardAsync(CancellationToken token) { Calls.Add("clipboard"); if (Wait is not null) await Wait(); return Clipboard; }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     internal sealed class TestFiles : ITransferFiles
     {
+        public int Published;
+        public int Aborted;
+        public Func<CancellationToken, Task<TransientSource>>? Staging;
         public Task<PreparedReceive> CreateReceiveAsync(IncomingOffer offer, string root, CancellationToken token) => Task.FromResult<PreparedReceive>(new Receive());
-        public Task<string> PublishAsync(PreparedReceive receive, CancellationToken token) => Task.FromResult(receive.FinalPath);
-        public Task AbortAsync(PreparedReceive receive) => Task.CompletedTask;
+        public Task<string> PublishAsync(PreparedReceive receive, CancellationToken token) { Published++; return Task.FromResult(receive.FinalPath); }
+        public Task AbortAsync(PreparedReceive receive) { Aborted++; return Task.CompletedTask; }
         public Task<TransientDestination> CreateTextDestinationAsync(CancellationToken token) => throw new NotSupportedException();
-        public Task<TransientSource> StageClipboardImageAsync(ReadOnlyMemory<byte> bytes, string mime, CancellationToken token) => throw new NotSupportedException();
+        public Task<TransientSource> StageClipboardImageAsync(ReadOnlyMemory<byte> bytes, string mime, CancellationToken token) => Staging?.Invoke(token) ?? throw new NotSupportedException();
+        internal sealed record StagedImage() : TransientSource(new ShareSource("private-stage", "clipboard.png", "image/png", 2))
+        {
+            public int Disposals;
+            public override ValueTask DisposeAsync() { Disposals++; return ValueTask.CompletedTask; }
+        }
         private sealed record Receive() : PreparedReceive("staging", "received") { public override ValueTask DisposeAsync() => ValueTask.CompletedTask; }
     }
     internal sealed class SettingsStore : ISettingsStore
@@ -116,9 +128,42 @@ internal sealed class ViewModelFixture : IDisposable
     internal sealed class QueuedDispatcher : IViewModelDispatcher
     {
         public bool Queue;
+        public bool HoldCompletions;
+        public bool IsDispatching { get; private set; }
+        private readonly object gate = new();
         private readonly Queue<Action> actions = new();
-        public void Post(Action action) { if (Queue) actions.Enqueue(action); else action(); }
-        public Task InvokeAsync(Action action) { action(); return Task.CompletedTask; }
-        public void Drain() { while (actions.TryDequeue(out var action)) action(); }
+        private readonly List<TaskCompletionSource> completions = [];
+        public void Post(Action action)
+        {
+            lock (gate)
+            {
+                if (Queue) actions.Enqueue(action);
+                else Run(action);
+            }
+        }
+        private void Run(Action action)
+        {
+            var previous = IsDispatching; IsDispatching = true;
+            try { action(); } finally { IsDispatching = previous; }
+        }
+        public Task InvokeAsync(Action action)
+        {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(() =>
+            {
+                try
+                {
+                    action();
+                    if (HoldCompletions) completions.Add(completion); else completion.SetResult();
+                }
+                catch (Exception error) { completion.SetException(error); }
+            });
+            return completion.Task;
+        }
+        public void Drain() { lock (gate) { while (actions.TryDequeue(out var action)) Run(action); } }
+        public void ReleaseCompletions()
+        {
+            lock (gate) { foreach (var completion in completions) completion.SetResult(); completions.Clear(); }
+        }
     }
 }

@@ -27,8 +27,9 @@ public sealed class ShellViewModel : CommandViewModel, IDisposable
         Devices.Refresh();
         RetryDiscoveryCommand = Command(async () =>
         {
+            var banner = DiscoveryBanner;
             await retryDiscovery().ConfigureAwait(false);
-            await Dispatcher.InvokeAsync(() => DiscoveryBanner = null).ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() => { if (ReferenceEquals(DiscoveryBanner, banner)) DiscoveryBanner = null; }).ConfigureAwait(false);
         }, () => DiscoveryBanner?.CanRetry == true, "Discovery.RetryFailed");
         sdk.EventReceived += OnEvent;
     }
@@ -61,7 +62,13 @@ public sealed class ShellViewModel : CommandViewModel, IDisposable
     public DiscoveryBannerState? DiscoveryBanner
     {
         get => discoveryBanner;
-        private set { if (SetProperty(ref discoveryBanner, value)) RetryDiscoveryCommand.NotifyCanExecuteChanged(); }
+        private set
+        {
+            // A repeated error with identical semantic fields is still a new
+            // discovery failure; record value equality must not merge attempts.
+            if (ReferenceEquals(discoveryBanner, value)) return;
+            discoveryBanner = value; OnPropertyChanged(); RetryDiscoveryCommand.NotifyCanExecuteChanged();
+        }
     }
     public IAsyncRelayCommand RetryDiscoveryCommand { get; }
     private void OnSessionDeviceStateChanged(object? sender, EventArgs args) { if (!disposed) Devices.Refresh(); }

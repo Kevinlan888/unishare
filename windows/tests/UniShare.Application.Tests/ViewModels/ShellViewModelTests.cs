@@ -8,6 +8,20 @@ namespace UniShare.Application.Tests.ViewModels;
 public sealed class ShellViewModelTests
 {
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task OlderDiscoveryRetryCannotClearNewerFailureBanner(bool sameFailureKind)
+    {
+        using var f = new ViewModelFixture(); var retry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var vm = new ShellViewModel(f.Devices, f.Sdk, () => retry.Task, f.Session, f.Dispatcher);
+        f.Sdk.Emit(new ShareSdkEvent.DiscoveryFailed(new(ShareErrorKind.DiscoveryFailed, "old private")));
+        var attempt = vm.RetryDiscoveryCommand.ExecuteAsync(null);
+        f.Sdk.Emit(new ShareSdkEvent.DiscoveryFailed(new(sameFailureKind ? ShareErrorKind.DiscoveryFailed : ShareErrorKind.PermissionDenied, "new private")));
+        var newer = vm.DiscoveryBanner; retry.SetResult(); await attempt;
+        Assert.AreSame(newer, vm.DiscoveryBanner); Assert.AreEqual(sameFailureKind ? "Discovery.Failed" : "Discovery.PermissionDenied", vm.DiscoveryBanner!.ResourceKey);
+        Assert.IsTrue(vm.RetryDiscoveryCommand.CanExecute(null));
+    }
+    [TestMethod]
     public void ShareAndStableSelectionSurviveTrustAndOfflineUpdates()
     {
         using var f = new ViewModelFixture(); var device = f.Online(false); using var shell = f.Shell();
