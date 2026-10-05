@@ -315,7 +315,9 @@ struct Memory : unishare::IStream {
     std::size_t offset = 0;
     bool closed = false, aborted = false, hold = false;
     ResultCallback<void> pending;
+    std::function<void(std::size_t)> observe_read;
     OperationId Read(std::size_t n, ResultCallback<std::vector<std::uint8_t>> cb) override {
+        if(observe_read) observe_read(n);
         n = (std::min)(n, bytes.size() - offset);
         std::vector<std::uint8_t> out(bytes.begin() + offset, bytes.begin() + offset + n);
         offset += n;
@@ -861,7 +863,47 @@ void RetainedContentBudget() {
     Pump(sdk, q);
     CHECK(budget->Used() == 0);
 }
+// Regressions: large text must use bounded reads, retain Text wire metadata,
+// reject configured overflow, and close its source on cancellation and Stop.
+void StreamedTextCapacity() {
+        for (int mode=0; mode<6; ++mode) {
+            Peer a,b;
+            if(mode==5) a.sdk.Runtime()->config.max_text_bytes=524288;
+            Connect(a,b); auto service=a.sdk.Transfers();
+            auto source=std::make_shared<Memory>();
+            source->observe_read=[&](std::size_t n){CHECK(n<=262144);CHECK(a.sdk.Runtime()->buffers->Used()<=4194304);};
+            source->bytes.assign(8*1024*1024, 'x');
+            if(mode==1) source->bytes.push_back('x');
+            if(mode==2) source->bytes.back()=0xff;
+            TransferId outgoing{}; service->SetProgressHandler([&](auto p){outgoing=p.id;});
+            auto offers=b.offers.size(); int calls=0; ErrorCode error=ErrorCode::InvalidInput;
+            service->SendTextStream(b.Id(), {"ignored", "ignored", source->bytes.size(), source}, [&](auto r) {
+                ++calls; if(!r.ok()) error=r.error().code; else CHECK(mode==0);
+            });
+            Settle(a,b);
+            if(mode==1||mode==5) { CHECK(calls==1&&error==ErrorCode::ResourceLimit&&b.offers.size()==offers&&source->closed&&source->offset==0); service->SetProgressHandler({}); continue; }
+            CHECK(b.offers.size()==offers+1&&calls==0);
+            CHECK(b.offers.back().content_type==ContentType::Text&&b.offers.back().mime_type=="text/plain;charset=utf-8");
+            if(mode==3) service->Cancel(outgoing, [](auto r){CHECK(r.ok());});
+            else if(mode==4) service->Stop([](auto r){CHECK(r.ok());});
+            else {
+                auto sink=std::make_shared<Memory>();
+                b.sdk.Transfers()->Accept(b.offers.back().request_id,sink,[](auto r){CHECK(r.ok());});
+                Settle(a,b);
+                if(mode==0) CHECK(sink->bytes==source->bytes&&sink->closed);
+                else CHECK(sink->aborted&&error==ErrorCode::IntegrityFailed);
+            }
+            Settle(a,b); CHECK(calls==1&&source->closed);
+            CHECK(a.sdk.Runtime()->buffers->Used()<=4194304&&b.sdk.Runtime()->buffers->Used()<=4194304);
+            if(mode==3||mode==4) CHECK(error==ErrorCode::Cancelled);
+            service->SetProgressHandler({});
+        }
+    Peer a; auto source=std::make_shared<Memory>(); int calls=0;
+    a.sdk.Transfers()->SendTextStream({}, {"", "", 0, source}, [&](auto r){CHECK(!r.ok());++calls;});
+    Pump(a.sdk,a.q); CHECK(calls==1&&source->closed);
+}
 int main(int argc, char **argv) {
+    if(argc>1&&std::string(argv[1])=="text-capacity") { StreamedTextCapacity(); return 0; }
     if (argc > 1 && std::string(argv[1]) == "retained-budget") {
         RetainedContentBudget();
         return 0;
@@ -886,6 +928,7 @@ int main(int argc, char **argv) {
         Validation();
         return 0;
     }
+    StreamedTextCapacity();
     ClipboardContract();
     ConnectionAndTransfers();
     ReceiptBeforeStop();

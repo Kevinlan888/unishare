@@ -122,3 +122,36 @@ The ordinary windows_network CTest uses real TCP loopback, an injectable Win32 D
 
 - [SHGetKnownFolderPath current-user path and memory ownership](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath)
 - [DnsServiceBrowse Windows 10 requirement and asynchronous contract](https://learn.microsoft.com/en-us/windows/win32/api/windns/nf-windns-dnsservicebrowse)
+
+## Streamed text capacity
+
+Use `ITransferService::SendTextStream(device, source, callback)` for text up to
+`min(max_text_bytes, 8 MiB)`, including values larger than the 4 MiB shared
+native buffer budget. `source.byte_count` is the exact UTF-8 byte count and
+`source.stream` supplies bounded reads. Display name and MIME are normalized to
+`text` and `text/plain;charset=utf-8`. The stream is retained until completion,
+closed on all terminal/early-failure paths, and never read before acceptance.
+The existing Text wire type, incremental UTF-8 validation, SHA-256, 256 KiB chunks,
+and terminal receipt semantics apply. Invalid streamed UTF-8 is IntegrityFailed;
+configured size overflow is ResourceLimit before the offer reaches the peer.
+
+```cpp
+unishare::TransferSource source;
+source.byte_count = utf8_file_size;
+source.stream = opened_source; // e.g. the existing Windows source-file adapter
+sdk->Transfers()->SendTextStream(peer_id, std::move(source), on_terminal);
+```
+
+`SendText(device, std::string, callback)` remains the direct convenience API: it
+charges retained string capacity plus its terminator to the shared budget and
+can return ResourceLimit below `max_text_bytes`. Use the stream route for the
+full configured capacity. This avoids implicit disk policy in the C++ core.
+
+C callers use additive ABI v1 symbol `usdk_send_text_stream` with `usdk_source`;
+release the registered source token immediately after successful submission if
+desired. The core retains ownership until terminal completion. Deploy headers and
+libraries together: older v1 libraries do not export this new symbol. Existing
+v1 layouts and functions are unchanged. C++ consumers must rebuild with matching
+headers/library. The original C direct text span is capped at 4 MiB. Clipboard's
+direct value API remains limited by the shared budget and its C aggregate 4 MiB
+copy cap; 8 MiB transfer capacity does not imply 8 MiB clipboard capacity.

@@ -157,6 +157,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_unishare_sdk_internal_SdkNative_subm
       case 5: error = usdk_reject_pairing(owner->sdk, request, Complete, context.get(), &operation); break;
       case 6: error = usdk_forget_device(owner->sdk, uuid, Complete, context.get(), &operation); break;
       case 7: error = usdk_send_text(owner->sdk, uuid, Span(t), Complete, context.get(), &operation); break;
+      case 15: error = usdk_send_text_stream(owner->sdk, uuid, &source, Complete, context.get(), &operation); break;
       case 8: error = usdk_send_image(owner->sdk, uuid, &source, Complete, context.get(), &operation); break;
       case 9: error = usdk_send_file(owner->sdk, uuid, &source, Complete, context.get(), &operation); break;
       case 10: error = usdk_accept(owner->sdk, request, stream, Complete, context.get(), &operation); break;

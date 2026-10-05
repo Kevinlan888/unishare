@@ -12,14 +12,28 @@ final class ContentStreams {
     private final ContentResolver resolver;
     private final AtomicLong ids=new AtomicLong();
     private final ConcurrentHashMap<Long,Entry> entries=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String,File> staged=new ConcurrentHashMap<>();
+    String stage(File file){String token="unishare-text:"+UUID.randomUUID();staged.put(token,file);return token;}
+    void discard(String token){File file=staged.remove(token);if(file!=null)file.delete();}
     private static final class Entry {
         final Uri uri;final boolean destination;final ParcelFileDescriptor fd;final InputStream in;final OutputStream out;
+        File temporary;
         volatile boolean closed;
         Entry(Uri u,boolean w,ParcelFileDescriptor p)throws IOException{uri=u;destination=w;fd=p;
             in=w?null:new FileInputStream(p.getFileDescriptor());out=w?new FileOutputStream(p.getFileDescriptor()):null;}
     }
     ContentStreams(ContentResolver resolver) {this.resolver=resolver;}
     long open(String text,boolean write)throws Exception{
+        File temporary=staged.remove(text);
+        if(temporary!=null){
+            ParcelFileDescriptor fd=null;
+            try {
+                if(write)throw new IllegalArgumentException("staged text is read-only");
+                fd=ParcelFileDescriptor.open(temporary,ParcelFileDescriptor.MODE_READ_ONLY);
+                Entry entry=new Entry(null,false,fd);entry.temporary=temporary;
+                long id=ids.incrementAndGet();entries.put(id,entry);return id;
+            }catch(Exception e){if(fd!=null)fd.close();temporary.delete();throw e;}
+        }
         Uri uri=Uri.parse(text);if(!"content".equals(uri.getScheme()))throw new IllegalArgumentException("host-selected content URI required");
         ParcelFileDescriptor fd=resolver.openFileDescriptor(uri,write?"rwt":"r");
         if(fd==null)throw new IOException("provider did not open URI");
@@ -43,6 +57,7 @@ final class ContentStreams {
         Entry e=entries.remove(handle);if(e==null)return;e.closed=true;
         // Retire the entry and close its descriptor before deleting the staged inode.
         try{e.fd.close();}finally{try{if(e.in!=null)e.in.close();if(e.out!=null)e.out.close();}finally{
+            if(e.temporary!=null)e.temporary.delete();
             if(abort&&e.destination&&resolver.delete(e.uri,null,null)==0)throw new IOException("provider did not delete staging destination");}}
     }
 }

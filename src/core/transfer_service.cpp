@@ -1,7 +1,24 @@
 #include "transfer_service.hpp"
 #include <algorithm>
+#include <atomic>
 namespace unishare::core {
 namespace {
+// Close even when submission is rejected/retired before the engine takes it.
+class TextSource final : public IStream {
+    std::shared_ptr<IStream> source_;
+    std::atomic<bool> closed_{false};
+public:
+    explicit TextSource(std::shared_ptr<IStream> source) : source_(std::move(source)) {}
+    ~TextSource() { try { Close(); } catch (...) {} }
+    OperationId Read(std::size_t n, ResultCallback<std::vector<std::uint8_t>> cb) override {
+        return source_->Read(n, std::move(cb));
+    }
+    OperationId Write(std::vector<std::uint8_t> b, ResultCallback<void> cb) override {
+        return source_->Write(std::move(b), std::move(cb));
+    }
+    void Close() override { if (!closed_.exchange(true)) source_->Close(); }
+    void AbortAndCleanup() override { Close(); }
+};
 class TextStream final : public IStream {
     std::shared_ptr<ByteBudget::Reservation> charge_;
     std::string text_;
@@ -135,11 +152,13 @@ class TransferService final : public ITransferService,
                                                              auto ticket) mutable {
                 auto c = s.connection_(device);
                 if (!s.enabled || !c || !s.engines_.count(*c)) {
+                    if (source.content.stream) source.content.stream->Close();
                     ticket.Complete(Result<TransferId>::Failure(ServiceError(
                         ErrorCode::AuthenticationFailed, "no authenticated connection")));
                     return;
                 }
                 if (!s.next_transfer_) {
+                    if (source.content.stream) source.content.stream->Close();
                     ticket.Complete(Result<TransferId>::Failure(
                         ServiceError(ErrorCode::ResourceLimit, "transfer handles exhausted")));
                     return;
@@ -149,6 +168,7 @@ class TransferService final : public ITransferService,
                 s.transfers_.emplace(key, Transfer{*c, {}, id, 0, false, ticket});
                 s.offering_ = key;
                 if (validation) {
+                    if (source.content.stream) source.content.stream->Close();
                     s.offering_.reset();
                     s.Finish(r, key, Result<void>::Failure(*validation));
                     return;
@@ -265,6 +285,19 @@ class TransferService final : public ITransferService,
                      {"text", "text/plain;charset=utf-8", size,
                       std::make_shared<TextStream>(std::move(text), std::move(charge))}},
                     std::move(cb), error);
+    }
+    OperationId SendTextStream(DeviceId d, TransferSource source, ResultCallback<TransferId> cb) override {
+        if (source.stream) source.stream = std::make_shared<TextSource>(std::move(source.stream));
+        source.display_name = "text";
+        source.mime_type = "text/plain;charset=utf-8";
+        auto stream = source.stream;
+        return Send(d, {ContentType::Text, std::move(source)},
+                    [stream = std::move(stream), cb = std::move(cb)](auto result) mutable {
+                        // Engine preflight can emit before its local source is destroyed.
+                        // Retire staging before exposing any terminal callback to the host.
+                        if (stream) { try { stream->Close(); } catch (...) {} }
+                        if (cb) cb(std::move(result));
+                    });
     }
     OperationId SendImage(DeviceId d, TransferSource source,
                           ResultCallback<TransferId> cb) override {

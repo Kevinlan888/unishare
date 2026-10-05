@@ -22,7 +22,7 @@ public struct ConnectionManager {
 public struct TransferService {
     private let sdk: ShareSdk
     internal init(_ sdk: ShareSdk) { self.sdk = sdk }
-    @discardableResult public func sendText(_ text: String, to device: UUID, completion: @escaping (OperationResult) -> Void) -> UInt64 { sdk.command(7,["id":device,"text":text],completion:completion) }
+    @discardableResult public func sendText(_ text: String, to device: UUID, completion: @escaping (OperationResult) -> Void) -> UInt64 { sdk.sendText(text,to:device,completion:completion) }
     @discardableResult public func sendImage(_ url: URL, to device: UUID, mimeType: String, byteCount: UInt64, displayName: String = "image", completion: @escaping (OperationResult) -> Void) -> UInt64 { sdk.command(8,["id":device,"url":url,"name":displayName,"mime":mimeType,"size":byteCount],completion:completion) }
     @discardableResult public func sendFile(_ url: URL, to device: UUID, displayName: String, byteCount: UInt64, mimeType: String = "application/octet-stream", completion: @escaping (OperationResult) -> Void) -> UInt64 { sdk.command(9,["id":device,"url":url,"name":displayName,"mime":mimeType,"size":byteCount],completion:completion) }
     @discardableResult public func accept(_ request: UInt64, stagingURL: URL, completion: @escaping (OperationResult) -> Void) -> UInt64 { sdk.command(10,["request":request,"url":stagingURL],completion:completion) }

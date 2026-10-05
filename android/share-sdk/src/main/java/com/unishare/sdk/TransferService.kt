@@ -3,7 +3,7 @@ package com.unishare.sdk
 import android.net.Uri
 
 class TransferService internal constructor(private val sdk: ShareSdk) {
-    fun sendText(deviceId: DeviceId, text: String): Operation = sdk.command(7, deviceId.value, text = text)
+    fun sendText(deviceId: DeviceId, text: String): Operation = sdk.sendText(deviceId.value, text)
     fun sendImage(deviceId: DeviceId, source: Uri, mimeType: String, byteCount: Long, displayName: String = "image"): Operation =
         sdk.streamCommand(8, deviceId.value, source, false, displayName, mimeType, byteCount)
     fun sendFile(deviceId: DeviceId, source: Uri, displayName: String, byteCount: Long, mimeType: String = "application/octet-stream"): Operation =

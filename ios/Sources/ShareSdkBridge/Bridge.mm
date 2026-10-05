@@ -115,6 +115,7 @@ usdk_error NativeError(const unishare::ShareError& e) {return {static_cast<uint3
  case 5:error=usdk_reject_pairing(_sdk,request,Finish,pending,&operation);break;
  case 6:error=usdk_forget_device(_sdk,id,Finish,pending,&operation);break;
  case 7:error=usdk_send_text(_sdk,id,Span(text),Finish,pending,&operation);break;
+ case 15:error=usdk_send_text_stream(_sdk,id,&source,Finish,pending,&operation);break;
  case 8:error=usdk_send_image(_sdk,id,&source,Finish,pending,&operation);break;
  case 9:error=usdk_send_file(_sdk,id,&source,Finish,pending,&operation);break;
  case 10:error=usdk_accept(_sdk,request,stream,Finish,pending,&operation);break;

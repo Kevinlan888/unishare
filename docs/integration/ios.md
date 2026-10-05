@@ -81,7 +81,9 @@ sdk.clipboard.writeContent(.text("Chosen text")) { result in /* done */ }
 
 Only UTF-8 text and PNG/JPEG images are supported. Unsupported clipboard content returns `invalidInput`. System pasteboard prompts remain under iOS control. No clipboard observer or automatic synchronization is installed.
 
-Default configured limits are text 8 MiB, image 100 MiB, file 20 GiB, subject to core resource limits and stricter host configuration. **Current C ABI v1 direct text submission copies at most 4 MiB**, so `sendText` over 4 MiB returns `resourceLimit` even with the default 8 MiB configured text limit. C ABI v1 clipboard writes also impose a 4 MiB aggregate limit on text, image bytes and MIME metadata. These inherited cross-layer limits do not restrict the file-URL streaming path to 4 MiB, and this is not an 8 MiB direct-text capability claim.
+Default configured limits are text 8 MiB, image 100 MiB and file 20 GiB, subject to stricter host configuration. `sendText(String)` enforces the smaller of `maxTextBytes` and 8 MiB, counts UTF-8 bytes and stages bounded 64 KiB buffers in the private temporary directory on a worker, then uses the additive v1 `usdk_send_text_stream` operation. Native transfer uses existing 256 KiB chunks within the 4 MiB shared budget; an 8 MiB string never becomes a direct native span. Over-limit text returns `resourceLimit` before staging/submission. Sources are removed on terminal results, Stop cancellation, Close, preparation failure and deinitialization; I/O failures return `storageFailed`. Process termination may leave temporary files for OS cleanup.
+
+Existing C ABI `usdk_send_text` stays available with its 4 MiB span cap and available-buffer restrictions. Clipboard writes remain direct values with a 4 MiB aggregate cap (text, image bytes and MIME metadata) and available-budget restrictions. This is not an 8 MiB clipboard capability. Manual clipboard selection and explicit writes are unchanged.
 
 ## Verification and remaining acceptance
 

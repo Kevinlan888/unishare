@@ -26,17 +26,24 @@ internal object ApiContractCases {
         val submissions = java.util.concurrent.LinkedBlockingQueue<Pair<Int, Long>>()
         val released = AtomicInteger(); var closed = false
         val aborted = AtomicInteger()
+        var rejectSend = false
         var openEntered: CountDownLatch? = null; var openRelease: CountDownLatch? = null
         override fun create(config: ByteArray, key: Long, receiver: SdkNative.Receiver) { this.receiver = receiver; receiver.completion(key, result()) }
         override fun submit(command: Int, uuid: ByteArray, request: Long, stream: Long, number: Long, text: ByteArray,
                             name: ByteArray, mime: ByteArray, bytes: ByteArray, size: Long, key: Long) {
+            check(text.size <= 262144, "large text must never cross JNI as a direct span")
             submissions.put(command to key)
             if (command == 2) receiver.completion(key, result())
+            if (command == 15 && rejectSend) receiver.completion(key, result(13))
         }
         override fun foreground(value: Boolean) {}
         override fun snapshot(trusted: Boolean) = packet { it.writeInt(0) }
         override fun state() = 1
         override fun open(uri: String, destination: Boolean): Long { openEntered?.countDown(); openRelease?.await(5, TimeUnit.SECONDS); return 73L }
+        override fun stageText(text: String, limit: Long): LongArray {
+            val file = com.unishare.sdk.internal.StagedText.create(java.io.File(System.getProperty("java.io.tmpdir")!!),text,limit)
+            val size=file.length(); file.delete(); openEntered?.countDown(); openRelease?.await(5, TimeUnit.SECONDS); return longArrayOf(73L,size)
+        }
         override fun release(stream: Long) { check(stream == 73L, "stream token"); released.incrementAndGet() }
         override fun abort(stream: Long) { aborted.incrementAndGet() }
         override fun close() { closed = true }
@@ -47,10 +54,35 @@ internal object ApiContractCases {
     }
     fun run() {
         configBoundaries()
+        val cappedFake=Fake(); cappedFake.rejectSend=true; val cappedSdk=ShareSdk(cappedFake,null)
+        check(cappedSdk.initialize(SdkConfig("cap",maxTextBytes=16777216)).result.get(5,TimeUnit.SECONDS).isSuccess,"high configured text limit")
+        val cappedOperation=cappedSdk.transfers.sendText(DeviceId(UUID.randomUUID()), "x".repeat(8388609))
+        check(cappedOperation.result.get(5,TimeUnit.SECONDS).error?.category==ErrorCategory.RESOURCE_LIMIT,"wire text maximum is still 8MiB when config is higher")
+        cappedSdk.close()
+        val largeFake = Fake(); val largeSdk = initialized(largeFake)
+        val largeOperation = largeSdk.transfers.sendText(DeviceId(UUID.randomUUID()), "x".repeat(8*1024*1024))
+        val largeKey = largeFake.next(15)
+        largeFake.receiver.completion(largeKey, result())
+        check(largeOperation.result.get(5, TimeUnit.SECONDS).isSuccess, "8MiB streamed text")
+        largeSdk.close()
+        for (close in listOf(false,true)) {
+            val stagedFake=Fake(); val stagedSdk=initialized(stagedFake)
+            val entered=CountDownLatch(1); val release=CountDownLatch(1)
+            stagedFake.openEntered=entered; stagedFake.openRelease=release
+            val operation=stagedSdk.transfers.sendText(DeviceId(UUID.randomUUID()), "é".repeat(3*1024*1024))
+            check(entered.await(10,TimeUnit.SECONDS), "text staging started")
+            if(close) stagedSdk.close() else { check(stagedSdk.stop().result.get(5,TimeUnit.SECONDS).isSuccess,"stop during text staging"); stagedFake.next(2) }
+            check(operation.result.get(5,TimeUnit.SECONDS).error?.category==ErrorCategory.CANCELLED,"text staging cancelled")
+            release.countDown()
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
+            while(stagedFake.released.get()==0&&System.nanoTime()<deadline) Thread.yield()
+            check(stagedFake.released.get()==1&&stagedFake.submissions.isEmpty(),"cancelled preparation releases stream without native send")
+            stagedSdk.close()
+        }
         val fake = Fake(); val sdk = initialized(fake)
         val peer = DeviceId(UUID.randomUUID())
         val send = sdk.transfers.sendText(peer, "UTF-8 世界\u0000")
-        val key = fake.next(7); val completions = AtomicInteger()
+        val key = fake.next(15); val completions = AtomicInteger()
         val observed = send.result.thenAccept { completions.incrementAndGet() }
         fake.receiver.completion(key, result(10, -42)); fake.receiver.completion(key, result())
         val outcome = send.result.get(5, TimeUnit.SECONDS)
@@ -62,8 +94,8 @@ internal object ApiContractCases {
         fake.receiver.completion(imageKey, result())
         check(image.result.get(5, TimeUnit.SECONDS).isSuccess, "image outcome")
         val sourceReleaseDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-        while (fake.released.get() == 0 && System.nanoTime() < sourceReleaseDeadline) Thread.yield()
-        check(fake.released.get() == 1, "source ownership")
+        while (fake.released.get() < 2 && System.nanoTime() < sourceReleaseDeadline) Thread.yield()
+        check(fake.released.get() == 2, "source ownership")
         val pending = sdk.transfers.sendFile(peer, Uri.parse("content://test/file"), "file", 0)
         val pendingKey = fake.next(9)
         val stop = sdk.stop(); fake.next(2)

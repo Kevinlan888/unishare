@@ -127,3 +127,29 @@ internal func runServiceMetadataTests() {
     sdk.close()
     print("PASS Swift source metadata defaults and explicit overrides match native services")
 }
+internal func runTextCapacityTests() {
+    let backend = FakeBackend()
+    let owner = ShareSdk(backend: backend, callbackQueue: nil)
+    let done = DispatchSemaphore(value: 0)
+    var textConfig = SdkConfig(deviceName: "text"); textConfig.maxTextBytes = 16777216
+    owner.initialize(textConfig) { _ in done.signal() }
+    precondition(done.wait(timeout: .now()+5) == .success)
+    let before = backend.count
+    owner.transfers.sendText(String(repeating:"x",count:8388609),to:UUID()) { result in
+        precondition(result.error?.category == .resourceLimit); done.signal()
+    }
+    precondition(done.wait(timeout:.now()+10) == .success && backend.count == before)
+    backend.delay = true
+    for ending in 0..<3 {
+        owner.transfers.sendText(String(repeating: "x", count: 8*1024*1024), to: UUID()) { _ in done.signal() }
+        precondition(backend.submitted.wait(timeout: .now()+10) == .success)
+        precondition(backend.lastArguments["text"] == nil, "large text must not cross native bridge as a direct value")
+        guard let url = backend.lastArguments["url"] as? URL else { preconditionFailure("streamed text URL required") }
+        precondition((try! Data(contentsOf: url)).count == 8388608)
+        if ending == 0 { backend.saved?(["error": 7]); precondition(done.wait(timeout: .now()+5) == .success) }
+        else if ending == 1 { owner.stop { _ in done.signal() }; precondition(done.wait(timeout: .now()+5) == .success); precondition(done.wait(timeout: .now()+5) == .success) }
+        else { owner.close() }
+        precondition(!FileManager.default.fileExists(atPath:url.path), "staged text must be removed at terminal/Stop/close")
+    }
+    print("PASS Swift 8MiB streamed text and terminal/Stop/close staging cleanup")
+}

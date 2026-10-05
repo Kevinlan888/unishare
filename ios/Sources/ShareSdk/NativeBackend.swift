@@ -39,7 +39,7 @@ internal final class NativeBackend: Backend {
         queue.async {
             guard !self.closed, let bridge = self.bridge else { completion(["error":13]); return }
             if command == 2 { self.retirePreparation() }
-            guard command == 8 || command == 9 || command == 10 else {
+            guard command == 8 || command == 9 || command == 10 || command == 15 else {
                 bridge.submit(command, arguments:arguments, completion:completion); return
             }
             guard let url = arguments["url"] as? URL else { completion(["error":13]); return }

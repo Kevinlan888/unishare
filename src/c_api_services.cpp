@@ -53,6 +53,13 @@ usdk_error USDK_CALL usdk_send_text(usdk_handle h, usdk_uuid d, usdk_span text,
         ->SendText(UuidOf(d), std::move(value), std::move(done));
   });
 }
+usdk_error USDK_CALL usdk_send_text_stream(usdk_handle h, usdk_uuid d,
+    const usdk_source* source, usdk_completion cb, void* ctx, uint64_t* out) {
+  return Command<TransferId>(h, cb, ctx, out, [&](auto s, auto, auto done) {
+    auto value = Source(source);
+    Service(s, &State::transfers)->SendTextStream(UuidOf(d), std::move(value), std::move(done));
+  });
+}
 usdk_error USDK_CALL usdk_send_image(usdk_handle h, usdk_uuid d,
                                      const usdk_source *source,
                                      usdk_completion cb, void *ctx,

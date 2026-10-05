@@ -3,3 +3,5 @@ runContractTests()
 runMappingTests()
 runCancellationTests()
 runServiceMetadataTests()
+
+runTextCapacityTests()

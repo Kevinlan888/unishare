@@ -8,6 +8,13 @@ public final class NativeBridge implements AutoCloseable {
     public synchronized long platformHandle(){if(platform==0)throw new IllegalStateException("platform released");return platform;}
     public synchronized void setForeground(boolean foreground){platformHandle();ports.setForeground(foreground);}
     public long openStream(String uri,boolean destination){return open(platformHandle(),uri.getBytes(java.nio.charset.StandardCharsets.UTF_8),destination);}
+    public long[] stageText(String text,long limit)throws java.io.IOException {
+        long owner=platformHandle();
+        java.io.File file=StagedText.create(ports.cacheDirectory(),text,limit);
+        String token=ports.stageText(file);
+        try{return new long[]{open(owner,token.getBytes(java.nio.charset.StandardCharsets.UTF_8),false),file.length()};}
+        finally{ports.discardText(token);}
+    }
     public synchronized void close(){if(platform!=0){release(platform);platform=0;}}
     public static native void releaseStream(long stream);
     public static native void abortStream(long stream);

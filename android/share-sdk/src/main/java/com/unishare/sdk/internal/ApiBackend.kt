@@ -10,6 +10,7 @@ internal interface ApiBackend : AutoCloseable {
     fun snapshot(trusted: Boolean): ByteArray
     fun state(): Int
     fun open(uri: String, destination: Boolean): Long
+    fun stageText(text: String, limit: Long): LongArray
     fun release(stream: Long)
     fun abort(stream: Long)
 }
@@ -29,6 +30,7 @@ internal class JniBackend(context: Context, store: String) : ApiBackend {
     override fun snapshot(trusted: Boolean): ByteArray = SdkNative.snapshot(handle, trusted)
     override fun state(): Int = if (handle == 0L) 0 else SdkNative.state(handle)
     override fun open(uri: String, destination: Boolean): Long = platform.openStream(uri, destination)
+    override fun stageText(text: String, limit: Long): LongArray = platform.stageText(text, limit)
     override fun release(stream: Long) = NativeBridge.releaseStream(stream)
     override fun abort(stream: Long) = NativeBridge.abortStream(stream)
     override fun close() { if (handle != 0L) { SdkNative.destroy(handle); handle = 0 }; platform.close() }

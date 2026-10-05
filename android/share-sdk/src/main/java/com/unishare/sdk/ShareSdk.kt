@@ -28,6 +28,7 @@ class ShareSdk internal constructor(private val backend: ApiBackend, executor: E
     @Volatile private var closed = false
     private var initializing = false
     private var ready = false
+    private var maxTextBytes = 8388608L
     private var initializeId = 0L
     private var preparationGeneration = 0L
     private val deliveries = java.util.ArrayDeque<() -> Unit>()
@@ -67,6 +68,7 @@ class ShareSdk internal constructor(private val backend: ApiBackend, executor: E
             config.controlFrameBytes !in 1..65536 || config.dataChunkBytes !in 1..262144 ||
             config.requestTimeoutSeconds <= 0 || config.offlineDebounceSeconds < 0)
             throw ShareException(ShareError(ErrorCategory.INVALID_INPUT))
+        maxTextBytes = minOf(config.maxTextBytes, 8388608L)
         initializing = true
         initializeId = key
         backend.create(ApiPackets.config(config), key, receiver)
@@ -109,6 +111,7 @@ class ShareSdk internal constructor(private val backend: ApiBackend, executor: E
                 val error = when (failure) {
                     is NativePortException -> mapped(failure)
                     is ShareException -> failure.error
+                    is java.io.IOException -> ShareError(ErrorCategory.STORAGE_FAILED)
                     is SecurityException -> ShareError(ErrorCategory.PERMISSION_DENIED)
                     else -> ShareError(ErrorCategory.INVALID_INPUT)
                 }
@@ -126,6 +129,16 @@ class ShareSdk internal constructor(private val backend: ApiBackend, executor: E
         val copiedBytes = bytes.copyOf()
         return submit { key, _ -> backend.submit(command, ApiPackets.uuid(uuid), request, stream, number,
             text.toByteArray(Charsets.UTF_8), name.toByteArray(Charsets.UTF_8), mime.toByteArray(Charsets.UTF_8), copiedBytes, size, key) }
+    }
+    internal fun sendText(device: UUID, text: String): Operation {
+        var size = 0L
+        return submit(prepare = {
+            val staged = backend.stageText(text, synchronized(gate) { maxTextBytes })
+            size = staged[1]; staged[0]
+        }, cleanup = { stream, _ -> backend.release(stream) }) { key, stream ->
+            backend.submit(15, ApiPackets.uuid(device), 0, stream, 0, byteArrayOf(), byteArrayOf(),
+                byteArrayOf(), byteArrayOf(), size, key)
+        }
     }
     internal fun streamCommand(command: Int, uuid: UUID?, uri: Uri, destination: Boolean, name: String = "", mime: String = "",
                                size: Long = 0, request: Long = 0): Operation = submit(

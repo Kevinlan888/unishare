@@ -262,6 +262,18 @@ void TlsFlow() {
         !sink->aborted);
   CHECK(!std::memcmp(sent.transfer.bytes,
                      a.Last(USDK_EVENT_PROGRESS).transfer.bytes, 16));
+  // Releasing the ABI token must not retire the active 8 MiB text source.
+  auto large = std::make_shared<Memory>(); large->bytes.assign(8*1024*1024, 't');
+  usdk_stream_handle large_token=0; CHECK(!RegisterStream(large,&large_token).code);
+  usdk_source text_source{large_token,{}, {},large->bytes.size()}; Completion large_sent;
+  CHECK(!usdk_send_text_stream(a.sdk,b.Id(),&text_source,Completion::Done,&large_sent,&a.op).code);
+  CHECK(!usdk_stream_release(large_token).code);
+  Both(a,b,[&]{return b.Count(USDK_EVENT_INCOMING_OFFER)==2;});
+  CHECK(!large->offset&&!large_sent.calls&&b.Last(USDK_EVENT_INCOMING_OFFER).content_type==1);
+  auto large_sink=std::make_shared<Memory>(); CHECK(!RegisterStream(large_sink,&sink_handle).code);
+  Completion large_accept; CHECK(!usdk_accept(b.sdk,b.Last(USDK_EVENT_INCOMING_OFFER).request,sink_handle,Completion::Done,&large_accept,&b.op).code);
+  CHECK(!usdk_stream_release(sink_handle).code);
+  Both(a,b,[&]{return large_sent.calls;}); CHECK(!large_sent.error.code&&large->closed&&large_sink->bytes==large->bytes);
   auto source = std::make_shared<Memory>();
   source->bytes = {9, 0, 7};
   usdk_stream_handle source_handle = 0;
@@ -273,7 +285,7 @@ void TlsFlow() {
       !usdk_send_file(a.sdk, b.Id(), &file, Completion::Done, &file_sent, &a.op)
            .code);
   CHECK(!usdk_stream_release(source_handle).code);
-  Both(a, b, [&] { return b.Count(USDK_EVENT_INCOMING_OFFER) == 2; });
+  Both(a, b, [&] { return b.Count(USDK_EVENT_INCOMING_OFFER) == 3; });
   CHECK(!file_sent.calls && !source->offset);
   auto file_sink = std::make_shared<Memory>();
   file_sink->hold = true;
@@ -295,7 +307,7 @@ void TlsFlow() {
   Both(a, b, [&] { return cancelled.calls && file_sent.calls; });
   CHECK(file_sent.error.code == USDK_CANCELLED);
   file_sink->pending(Result<void>::Success());
-  Both(a, b, [&] { return b.Count(USDK_EVENT_TRANSFER_RESULT) == 2; });
+  Both(a, b, [&] { return b.Count(USDK_EVENT_TRANSFER_RESULT) == 3; });
   CHECK(file_sent.calls == 1 && file_sink->aborted && file_sink->bytes.empty());
   Completion reconnected, reconfirmed;
   CHECK(
@@ -315,7 +327,7 @@ void TlsFlow() {
                          &a.op)
              .code);
   CHECK(!usdk_stream_release(source_handle).code);
-  Both(a, b, [&] { return b.Count(USDK_EVENT_INCOMING_OFFER) == 3; });
+  Both(a, b, [&] { return b.Count(USDK_EVENT_INCOMING_OFFER) == 4; });
   Completion rejected;
   CHECK(!usdk_reject(b.sdk, b.Last(USDK_EVENT_INCOMING_OFFER).request,
                      Completion::Done, &rejected, &b.op)
@@ -333,7 +345,7 @@ void TlsFlow() {
                         &throwing_sent, &a.op)
              .code);
   CHECK(!usdk_stream_release(source_handle).code);
-  Both(a, b, [&] { return b.Count(USDK_EVENT_INCOMING_OFFER) == 4; });
+  Both(a, b, [&] { return b.Count(USDK_EVENT_INCOMING_OFFER) == 5; });
   auto throw_sink = std::make_shared<Memory>();
   CHECK(!RegisterStream(throw_sink, &sink_handle).code);
   CHECK(!usdk_accept(b.sdk, b.Last(USDK_EVENT_INCOMING_OFFER).request,
@@ -462,6 +474,11 @@ void CallbackLifetime() {
 }
 void StopAndWrite() {
   ApiPeer a;
+  std::string oversized(4194305,'x'); Completion rejected;
+  usdk_content too_large{USDK_TEXT,Span(oversized.data(),oversized.size()),{}, {}};
+  CHECK(usdk_clipboard_write(a.sdk,&too_large,Completion::Done,&rejected,&a.op).code==USDK_RESOURCE_LIMIT);
+  CHECK(usdk_send_text(a.sdk,{},Span(oversized.data(),oversized.size()),Completion::Done,&rejected,&a.op).code==USDK_RESOURCE_LIMIT);
+  a.Barrier(); a.q->Drain(); CHECK(rejected.calls==0);
   usdk_content content{USDK_TEXT, Span("x\0y", 3), {}, {}};
   Completion write;
   CHECK(!usdk_clipboard_write(a.sdk, &content, Completion::Done, &write, &a.op)

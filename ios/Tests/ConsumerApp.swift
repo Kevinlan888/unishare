@@ -40,6 +40,11 @@ private func runConsumer() {
     let source = directory.appendingPathComponent("source.png")
     try! png.write(to:source)
     let peer = UUID()
+    let temporary = FileManager.default.temporaryDirectory
+    let beforeText = Set(try! FileManager.default.contentsOfDirectory(atPath:temporary.path).filter { $0.hasPrefix("unishare-text-") })
+    precondition(awaitResult { sdk.transfers.sendText(String(repeating:"x",count:8388608),to:peer,completion:$0) }.error?.category == .authenticationFailed, "8MiB must reach peer validation through streamed native bridge")
+    precondition(awaitResult { sdk.transfers.sendText(String(repeating:"x",count:8388609),to:peer,completion:$0) }.error?.category == .resourceLimit, "text overflow preflight")
+    precondition(Set(try! FileManager.default.contentsOfDirectory(atPath:temporary.path).filter { $0.hasPrefix("unishare-text-") }) == beforeText, "native text failure removes staging")
     precondition(!(awaitResult { sdk.transfers.sendImage(source,to:peer,mimeType:"image/png",byteCount:UInt64(png.count),completion:$0) }).isSuccess)
     precondition(!(awaitResult { sdk.transfers.sendFile(source,to:peer,displayName:"source",byteCount:UInt64(png.count),completion:$0) }).isSuccess)
     precondition(FileManager.default.fileExists(atPath:source.path), "source must survive rejection")
@@ -78,7 +83,7 @@ private func runConsumer() {
     success(awaitResult { sdk.stop(completion:$0) })
     precondition(sdk.state == .stopped)
     sdk.close(); precondition(sdk.state == .closed)
-    print("PASS Swift lifecycle, clipboard UTF-8/image/unsupported, file URL source, failed Accept cleanup, foreground, blocked preparation Stop/late completion")
+    print("PASS Swift 8MiB native text/overflow/cleanup, lifecycle, clipboard UTF-8/image/unsupported, file URL source, failed Accept cleanup, foreground, blocked preparation Stop/late completion")
 }
 @main final class ConsumerApp: UIResponder, UIApplicationDelegate {
     var window: UIWindow?

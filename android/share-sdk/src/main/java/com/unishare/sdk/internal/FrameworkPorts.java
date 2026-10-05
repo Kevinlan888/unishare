@@ -15,6 +15,9 @@ final class FrameworkPorts {
         ClipboardManager manager=context.getSystemService(ClipboardManager.class);
         clipboard=new ClipboardPort(context,new ClipboardPort.Boundary(){public ClipData get(){return manager.getPrimaryClip();}public void set(ClipData c){manager.setPrimaryClip(c);}});
     }
+    String stageText(File file){return streams.stage(file);}
+    void discardText(String token){streams.discard(token);}
+    File cacheDirectory(){return context.getCacheDir();}
     void setForeground(boolean value){foreground=value;if(!value)NativeBridge.suspended(nativeKey);}
     private void permission()throws PortFailure{PermissionPolicy.check(new PermissionPolicy.Boundary(){
         public boolean foreground(){return foreground;}public int sdk(){return Build.VERSION.SDK_INT;}public int target(){return context.getApplicationInfo().targetSdkVersion;}

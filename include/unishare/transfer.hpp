@@ -51,6 +51,10 @@ public:
     // value in the shared SDK buffer budget; insufficient available capacity
     // returns ResourceLimit even below the configured text size limit.
     virtual OperationId SendText(DeviceId, std::string, ResultCallback<TransferId>) = 0;
+    // Bounded UTF-8 source route, including text larger than the buffer budget.
+    // byte_count is checked against max_text_bytes; metadata is normalized.
+    // The source is retained until terminal completion and closed on all paths.
+    virtual OperationId SendTextStream(DeviceId, TransferSource, ResultCallback<TransferId>) = 0;
     virtual OperationId SendImage(DeviceId, TransferSource, ResultCallback<TransferId>) = 0;
     virtual OperationId SendFile(DeviceId, TransferSource, ResultCallback<TransferId>) = 0;
 

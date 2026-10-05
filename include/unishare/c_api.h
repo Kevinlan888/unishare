@@ -226,6 +226,13 @@ USDK_API usdk_error USDK_CALL usdk_send_text(usdk_handle sdk, usdk_uuid device,
  * transfer only; source Close preserves source data, sink Abort removes
  * staging. Releasing a handle never closes a stream still retained by the SDK.
  */
+/* Additive v1 extension. Bounded UTF-8 stream, byte_count <= min(max_text_bytes, 8 MiB).
+ * Normalizes Text metadata; retains the stream before returning success. Caller
+ * may release its token immediately. The terminal callback owns no span data.
+ * Requires a library exporting this symbol; existing v1 entry points unchanged. */
+USDK_API usdk_error USDK_CALL usdk_send_text_stream(usdk_handle sdk, usdk_uuid device,
+    const usdk_source* source, usdk_completion callback, void* context,
+    usdk_operation_id* operation);
 USDK_API usdk_error USDK_CALL usdk_send_image(usdk_handle sdk, usdk_uuid device,
                                               const usdk_source *source,
                                               usdk_completion callback,

@@ -88,9 +88,21 @@ explicit source content URI and exact declared byte count.
 
 ## Callbacks, operations and ownership
 
-The stable v1 ABI limits one sendText span and clipboard write's combined
-text/MIME/image spans to 4 MiB; a larger call reports ResourceLimit even when the
-configured content ceiling is higher. Image/file transfers use streaming URIs.
+`sendText(String)` accepts UTF-8 up to the smaller of `maxTextBytes` and 8 MiB.
+It counts and encodes on the SDK preparation worker into a private cache file,
+then calls the additive v1 `usdk_send_text_stream` API. No full text byte array
+crosses JNI. Encoding buffers are bounded and native transfers keep the existing
+256 KiB chunks and 4 MiB shared budget. Over-limit text returns ResourceLimit
+before file creation/native submission. Temporary sources are removed after
+success, failure, cancellation, Stop, Close, and late preparation retirement.
+Disk/encoding I/O failures report StorageFailed. App termination may leave cache
+files for the OS to evict; the SDK never deletes host source URIs.
+
+The original C ABI `usdk_send_text` remains a direct copy API with a 4 MiB span
+cap and available native-budget restrictions. Clipboard writes remain direct:
+combined text/MIME/image spans are capped at 4 MiB and can fail earlier when the
+shared budget is occupied. This release does not promise 8 MiB clipboard values.
+Image/file transfers use streaming URIs.
 
 All asynchronous methods return immediately with an `Operation` containing an
 ID and `CompletableFuture<OperationResult>`. IDs are scoped to the Kotlin SDK

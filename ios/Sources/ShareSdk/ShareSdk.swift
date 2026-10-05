@@ -13,6 +13,9 @@ public final class ShareSdk {
     private let worker = DispatchQueue(label: "com.unishare.submit")
     private let delivery: DispatchQueue
     private var closed = false, initializing = false, ready = false
+    private var maxTextBytes: UInt64 = 8388608
+    private var textGeneration: UInt64 = 0
+    private var stagedText: [UUID: URL] = [:]
     private var next: UInt64 = 1
     private var pending: [UInt64: (OperationResult) -> Void] = [:]
     private var observers: [UInt64: (ShareEvent) -> Void] = [:]
@@ -49,23 +52,29 @@ public final class ShareSdk {
         gate.lock(); defer { gate.unlock() }
         let allowed = !initializing
         initializing = true
+        if allowed { maxTextBytes = min(config.maxTextBytes, 8388608) }
         return submit(requireReady: false, completion: completion) { callback in
             if allowed { self.backend.create(config, completion: callback) }
             else { callback(["error": 13]) }
         }
     }
     @discardableResult public func start(completion: @escaping (OperationResult) -> Void) -> UInt64 { command(1, completion: completion) }
-    @discardableResult public func stop(completion: @escaping (OperationResult) -> Void) -> UInt64 { command(2, completion: completion) }
+    @discardableResult public func stop(completion: @escaping (OperationResult) -> Void) -> UInt64 {
+        gate.lock(); textGeneration += 1; gate.unlock()
+        return command(2, completion: completion)
+    }
     /// Waits for an executing host callback, except the callback calling close itself.
     /// Pending/queued callbacks are retired; native cleanup runs on its worker.
     public func close() {
         gate.lock(); defer { gate.unlock() }
         guard !closed else { return }
-        closed = true; pending.removeAll(); observers.removeAll()
+        closed = true; textGeneration += 1; pending.removeAll(); observers.removeAll()
+        for url in stagedText.values { try? FileManager.default.removeItem(at: url) }
+        stagedText.removeAll()
         let backend = self.backend
         worker.async { backend.close() }
     }
-    deinit { backend.close() }
+    deinit { for url in stagedText.values { try? FileManager.default.removeItem(at:url) }; backend.close() }
     public func observe(_ listener: @escaping (ShareEvent) -> Void) -> EventObservation {
         gate.lock(); defer { gate.unlock() }
         let id = next; next += 1
@@ -82,6 +91,45 @@ public final class ShareSdk {
     }
     @discardableResult internal func command(_ command: Int, _ arguments: [String: Any] = [:], completion: @escaping (OperationResult) -> Void) -> UInt64 {
         submit(completion: completion) { self.backend.submit(command, arguments: arguments, completion: $0) }
+    }
+    // Encoding and disk I/O run on the submission worker. Only chunk buffers cross
+    // into the native source; the caller's String never becomes a native span.
+    @discardableResult internal func sendText(_ text: String, to device: UUID, completion: @escaping (OperationResult) -> Void) -> UInt64 {
+        gate.lock(); let generation = textGeneration, limit = maxTextBytes; gate.unlock()
+        return submit(completion: completion) { finish in
+            let count = UInt64(text.utf8.count)
+            guard count <= limit else { finish(["error":14]); return }
+            let key = UUID(), url = FileManager.default.temporaryDirectory.appendingPathComponent("unishare-text-" + UUID().uuidString)
+            do {
+                guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw ShareError(.storageFailed) }
+                let file = try FileHandle(forWritingTo: url)
+                do {
+                    var chunk = Data(); chunk.reserveCapacity(65536)
+                    for byte in text.utf8 {
+                        chunk.append(byte)
+                        if chunk.count == 65536 { try file.write(contentsOf: chunk); chunk.removeAll(keepingCapacity: true) }
+                    }
+                    if !chunk.isEmpty { try file.write(contentsOf: chunk) }
+                    try file.close()
+                } catch { try? file.close(); throw error }
+                self.gate.lock()
+                guard !self.closed && generation == self.textGeneration else {
+                    self.gate.unlock(); try? FileManager.default.removeItem(at:url); finish(["error":8]); return
+                }
+                self.stagedText[key] = url
+                self.backend.submit(15, arguments:["id":device,"url":url,"size":count], completion: { [weak self] packet in
+                    if let self = self {
+                        self.gate.lock(); self.stagedText.removeValue(forKey:key); self.gate.unlock()
+                    }
+                    try? FileManager.default.removeItem(at:url)
+                    finish(packet)
+                })
+                self.gate.unlock()
+            } catch {
+                try? FileManager.default.removeItem(at:url)
+                finish(["error":11])
+            }
+        }
     }
     private func submit(requireReady: Bool = true, completion: @escaping (OperationResult) -> Void, work: @escaping (@escaping ([String: Any]) -> Void) -> Void) -> UInt64 {
         gate.lock(); defer { gate.unlock() }
