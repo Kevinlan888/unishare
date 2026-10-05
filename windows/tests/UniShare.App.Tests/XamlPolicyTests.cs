@@ -88,4 +88,37 @@ public sealed partial class XamlPolicyTests
         var page = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceSessionView.xaml"));
         Assert.IsTrue(page.Descendants().Any(x => x.Attribute("AllowDrop")?.Value == "True" && x.Attribute("Drop") is not null), "Single-file drop route is missing.");
     }
+
+    [TestMethod]
+    public void ActivityReplacementDisposesAllCardSubscriptions()
+    {
+        var session = File.ReadAllText(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceSessionView.xaml.cs"));
+        Assert.IsTrue(session.Contains("card.Dispose()", StringComparison.Ordinal), "Activity replacement must dispose removed cards before clearing them.");
+        Assert.IsTrue(session.IndexOf("card.Dispose()", StringComparison.Ordinal) < session.IndexOf("ActivityHost.Children.Clear()", StringComparison.Ordinal));
+        foreach (var card in new[] { "TextActivityCard", "ImageActivityCard", "FileActivityCard", "IncomingOfferCard" })
+        {
+            var source = File.ReadAllText(Path.Combine(ResourceCoverageTests.AppPath, "Controls", card + ".xaml.cs"));
+            Assert.IsTrue(source.Contains("UserControl, IDisposable", StringComparison.Ordinal), $"{card} does not expose its subscription lifetime.");
+            Assert.IsTrue(source.Contains("subscription.Dispose()", StringComparison.Ordinal), $"{card} never releases its live activity subscription.");
+            Assert.IsFalse(source.Contains("item.PropertyChanged +=", StringComparison.Ordinal), $"{card} bypasses managed subscription ownership.");
+        }
+    }
+
+    [TestMethod]
+    public void DeviceRowsBindTheirVisualAndAccessiblePresence()
+    {
+        var page = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceListPane.xaml"));
+        foreach (var template in page.Descendants().Where(x => x.Name.LocalName == "DataTemplate"))
+        {
+            Assert.IsTrue(template.Descendants().Any(x => x.Name.LocalName == "Ellipse" && x.Attribute("Opacity")?.Value == "{Binding OnlineIndicatorOpacity}"), "A device row always shows the online dot.");
+            Assert.IsTrue(template.Descendants().Any(x => x.Attribute("AutomationProperties.Name")?.Value == "{Binding AccessibleName}"), "A device row omits accessible online/offline status.");
+        }
+    }
+
+    [TestMethod]
+    public void ClipboardMarkerUsesSenderLocalPresentationPolicy()
+    {
+        var card = File.ReadAllText(Path.Combine(ResourceCoverageTests.AppPath, "Controls", "TextActivityCard.xaml.cs"));
+        Assert.IsTrue(card.Contains("PresentationState.ClipboardMarkerVisible(item.Direction, item.Origin)", StringComparison.Ordinal), "Incoming text can display sender-local clipboard origin.");
+    }
 }

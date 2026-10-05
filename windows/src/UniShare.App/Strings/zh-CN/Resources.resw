@@ -160,4 +160,5 @@
 <data name="Activity.OpenLocationFailed" xml:space="preserve"><value>无法打开文件所在位置。</value></data>
 <data name="Settings.SaveFailed" xml:space="preserve"><value>无法保存设置，请重试。</value></data>
 <data name="Settings.ReceiveDirectoryNotWritable" xml:space="preserve"><value>请选择可写入的接收目录。</value></data>
+<data name="OfflineStatus" xml:space="preserve"><value>离线</value></data>
 </root>

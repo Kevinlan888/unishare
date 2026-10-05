@@ -2,18 +2,22 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using UniShare.Application.Models;
+using UniShare.App.Presentation;
 namespace UniShare.App.Controls;
-public sealed partial class FileActivityCard : UserControl
+public sealed partial class FileActivityCard : UserControl, IDisposable
 {
     private readonly ShellProjection model;
     private readonly ActivityProjection item;
+    private readonly PropertyChangedSubscription subscription;
     public FileActivityCard(ShellProjection model, ActivityProjection item)
     {
         InitializeComponent(); this.model = model; this.item = item; DataContext = item;
         VisualStateManager.GoToState(this, item.Direction == ShareDirection.Outgoing ? "Outgoing" : "Incoming", false);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, Strings.Get("Content." + item.Kind) + " " + item.StatusText);
-        item.PropertyChanged += (_, _) => Refresh(); Refresh();
+        subscription = new PropertyChangedSubscription(item, Refresh);
+        Refresh();
     }
+    public void Dispose() => subscription.Dispose();
     private void Refresh()
     {
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, Strings.Get("Content." + item.Kind) + " " + item.StatusText);

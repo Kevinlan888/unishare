@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Windows.ApplicationModel.Resources;
 using UniShare.Application.Models;
+using UniShare.App.Presentation;
 namespace UniShare.App;
 
 // Task 9 uses explicit deterministic projections. The production lifecycle/native
@@ -31,7 +32,12 @@ public static class Strings
 {
     public static string Get(string key) => new ResourceLoader().GetString(key.Replace('.', '/'));
 }
-public sealed record DeviceProjection(string Name, string Glyph, string Summary, string Time, bool Trusted, bool Online, string Platform);
+public sealed record DeviceProjection(string Name, string Glyph, string Summary, string Time, bool Trusted, bool Online, string Platform)
+{
+    public double OnlineIndicatorOpacity => PresentationState.OnlineIndicatorOpacity(Online);
+    public string StatusText => Strings.Get(PresentationState.StatusResourceKey(Online));
+    public string AccessibleName => $"{Name}, {StatusText}";
+}
 public sealed class ActivityProjection : ObservableObject
 {
     private ActivityStatus status;
@@ -95,7 +101,7 @@ public sealed class ShellProjection : ObservableObject
                 Activities.Add(new(ContentKind.Text, ShareDirection.Incoming, "", Strings.Get("DemoHi"), "", "19:21", ActivityStatus.Completed));
                 Activities.Add(new(ContentKind.Image, ShareDirection.Incoming, "IMG_3281.jpg", "", "8.4 MB", "19:22", ActivityStatus.Completed));
                 Activities.Add(new(ContentKind.File, ShareDirection.Outgoing, "project.zip", "", "1.8 GB", "19:24", ActivityStatus.Transferring));
-                Activities.Add(new(ContentKind.Text, ShareDirection.Incoming, Strings.Get("Clipboard"), "dotnet publish -c Release", "", "19:25", ActivityStatus.Completed, ShareOrigin.Clipboard));
+                Activities.Add(new(ContentKind.Text, ShareDirection.Incoming, "", "dotnet publish -c Release", "", "19:25", ActivityStatus.Completed));
             }
             OnPropertyChanged(nameof(CanSend)); NotifyCommands();
         }

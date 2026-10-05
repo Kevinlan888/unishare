@@ -22,6 +22,7 @@ public sealed partial class DeviceSessionView : UserControl
         StateHint.Visibility = string.IsNullOrEmpty(StateHint.Text) ? Visibility.Collapsed : Visibility.Visible;
         NoticeBar.Message = model.Notice ?? (model.SelectedDevice is { Online: false } ? Strings.Get("Offline") : "");
         NoticeBar.IsOpen = !string.IsNullOrEmpty(NoticeBar.Message);
+        foreach (var card in ActivityHost.Children.OfType<IDisposable>()) card.Dispose();
         ActivityHost.Children.Clear();
         foreach (var item in model.Activities.Where(a => string.IsNullOrWhiteSpace(SearchBox.Text) || (a.Name + " " + a.Text).Contains(SearchBox.Text, StringComparison.CurrentCultureIgnoreCase)))
         {

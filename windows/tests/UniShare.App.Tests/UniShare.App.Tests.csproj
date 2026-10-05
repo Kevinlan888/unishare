@@ -5,5 +5,7 @@
     <PackageReference Include="MSTest.TestAdapter" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <ProjectReference Include="../../src/UniShare.Application/UniShare.Application.csproj" />
+    <Compile Include="../../src/UniShare.App/Presentation/PropertyChangedSubscription.cs" Link="Production/PropertyChangedSubscription.cs" />
+    <Compile Include="../../src/UniShare.App/Presentation/PresentationState.cs" Link="Production/PresentationState.cs" />
   </ItemGroup>
 </Project>

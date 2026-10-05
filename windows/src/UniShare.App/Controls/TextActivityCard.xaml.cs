@@ -2,24 +2,28 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using UniShare.Application.Models;
+using UniShare.App.Presentation;
 namespace UniShare.App.Controls;
-public sealed partial class TextActivityCard : UserControl
+public sealed partial class TextActivityCard : UserControl, IDisposable
 {
     private readonly ShellProjection model;
     private readonly ActivityProjection item;
+    private readonly PropertyChangedSubscription subscription;
     public TextActivityCard(ShellProjection model, ActivityProjection item)
     {
         InitializeComponent(); this.model = model; this.item = item; DataContext = item;
         VisualStateManager.GoToState(this, item.Direction == ShareDirection.Outgoing ? "Outgoing" : "Incoming", false);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, Strings.Get("Content." + item.Kind) + " " + item.StatusText);
-        item.PropertyChanged += (_, _) => Refresh(); Refresh();
+        subscription = new PropertyChangedSubscription(item, Refresh);
+        Refresh();
     }
+    public void Dispose() => subscription.Dispose();
     private void Refresh()
     {
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, Strings.Get("Content." + item.Kind) + " " + item.StatusText);
         StatusLabel.Visibility = item.Status == ActivityStatus.Completed ? Visibility.Collapsed : Visibility.Visible;
         DecisionPanel.Visibility = item.Status is ActivityStatus.AwaitingDecision or ActivityStatus.AwaitingPeer or ActivityStatus.Transferring or ActivityStatus.Failed ? Visibility.Visible : Visibility.Collapsed;
-        OriginLabel.Visibility = item.Origin == ShareOrigin.Clipboard ? Visibility.Visible : Visibility.Collapsed;
+        OriginLabel.Visibility = PresentationState.ClipboardMarkerVisible(item.Direction, item.Origin) ? Visibility.Visible : Visibility.Collapsed;
         AcceptButton.Visibility = RejectButton.Visibility = item.Status == ActivityStatus.AwaitingDecision ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.Visibility = item.Status is ActivityStatus.AwaitingPeer or ActivityStatus.Transferring ? Visibility.Visible : Visibility.Collapsed;
         RetryButton.Visibility = item.Direction == ShareDirection.Outgoing && item.Status == ActivityStatus.Failed && model.CanSend ? Visibility.Visible : Visibility.Collapsed;
