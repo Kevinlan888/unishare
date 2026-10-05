@@ -15,6 +15,7 @@ public final class ShareSdk {
     private var closed = false, initializing = false, ready = false
     private var maxTextBytes: UInt64 = 8388608
     private var textGeneration: UInt64 = 0
+    private var initializeId: UInt64?
     private var stagedText: [UUID: URL] = [:]
     private var next: UInt64 = 1
     private var pending: [UInt64: (OperationResult) -> Void] = [:]
@@ -51,9 +52,11 @@ public final class ShareSdk {
     @discardableResult public func initialize(_ config: SdkConfig, completion: @escaping (OperationResult) -> Void) -> UInt64 {
         gate.lock(); defer { gate.unlock() }
         let allowed = !initializing
-        initializing = true
-        if allowed { maxTextBytes = min(config.maxTextBytes, 8388608) }
-        return submit(requireReady: false, completion: completion) { callback in
+        if allowed {
+            initializing = true
+            maxTextBytes = min(config.maxTextBytes, 8388608)
+        }
+        return submit(requireReady: false, initialization: allowed, completion: completion) { callback in
             if allowed { self.backend.create(config, completion: callback) }
             else { callback(["error": 13]) }
         }
@@ -131,11 +134,14 @@ public final class ShareSdk {
             }
         }
     }
-    private func submit(requireReady: Bool = true, completion: @escaping (OperationResult) -> Void, work: @escaping (@escaping ([String: Any]) -> Void) -> Void) -> UInt64 {
+    private func submit(requireReady: Bool = true, initialization: Bool = false,
+                        completion: @escaping (OperationResult) -> Void,
+                        work: @escaping (@escaping ([String: Any]) -> Void) -> Void) -> UInt64 {
         gate.lock(); defer { gate.unlock() }
         let id = next; next += 1
         precondition(!closed, "ShareSdk is closed")
         pending[id] = completion
+        if initialization { initializeId = id }
         worker.async { [weak self] in
             guard let self = self else { return }
             self.gate.lock(); let allowed = !self.closed && (!requireReady || self.ready); self.gate.unlock()
@@ -146,7 +152,11 @@ public final class ShareSdk {
                     guard let self = self else { return }
                     self.gate.lock(); defer { self.gate.unlock() }
                     guard !self.closed, let callback = self.pending.removeValue(forKey: id) else { return }
-                    if !requireReady && result.isSuccess { self.ready = true }
+                    if self.initializeId == id {
+                        self.initializeId = nil
+                        if result.isSuccess { self.ready = true }
+                        else { self.initializing = false }
+                    }
                     callback(result)
                 }
             }

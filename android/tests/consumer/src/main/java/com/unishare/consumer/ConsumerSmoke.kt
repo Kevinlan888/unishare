@@ -62,8 +62,8 @@ class ConsumerSmoke : Instrumentation() {
         sdk.connections.observe { event -> when (event) {
             is ConnectionEvent.PairingRequest -> sdk.connections.confirmPairing(event.requestId, event.verificationCode.length == 6)
             is ConnectionEvent.PairingResult -> event.error
-            is ConnectionEvent.IdentityChanged -> event.error
-            is ConnectionEvent.Connected -> event.device.id
+            is ConnectionEvent.IdentityChanged -> event.deviceId
+            is ConnectionEvent.Connected -> event.deviceId
             is ConnectionEvent.Disconnected -> event.error
         } }.close()
         sdk.transfers.observe { event -> when (event) {

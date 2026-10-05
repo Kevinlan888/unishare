@@ -140,7 +140,7 @@ private final class Host {
             for index in 0...9 {
                 let event=try next({ if case .incomingOffer=$0 { return true }; return false },after:cursor)
                 guard case .incomingOffer(let remote,let request,let id,let type,_,_,let count)=event else { throw HostFailure(message:"offer") }
-                try require(remote.id == peer.id,"unexpected peer")
+                try require(remote == peer.id,"unexpected peer")
                 let sink=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                 try require(!FileManager.default.fileExists(atPath:sink.path),"fresh staging")
                 if index == 8 { log("consent",["id":id.uuidString.lowercased(),"requestId":request,"decision":"reject"]); try ok("reject",request:request,transfer:id.uuidString.lowercased()) { sdk.transfers.reject(request,completion:$0) } }
@@ -187,7 +187,7 @@ private final class Host {
             while allOffers().count<11{try require(Date()<end,"isolation offer timeout");Thread.sleep(forTimeInterval:0.02)}
             let isolation=allOffers()[10]
             guard case .incomingOffer(let remote,let request,let id,let kind,_,_,let count)=isolation else {throw HostFailure(message:"isolation offer")}
-            try require(remote.id==peer.id && kind == .text && count==14,"isolation metadata")
+            try require(remote==peer.id && kind == .text && count==14,"isolation metadata")
             let sink=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString);try require(FileManager.default.createFile(atPath:sink.path,contents:Data()),"isolation sink")
             log("consent",["id":id.uuidString.lowercased(),"requestId":request,"decision":"accept"]);try ok("accept",request:request,transfer:id.uuidString.lowercased()){sdk.transfers.accept(request,stagingURL:sink,completion:$0)}
             let result=try next{if case .transferResult(let t,_)=$0{return t==id};return false};guard case .transferResult(_,let error)=result else{throw HostFailure(message:"isolation terminal")};try require(error==nil,"isolation result")

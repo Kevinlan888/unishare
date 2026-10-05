@@ -92,9 +92,9 @@ class InteropHost : Instrumentation() {
                         }
                     },
                     sdk.connections.observe { event -> when(event){
-                    is ConnectionEvent.Disconnected -> record("connection_error","id" to event.device.id.value,"error" to (event.error?.category?.name?:""),"native" to (event.error?.platformError?:0))
-                    is ConnectionEvent.PairingResult -> record("pairing_result","id" to event.device.id.value,"error" to (event.error?.category?.name?:""),"native" to (event.error?.platformError?:0))
-                    is ConnectionEvent.Connected -> record("connected","id" to event.device.id.value)
+                    is ConnectionEvent.Disconnected -> record("connection_error","id" to event.deviceId.value,"error" to (event.error?.category?.name?:""),"native" to (event.error?.platformError?:0))
+                    is ConnectionEvent.PairingResult -> record("pairing_result","id" to event.deviceId.value,"error" to (event.error?.category?.name?:""),"native" to (event.error?.platformError?:0))
+                    is ConnectionEvent.Connected -> record("connected","id" to event.deviceId.value)
                     is ConnectionEvent.PairingRequest -> {
                         pendingPairing.add(event)
                         if(selected.get()!=null) pendingPairing.poll()?.let { confirm(it) }
@@ -145,7 +145,7 @@ class InteropHost : Instrumentation() {
                     check(cancelled.error?.category in listOf(ErrorCategory.CANCELLED,ErrorCategory.NETWORK_LOST));source.delete()
                 } else {
                     for(index in 0..9) {
-                        val offer = checkNotNull(offers.poll(60, TimeUnit.SECONDS)) { "offer timeout" }; check(offer.device.id == peer.id)
+                        val offer = checkNotNull(offers.poll(60, TimeUnit.SECONDS)) { "offer timeout" }; check(offer.deviceId == peer.id)
                         val id = offer.transferId.value
                         val sink = File(targetContext.cacheDir, "sink-$run-$index"); check(!sink.exists())
                         if(index == 8) { record("consent", "id" to id, "requestId" to offer.requestId, "decision" to "reject"); wait(watch("reject", sdk.transfers.reject(offer.requestId), offer.requestId, id.toString())) }
@@ -177,7 +177,7 @@ class InteropHost : Instrumentation() {
                 }else{
                     val rediscover=System.nanoTime()+TimeUnit.SECONDS.toNanos(60);while(sdk.discovery.devices().none {it.id==peer.id&&it.port!=peer.port}) {check(System.nanoTime()<rediscover){"receiver restart discovery"};Thread.sleep(20)}
                     recordFresh()
-                    val offer=checkNotNull(offers.poll(60,TimeUnit.SECONDS));check(offer.device.id==peer.id&&offer.contentType==ContentType.TEXT&&offer.byteCount==14L)
+                    val offer=checkNotNull(offers.poll(60,TimeUnit.SECONDS));check(offer.deviceId==peer.id&&offer.contentType==ContentType.TEXT&&offer.byteCount==14L)
                     val sink=File(targetContext.cacheDir,"sink-$run-isolation");check(!sink.exists())
                     record("consent","id" to offer.transferId.value,"requestId" to offer.requestId,"decision" to "accept");wait(watch("accept",sdk.transfers.accept(offer.requestId,uri(sink)),offer.requestId,offer.transferId.value.toString()))
                     val result=checkNotNull(incomingResults.poll(35,TimeUnit.SECONDS));check(result.transferId==offer.transferId&&result.error==null)

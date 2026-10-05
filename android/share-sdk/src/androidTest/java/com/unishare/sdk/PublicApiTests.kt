@@ -81,6 +81,16 @@ class PublicApiTests : Instrumentation() {
         check(com.unishare.sdk.internal.ProbeProvider.delayedDelete.await(5, TimeUnit.SECONDS), "late destination was not deleted")
         check(callbacks.get() == 1 && !java.io.File(targetContext.cacheDir, uri.lastPathSegment!!).exists(), "late destination cleanup/no callback after Close")
     }
+    private fun initializationRetry() {
+        val sdk = ShareSdk(targetContext, "retry-${UUID.randomUUID()}")
+        try {
+            check(sdk.initialize(SdkConfig("")).result.get(15, TimeUnit.SECONDS).error?.category == ErrorCategory.INVALID_INPUT,
+                "native invalid initialization")
+            check(sdk.initialize(SdkConfig("retry after native failure")).result.get(15, TimeUnit.SECONDS).isSuccess,
+                "same public wrapper retries the native SDK")
+            check(sdk.state == SdkState.INITIALIZED, "retry initialized state")
+        } finally { sdk.close() }
+    }
     private fun focusedClipboard() {
         ClipboardHostActivity.focused = java.util.concurrent.CountDownLatch(1)
         val activity = startActivitySync(android.content.Intent(targetContext, ClipboardHostActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -105,6 +115,7 @@ class PublicApiTests : Instrumentation() {
         val result = Bundle()
         try {
             for ((name, test) in listOf("nativeLifecycle" to ::nativeLifecycle, "delayedUriClose" to ::delayedUriClose,
+                "initializationRetry" to ::initializationRetry,
                 "apiContract" to ApiContractCases::run, "stopDuringUri" to ApiContractCases::stopDuringUri,
                 "identityAcceptance" to { com.unishare.sdk.internal.IdentityAcceptance.run(targetContext) },
                 "focusedClipboard" to ::focusedClipboard,

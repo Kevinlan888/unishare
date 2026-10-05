@@ -63,16 +63,21 @@ pairingSubscription.close()
 sdk.close()
 ```
 
-Initialize once and await a successful result before service commands or
+Initialize and await a successful result before service commands or
 snapshots. `state` returns UNINITIALIZED, INITIALIZED, RUNNING, STOPPED or CLOSED.
 Storage names identify independent installation identities; reuse a stable name
 across application launches. Resource limits in `SdkConfig` may be tightened by
-the host. A failed initialization requires closing the instance and handling the
-error before creating another instance; corruption never replaces an identity.
+the host. After an initialization failure, the same `ShareSdk` instance may retry;
+concurrent initialization and initialization after success remain invalid.
+Corruption never replaces an identity.
 
 `discovery.devices()` and `connections.trustedDevices()` return immutable
 snapshots. Events preserve DeviceId, name, platform, protocol major/minor,
 addresses (including IPv6 scope), port, pairing flag and last-seen milliseconds.
+Discovery events and pairing requests carry that complete discovered `DeviceInfo`.
+Connection, pairing-result, identity-change and incoming-offer events carry only
+`deviceId`, matching the authenticated core event; use a discovery snapshot when
+the UI also needs current display metadata.
 `connect`, `confirmPairing`, `rejectPairing` and `forgetDevice` cover connection
 and trust decisions. A SAS is a six-character string, including leading zeros.
 The host must explicitly decide each pairing and incoming transfer offer.

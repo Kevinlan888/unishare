@@ -50,15 +50,22 @@ internal object ApiPackets {
     }
     fun event(bytes: ByteArray): Any {
         val d = input(bytes); val kind = d.readInt(); val state = d.readInt(); val error = error(d)
-        val request = d.readLong(); val transfer = TransferId(uuid(d)); val device = device(d); val code = text(d)
+        val request = d.readLong(); val transfer = TransferId(uuid(d)); val deviceId = DeviceId(uuid(d))
+        val deviceName = text(d); val devicePlatform = d.readInt(); val deviceMajor = d.readInt(); val deviceMinor = d.readInt()
+        val devicePort = d.readInt(); val devicePaired = d.readBoolean(); val deviceSeen = d.readLong()
+        val addressCount = d.readInt(); require(addressCount in 0..65536)
+        val deviceAddresses = List(addressCount) { text(d) }
+        fun fullDevice() = DeviceInfo(deviceId, deviceName, Platform.entries[devicePlatform],
+            ProtocolVersion(deviceMajor, deviceMinor), deviceAddresses, devicePort, devicePaired, deviceSeen)
+        val code = text(d)
         val type = d.readInt(); val name = text(d); val mime = text(d); val size = d.readLong(); val progress = d.readLong()
         return when (kind) {
-            1 -> DiscoveryEvent.Online(device); 2 -> DiscoveryEvent.Updated(device); 3 -> DiscoveryEvent.Offline(device)
+            1 -> DiscoveryEvent.Online(fullDevice()); 2 -> DiscoveryEvent.Updated(fullDevice()); 3 -> DiscoveryEvent.Offline(fullDevice())
             4 -> DiscoveryEvent.Error(requireNotNull(error)); 5 -> DiscoveryEvent.State(DiscoveryState.entries[state])
-            6 -> if (state == 0) ConnectionEvent.Connected(device) else ConnectionEvent.Disconnected(device, error)
-            7 -> ConnectionEvent.PairingRequest(request, device, code); 8 -> ConnectionEvent.PairingResult(request, device, error)
-            9 -> ConnectionEvent.IdentityChanged(device, requireNotNull(error))
-            10 -> TransferEvent.IncomingOffer(request, transfer, device, ContentType.entries[type - 1], name, mime, size)
+            6 -> if (state == 0) ConnectionEvent.Connected(deviceId) else ConnectionEvent.Disconnected(deviceId, error)
+            7 -> ConnectionEvent.PairingRequest(request, fullDevice(), code); 8 -> ConnectionEvent.PairingResult(request, deviceId, error)
+            9 -> ConnectionEvent.IdentityChanged(deviceId)
+            10 -> TransferEvent.IncomingOffer(request, transfer, deviceId, ContentType.entries[type - 1], name, mime, size)
             11 -> TransferEvent.Progress(transfer, progress, size); 12 -> TransferEvent.Result(transfer, error)
             else -> error("Unknown native event $kind")
         }

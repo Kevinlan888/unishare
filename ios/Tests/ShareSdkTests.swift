@@ -8,7 +8,17 @@ internal final class FakeBackend: Backend {
     var late: (([String: Any]) -> Void)?
     let submitted = DispatchSemaphore(value:0)
     var closed = false
-    func create(_ config: SdkConfig, completion: @escaping ([String: Any]) -> Void) { completion([:]); completion([:]) }
+    var createFailure: [String: Any]?
+    var holdCreate = false
+    var createCount = 0
+    var heldCreate: (([String: Any]) -> Void)?
+    let createSubmitted = DispatchSemaphore(value:0)
+    func create(_ config: SdkConfig, completion: @escaping ([String: Any]) -> Void) {
+        createCount += 1
+        if holdCreate { heldCreate = completion; createSubmitted.signal(); return }
+        if let failure = createFailure { createFailure = nil; completion(failure); return }
+        completion([:]); completion([:])
+    }
     func submit(_ command: Int, arguments: [String: Any], completion: @escaping ([String: Any]) -> Void) {
         count += 1
         lastArguments = arguments
@@ -54,18 +64,70 @@ internal func runContractTests() {
     print("PASS Swift exact-once, inline backend, configured delayed queue, error mapping, close reentrancy")
 }
 
+internal func runInitializeRetryTests() {
+    let synchronous = FakeBackend()
+    synchronous.createFailure = ["error":11]
+    let synchronousSdk = ShareSdk(backend:synchronous, callbackQueue:nil)
+    let done = DispatchSemaphore(value:0)
+    synchronousSdk.initialize(SdkConfig(deviceName:"sync failure")) { result in
+        precondition(result.error?.category == .storageFailed); done.signal()
+    }
+    precondition(done.wait(timeout:.now()+5) == .success)
+    synchronousSdk.initialize(SdkConfig(deviceName:"sync retry")) { result in
+        precondition(result.isSuccess); done.signal()
+    }
+    precondition(done.wait(timeout:.now()+5) == .success, "same Swift wrapper retries after synchronous failure")
+    synchronousSdk.initialize(SdkConfig(deviceName:"after success")) { result in
+        precondition(result.error?.category == .invalidInput); done.signal()
+    }
+    precondition(done.wait(timeout:.now()+5) == .success && synchronous.createCount == 2,
+                 "Swift wrapper rejects initialization after success")
+    synchronousSdk.close()
+
+    let asynchronous = FakeBackend()
+    asynchronous.holdCreate = true
+    let asynchronousSdk = ShareSdk(backend:asynchronous, callbackQueue:nil)
+    asynchronousSdk.initialize(SdkConfig(deviceName:"async failure")) { result in
+        precondition(result.error?.category == .storageFailed); done.signal()
+    }
+    precondition(asynchronous.createSubmitted.wait(timeout:.now()+5) == .success, "asynchronous create was not submitted")
+    asynchronousSdk.initialize(SdkConfig(deviceName:"concurrent")) { result in
+        precondition(result.error?.category == .invalidInput); done.signal()
+    }
+    precondition(done.wait(timeout:.now()+5) == .success)
+    asynchronousSdk.initialize(SdkConfig(deviceName:"still concurrent")) { result in
+        precondition(result.error?.category == .invalidInput); done.signal()
+    }
+    precondition(done.wait(timeout:.now()+5) == .success && asynchronous.createCount == 1,
+                 "rejected callback must not clear active initialize state")
+    asynchronous.heldCreate?(["error":11])
+    precondition(done.wait(timeout:.now()+5) == .success)
+    asynchronous.holdCreate = false
+    asynchronousSdk.initialize(SdkConfig(deviceName:"async retry")) { result in
+        precondition(result.isSuccess); done.signal()
+    }
+    precondition(done.wait(timeout:.now()+5) == .success, "same Swift wrapper retries after asynchronous failure")
+    asynchronousSdk.close()
+    print("PASS Swift initialization retry after synchronous/asynchronous failure and concurrent ordering")
+}
+
 
 internal func runMappingTests() {
     let id = UUID(), transfer = UUID()
     let device: [String: Any] = ["id":id,"name":"汉字\0é","platform":2,"major":1,"minor":7,"port":4567,"paired":true,"lastSeen":-12,"addresses":["fe80::1%en0","127.0.0.1"]]
+    let idOnlyDevice: [String: Any] = ["id":id,"name":"","platform":0,"major":0,"minor":0,"port":0,"paired":false,"lastSeen":0,"addresses":[]]
     let mapped = Packets.device(device)
     precondition(mapped.id == id && mapped.name == "汉字\0é" && mapped.addresses[0] == "fe80::1%en0")
     precondition(mapped.protocolMajor == 1 && mapped.protocolMinor == 7 && mapped.port == 4567 && mapped.paired && mapped.lastSeenUnixMillis == -12)
     for kind in 1...12 {
-        let packet: [String: Any] = ["kind":kind,"device":device,"error":6,"platformError":-34018,"request":99,"code":"000007","transfer":transfer,"contentType":2,"name":"图片.png","mime":"image/png","size":1234,"transferred":12]
+        let eventDevice = [6,8,9,10].contains(kind) ? idOnlyDevice : device
+        let packet: [String: Any] = ["kind":kind,"device":eventDevice,"error":kind == 9 ? 0 : 6,"platformError":-34018,"request":99,"code":"000007","transfer":transfer,"contentType":2,"name":"图片.png","mime":"image/png","size":1234,"transferred":12]
         guard let event = Packets.event(packet) else { preconditionFailure("missing event") }
         if kind == 7 { precondition(event == .pairingRequest(device:mapped,requestId:99,verificationCode:"000007")) }
-        if kind == 10 { precondition(event == .incomingOffer(device:mapped,requestId:99,transferId:transfer,type:.image,displayName:"图片.png",mimeType:"image/png",byteCount:1234)) }
+        if kind == 6 { precondition(event == .connection(deviceId:id,connected:true,error:ShareError(.identityChanged,platformError:-34018))) }
+        if kind == 8 { precondition(event == .pairingResult(deviceId:id,requestId:99,error:ShareError(.identityChanged,platformError:-34018))) }
+        if kind == 9 { precondition(event == .identityChanged(deviceId:id)) }
+        if kind == 10 { precondition(event == .incomingOffer(deviceId:id,requestId:99,transferId:transfer,type:.image,displayName:"图片.png",mimeType:"image/png",byteCount:1234)) }
         if kind == 12 { precondition(event == .transferResult(transferId:transfer,error:ShareError(.identityChanged,platformError:-34018))) }
     }
     for category in 1...14 { precondition((Packets.error(["error":category])?.category.rawValue ?? 0) == UInt32(category)) }

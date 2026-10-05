@@ -20,11 +20,11 @@ public struct OperationResult: Equatable {
 public enum ShareEvent: Equatable {
     case online(DeviceInfo), updated(DeviceInfo), offline(DeviceInfo)
     case discoveryError(ShareError), discoveryState(DiscoveryState)
-    case connection(device: DeviceInfo, connected: Bool, error: ShareError?)
+    case connection(deviceId: UUID, connected: Bool, error: ShareError?)
     case pairingRequest(device: DeviceInfo, requestId: UInt64, verificationCode: String)
-    case pairingResult(device: DeviceInfo, requestId: UInt64, error: ShareError?)
-    case identityChanged(DeviceInfo, ShareError?)
-    case incomingOffer(device: DeviceInfo, requestId: UInt64, transferId: UUID, type: ContentType, displayName: String, mimeType: String, byteCount: UInt64)
+    case pairingResult(deviceId: UUID, requestId: UInt64, error: ShareError?)
+    case identityChanged(deviceId: UUID)
+    case incomingOffer(deviceId: UUID, requestId: UInt64, transferId: UUID, type: ContentType, displayName: String, mimeType: String, byteCount: UInt64)
     case progress(transferId: UUID, transferred: UInt64, total: UInt64)
     case transferResult(transferId: UUID, error: ShareError?)
 }

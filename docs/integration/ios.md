@@ -52,6 +52,14 @@ sdk.initialize(SdkConfig(deviceName: "My iPhone")) { result in
 
 Keep observation tokens alive; `EventObservation.close()` or token deinitialization unregisters the listener. Discovery exposes snapshots and Online/Updated/Offline/error/state events. Devices preserve UUID, protocol version, addresses including IPv6 scopes, and discovery timestamp. Connections expose Connect, Confirm/RejectPairing, trusted-device snapshots, and Forget. Pairing and incoming transfer approval are explicit host decisions.
 
+Discovery events and pairing requests carry complete discovered `DeviceInfo`.
+Connection, pairing-result, identity-change and incoming-offer events carry only
+`deviceId`, matching the authenticated core event. Resolve optional display
+metadata from a current discovery snapshot rather than treating zero-filled
+transport fields as device facts. A failed initialization may be retried on the
+same `ShareSdk` instance; concurrent initialization and initialization after a
+successful result remain invalid.
+
 Every asynchronous submission returns an instance-scoped `UInt64` operation ID. Its completion carries the same ID, optional `ShareError`, transfer ID, and clipboard content. Accepted submissions and validation failures complete once. All host callbacks run asynchronously in order on an SDK serial queue targeted at `callbackQueue`; the default is an SDK serial queue. Even synchronous native rejection never invokes host code on the submitting stack. Do not block that queue waiting for another completion.
 
 `stop` cancels unfinished native work and delivers its terminal results. UIKit background notifications interrupt native operations and leave the SDK stopped. After the app becomes active, explicitly call `start` again. The host owns its application lifecycle; there is no guarantee of work while suspended.

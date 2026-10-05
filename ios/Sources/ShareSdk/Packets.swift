@@ -19,18 +19,20 @@ internal enum Packets {
         return OperationResult(operationId: id, error: error(p), transferId: transfer == zero ? nil : transfer, content: content)
     }
     static func event(_ p: [String: Any]) -> ShareEvent? {
-        let d = device(p["device"] as? [String: Any] ?? [:]), e = error(p), request = number(p,"request"), transfer = p["transfer"] as? UUID ?? zero
+        let devicePacket = p["device"] as? [String: Any] ?? [:]
+        let deviceId = devicePacket["id"] as? UUID ?? zero
+        let e = error(p), request = number(p,"request"), transfer = p["transfer"] as? UUID ?? zero
         switch number(p,"kind") {
-        case 1: return .online(d)
-        case 2: return .updated(d)
-        case 3: return .offline(d)
+        case 1: return .online(device(devicePacket))
+        case 2: return .updated(device(devicePacket))
+        case 3: return .offline(device(devicePacket))
         case 4: return .discoveryError(e ?? ShareError(.discoveryFailed))
         case 5: return .discoveryState(DiscoveryState(rawValue: UInt32(number(p,"state"))) ?? .stopped)
-        case 6: return .connection(device: d, connected: number(p,"state") == 0, error: e)
-        case 7: return .pairingRequest(device: d, requestId: request, verificationCode: p["code"] as? String ?? "")
-        case 8: return .pairingResult(device: d, requestId: request, error: e)
-        case 9: return .identityChanged(d,e)
-        case 10: return .incomingOffer(device: d, requestId: request, transferId: transfer, type: ContentType(rawValue: UInt32(number(p,"contentType"))) ?? .file, displayName: p["name"] as? String ?? "", mimeType: p["mime"] as? String ?? "", byteCount: number(p,"size"))
+        case 6: return .connection(deviceId: deviceId, connected: number(p,"state") == 0, error: e)
+        case 7: return .pairingRequest(device: device(devicePacket), requestId: request, verificationCode: p["code"] as? String ?? "")
+        case 8: return .pairingResult(deviceId: deviceId, requestId: request, error: e)
+        case 9: return .identityChanged(deviceId: deviceId)
+        case 10: return .incomingOffer(deviceId: deviceId, requestId: request, transferId: transfer, type: ContentType(rawValue: UInt32(number(p,"contentType"))) ?? .file, displayName: p["name"] as? String ?? "", mimeType: p["mime"] as? String ?? "", byteCount: number(p,"size"))
         case 11: return .progress(transferId: transfer, transferred: number(p,"transferred"), total: number(p,"size"))
         case 12: return .transferResult(transferId: transfer, error: e)
         default: return nil

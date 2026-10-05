@@ -165,7 +165,9 @@ class ShareSdk internal constructor(private val backend: ApiBackend, executor: E
     private fun finish(id: Long, result: OperationResult) {
         val future = synchronized(gate) {
             val future = pending.remove(id) ?: return
-            if (id == initializeId && result.isSuccess) ready = true
+            if (id == initializeId) {
+                if (result.isSuccess) ready = true else initializing = false
+            }
             future
         }
         future.complete(result)

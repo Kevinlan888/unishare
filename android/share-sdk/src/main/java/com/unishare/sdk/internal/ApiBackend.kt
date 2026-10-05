@@ -20,7 +20,9 @@ internal class JniBackend(context: Context, store: String) : ApiBackend {
     private var handle = 0L
     override fun foreground(value: Boolean) = platform.setForeground(value)
     override fun create(config: ByteArray, key: Long, receiver: SdkNative.Receiver) {
-        check(handle == 0L)
+        val failed = handle
+        handle = 0L
+        if (failed != 0L) SdkNative.destroy(failed)
         handle = SdkNative.create(platform.platformHandle(), config, key, receiver)
     }
     override fun submit(command: Int, uuid: ByteArray, request: Long, stream: Long, number: Long,

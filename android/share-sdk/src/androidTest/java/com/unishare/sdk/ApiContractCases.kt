@@ -1,6 +1,7 @@
 package com.unishare.sdk
 
 import com.unishare.sdk.internal.ApiBackend
+import com.unishare.sdk.internal.NativePortException
 import com.unishare.sdk.internal.SdkNative
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
@@ -24,11 +25,17 @@ internal object ApiContractCases {
     private class Fake : ApiBackend {
         lateinit var receiver: SdkNative.Receiver
         val submissions = java.util.concurrent.LinkedBlockingQueue<Pair<Int, Long>>()
+        private val heldCreates = java.util.concurrent.LinkedBlockingQueue<Pair<Long, SdkNative.Receiver>>()
         val released = AtomicInteger(); var closed = false
         val aborted = AtomicInteger()
+        val createCalls = AtomicInteger(); var throwCreateOnce = false; var holdCreate = false
         var rejectSend = false
         var openEntered: CountDownLatch? = null; var openRelease: CountDownLatch? = null
-        override fun create(config: ByteArray, key: Long, receiver: SdkNative.Receiver) { this.receiver = receiver; receiver.completion(key, result()) }
+        override fun create(config: ByteArray, key: Long, receiver: SdkNative.Receiver) {
+            createCalls.incrementAndGet(); this.receiver = receiver
+            if (throwCreateOnce) { throwCreateOnce = false; throw NativePortException(11, false, 0) }
+            if (holdCreate) heldCreates.put(key to receiver) else receiver.completion(key, result())
+        }
         override fun submit(command: Int, uuid: ByteArray, request: Long, stream: Long, number: Long, text: ByteArray,
                             name: ByteArray, mime: ByteArray, bytes: ByteArray, size: Long, key: Long) {
             check(text.size <= 262144, "large text must never cross JNI as a direct span")
@@ -48,12 +55,14 @@ internal object ApiContractCases {
         override fun abort(stream: Long) { aborted.incrementAndGet() }
         override fun close() { closed = true }
         fun next(command: Int): Long { val next = submissions.poll(5, TimeUnit.SECONDS) ?: error("missing command"); check(next.first == command, "command order"); return next.second }
+        fun nextHeldCreate(): Pair<Long, SdkNative.Receiver> = heldCreates.poll(5, TimeUnit.SECONDS) ?: error("missing held create")
     }
     private fun initialized(fake: Fake, executor: Executor = Executor { it.run() }): ShareSdk {
         val sdk = ShareSdk(fake, executor); check(sdk.initialize(SdkConfig("test")).result.get(5, TimeUnit.SECONDS).isSuccess, "fake initialize"); return sdk
     }
     fun run() {
         configBoundaries()
+        initializeRetry()
         val cappedFake=Fake(); cappedFake.rejectSend=true; val cappedSdk=ShareSdk(cappedFake,null)
         check(cappedSdk.initialize(SdkConfig("cap",maxTextBytes=16777216)).result.get(5,TimeUnit.SECONDS).isSuccess,"high configured text limit")
         val cappedOperation=cappedSdk.transfers.sendText(DeviceId(UUID.randomUUID()), "x".repeat(8388609))
@@ -123,6 +132,32 @@ internal object ApiContractCases {
         lateUriClose()
         closeDrainsCallback()
     }
+    private fun initializeRetry() {
+        val synchronous = Fake().also { it.throwCreateOnce = true }
+        val synchronousSdk = ShareSdk(synchronous, null)
+        check(synchronousSdk.initialize(SdkConfig("sync failure")).result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.STORAGE_FAILED,
+            "synchronous create failure")
+        check(synchronousSdk.initialize(SdkConfig("sync retry")).result.get(5, TimeUnit.SECONDS).isSuccess,
+            "same Kotlin wrapper retries after synchronous create failure")
+        check(synchronousSdk.initialize(SdkConfig("after success")).result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.INVALID_INPUT && synchronous.createCalls.get() == 2,
+            "Kotlin wrapper rejects initialization after success")
+        synchronousSdk.close()
+
+        val asynchronous = Fake().also { it.holdCreate = true }
+        val asynchronousSdk = ShareSdk(asynchronous, null)
+        val first = asynchronousSdk.initialize(SdkConfig("async failure"))
+        val held = asynchronous.nextHeldCreate()
+        check(asynchronousSdk.initialize(SdkConfig("concurrent")).result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.INVALID_INPUT,
+            "concurrent initialize rejected")
+        check(asynchronousSdk.initialize(SdkConfig("still concurrent")).result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.INVALID_INPUT && asynchronous.createCalls.get() == 1,
+            "rejected callback must not clear active initialize state")
+        held.second.completion(held.first, result(11))
+        check(first.result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.STORAGE_FAILED, "asynchronous create failure")
+        asynchronous.holdCreate = false
+        check(asynchronousSdk.initialize(SdkConfig("async retry")).result.get(5, TimeUnit.SECONDS).isSuccess,
+            "same Kotlin wrapper retries after asynchronous create failure")
+        asynchronousSdk.close()
+    }
     private fun configBoundaries() {
         val c = SdkConfig("numeric boundaries")
         val invalid = listOf(
@@ -188,6 +223,15 @@ internal object ApiContractCases {
         it.writeInt(1); text(it, "2001:db8::1"); text(it, "000042"); it.writeInt(2)
         text(it, "image"); text(it, "image/png"); it.writeLong(99); it.writeLong(25)
     }
+    // This is the fixed packet JNI creates from a zero-initialized usdk_event whose
+    // producer populated only device.id and the fields owned by the event kind.
+    private fun idOnlyEventPacket(kind: Int, state: Int = 0, error: Int = 0): ByteArray = packet {
+        it.writeInt(kind); it.writeInt(state); it.writeInt(error); it.writeBoolean(error != 0); it.writeLong(-7); it.writeLong(42)
+        it.writeLong(1); it.writeLong(2); it.writeLong(3); it.writeLong(4); text(it, ""); it.writeInt(0)
+        it.writeInt(0); it.writeInt(0); it.writeInt(0); it.writeBoolean(false); it.writeLong(0)
+        it.writeInt(0); text(it, ""); it.writeInt(if (kind == 10) 2 else 0)
+        text(it, if (kind == 10) "image" else ""); text(it, if (kind == 10) "image/png" else ""); it.writeLong(99); it.writeLong(25)
+    }
     private fun allEventsAndContent() {
         val fake = Fake(); val sdk = initialized(fake)
         val discovery = java.util.concurrent.LinkedBlockingQueue<DiscoveryEvent>()
@@ -199,14 +243,17 @@ internal object ApiContractCases {
         fake.receiver.event(eventPacket(4, error = 2))
         check((discovery.poll(5, TimeUnit.SECONDS) as DiscoveryEvent.Error).error == ShareError(ErrorCategory.DISCOVERY_FAILED, -7), "discovery error mapping")
         fake.receiver.event(eventPacket(5, state = 3)); check((discovery.poll(5, TimeUnit.SECONDS) as DiscoveryEvent.State).state == DiscoveryState.STOPPED, "state mapping")
-        fake.receiver.event(eventPacket(6)); check(connection.poll(5, TimeUnit.SECONDS) is ConnectionEvent.Connected, "connected mapping")
-        fake.receiver.event(eventPacket(6, state = 1, error = 10)); check(connection.poll(5, TimeUnit.SECONDS) is ConnectionEvent.Disconnected, "disconnected mapping")
+        val idOnly = DeviceId(UUID(3, 4))
+        fake.receiver.event(idOnlyEventPacket(6)); check((connection.poll(5, TimeUnit.SECONDS) as ConnectionEvent.Connected).deviceId == idOnly, "connected ID-only mapping")
+        fake.receiver.event(idOnlyEventPacket(6, state = 1, error = 10)); check((connection.poll(5, TimeUnit.SECONDS) as ConnectionEvent.Disconnected).deviceId == idOnly, "disconnected ID-only mapping")
         fake.receiver.event(eventPacket(7)); val pairing = connection.poll(5, TimeUnit.SECONDS) as ConnectionEvent.PairingRequest
         check(pairing.requestId == 42L && pairing.verificationCode == "000042", "six-digit pairing code")
-        fake.receiver.event(eventPacket(8, error = 4)); check((connection.poll(5, TimeUnit.SECONDS) as ConnectionEvent.PairingResult).error?.category == ErrorCategory.PAIRING_REJECTED, "pairing result mapping")
-        fake.receiver.event(eventPacket(9, error = 6)); check(connection.poll(5, TimeUnit.SECONDS) is ConnectionEvent.IdentityChanged, "identity mapping")
-        fake.receiver.event(eventPacket(10)); val offer = transfer.poll(5, TimeUnit.SECONDS) as TransferEvent.IncomingOffer
-        check(offer.requestId == 42L && offer.transferId == TransferId(UUID(1, 2)) && offer.byteCount == 99L && offer.mimeType == "image/png" && offer.contentType == ContentType.IMAGE, "incoming metadata")
+        fake.receiver.event(idOnlyEventPacket(8, error = 4)); val pairingResult = connection.poll(5, TimeUnit.SECONDS) as ConnectionEvent.PairingResult
+        check(pairingResult.deviceId == idOnly && pairingResult.error?.category == ErrorCategory.PAIRING_REJECTED, "pairing result ID-only mapping")
+        fake.receiver.event(idOnlyEventPacket(9)); val identity = connection.poll(5, TimeUnit.SECONDS) as? ConnectionEvent.IdentityChanged
+        check(identity?.deviceId == idOnly, "real zero-error identity event delivered")
+        fake.receiver.event(idOnlyEventPacket(10)); val offer = transfer.poll(5, TimeUnit.SECONDS) as TransferEvent.IncomingOffer
+        check(offer.deviceId == idOnly && offer.requestId == 42L && offer.transferId == TransferId(UUID(1, 2)) && offer.byteCount == 99L && offer.mimeType == "image/png" && offer.contentType == ContentType.IMAGE, "incoming ID-only metadata")
         fake.receiver.event(eventPacket(11)); check((transfer.poll(5, TimeUnit.SECONDS) as TransferEvent.Progress).transferred == 25L, "progress mapping")
         fake.receiver.event(eventPacket(12, error = 12)); check((transfer.poll(5, TimeUnit.SECONDS) as TransferEvent.Result).error?.category == ErrorCategory.INTEGRITY_FAILED, "terminal mapping")
         val read = sdk.clipboard.readShareableContent(); val key = fake.next(13)
