@@ -34,9 +34,14 @@ final class Events {
     func terminalCount(_ id: UUID) -> Int {
         count { if case .transferResult(let value, _) = $0 { return value == id }; return false }
     }
-    func verifyTerminals(_ expected: Int) {
+    func senderId(after start: Int) -> UUID {
+        let event = next(after: start) { if case .progress(_, 0, _) = $0 { return true }; return false }
+        guard case .progress(let id, _, _) = event else { preconditionFailure() }
+        return id
+    }
+    func verifyTerminals(_ expected: Set<UUID>) {
         let ids: [UUID] = all.compactMap { if case .transferResult(let id, _) = $0 { return id }; return nil }
-        check(ids.count == expected && Set(ids).count == expected, "one terminal event per transfer including failures")
+        check(ids.count == expected.count && Set(ids) == expected, "one terminal event for each expected transfer ID including failures")
     }
 }
 struct Offer {
@@ -100,13 +105,15 @@ func runPeers() {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("acceptance-" + run)
     try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    var sends: [Operation] = [], received: [UUID] = [], sent: [UUID] = []
+    var sends: [Operation] = []
+    var expectedA: Set<UUID> = [], expectedB: Set<UUID> = []
     // All cases use explicit empty host-owned staging files, never peer filenames.
     func transfer(_ bytes: Data, type: ContentType, mime: String, name: String, reverse: Bool = false) {
         let sender = reverse ? b : a, receiver = reverse ? a : b
         let receiverEvents = reverse ? ae : be, senderEvents = reverse ? be : ae
         let target = reverse ? peerA.id : peerB.id
         let start = receiverEvents.all.count
+        let senderStart = senderEvents.all.count
         let source = directory.appendingPathComponent(UUID().uuidString)
         try! bytes.write(to: source)
         let send = Operation { callback in
@@ -118,7 +125,10 @@ func runPeers() {
             }
         }
         sends.append(send)
+        let senderId = senderEvents.senderId(after: senderStart)
         let offer = Offer(receiverEvents, after: start)
+        if reverse { expectedB.insert(senderId); expectedA.insert(offer.id) }
+        else { expectedA.insert(senderId); expectedB.insert(offer.id) }
         check(offer.type == type && offer.size == UInt64(bytes.count), "offer type/size")
         if type != .text { check(offer.name == name && offer.mime == mime, "offer metadata") }
         let staging = directory.appendingPathComponent(UUID().uuidString)
@@ -127,13 +137,12 @@ func runPeers() {
         check(send.count == 0 && (try! Data(contentsOf: staging)).isEmpty, "no data before incoming offer approval")
         ok { receiver.transfers.accept(offer.request, stagingURL: staging, completion: $0) }
         let result = send.result()
-        check(result.isSuccess && result.transferId != nil, "send success")
+        check(result.isSuccess && result.transferId == senderId, "send success carries expected transfer ID")
         check(receiverEvents.terminal(offer.id) == nil && senderEvents.terminal(result.transferId!) == nil, "both transfer terminal success")
         let actual = try! Data(contentsOf: staging)
         check(actual == bytes && SHA256.hash(data: actual) == SHA256.hash(data: bytes), "received bytes/SHA256")
         check(receiverEvents.terminalCount(offer.id) == 1 && senderEvents.terminalCount(result.transferId!) == 1 && send.count == 1, "one terminal event/completion")
         check((try! Data(contentsOf: source)) == bytes, "source preserved")
-        if !reverse { received.append(offer.id); sent.append(result.transferId!) }
         passed("\(reverse ? "B-to-A" : "A-to-B") \(name): consent, bytes/SHA256, one terminal result (\(bytes.count) bytes)")
     }
     transfer(Data("你好 👋\0line\n é".utf8), type: .text, mime: "text/plain", name: "UTF-8/NUL text")
@@ -144,11 +153,16 @@ func runPeers() {
     transfer(Data("回传\0reply".utf8), type: .text, mime: "text/plain", name: "reverse text", reverse: true)
 
     let rejectStart = be.all.count
+    let rejectSenderStart = ae.all.count
     let rejected = Operation { a.transfers.sendText("decline", to: peerB.id, completion: $0) }
     sends.append(rejected)
     let rejectedOffer = Offer(be, after: rejectStart)
+    let rejectedSenderId = ae.senderId(after: rejectSenderStart)
+    expectedA.insert(rejectedSenderId); expectedB.insert(rejectedOffer.id)
     ok { b.transfers.reject(rejectedOffer.request, completion: $0) }
-    check(rejected.result().error?.category == .transferRejected, "sender rejection category")
+    let rejectedResult = rejected.result()
+    check(rejectedResult.error?.category == .transferRejected, "sender rejection category")
+    check(ae.terminal(rejectedSenderId) == rejectedResult.error && ae.terminalCount(rejectedSenderId) == 1, "sender rejection terminal matches completion error and expected ID once")
     check(be.terminal(rejectedOffer.id)?.category == .transferRejected && be.terminalCount(rejectedOffer.id) == 1, "receiver rejection terminal once")
     passed("incoming offer rejected explicitly; sender/receiver TransferRejected once")
 
@@ -156,9 +170,12 @@ func runPeers() {
     let large = directory.appendingPathComponent("large.bin")
     try! Data(repeating: 0xa7, count: 32 * 1024 * 1024).write(to: large)
     let cancelStart = be.all.count
+    let cancelSenderStart = ae.all.count
     let cancelled = Operation { a.transfers.sendFile(large, to: peerB.id, displayName: "cancel.bin", byteCount: 32 * 1024 * 1024, completion: $0) }
     sends.append(cancelled)
     let cancelledOffer = Offer(be, after: cancelStart)
+    let cancelledSenderId = ae.senderId(after: cancelSenderStart)
+    expectedA.insert(cancelledSenderId); expectedB.insert(cancelledOffer.id)
     let partial = directory.appendingPathComponent("partial")
     try! Data().write(to: partial)
     let cancelLock = NSLock()
@@ -173,11 +190,15 @@ func runPeers() {
     check(be.terminal(cancelledOffer.id)?.category == .cancelled, "receiver cancellation category")
     cancelLock.lock(); let cancellation = cancelOperation; cancelLock.unlock()
     check(cancellation != nil && cancellation!.result().isSuccess, "cancel accepted after positive progress")
-    check(!cancelled.result().isSuccess, "sender interrupted")
+    let cancelledResult = cancelled.result()
+    // The receiver closes its TLS socket on Cancel. The sender observes network loss,
+    // while the initiating receiver reports Cancelled; raw OS status can vary.
+    check(cancelledResult.error?.category == .networkLost, "remote cancellation reports NetworkLost")
+    check(ae.terminal(cancelledSenderId) == cancelledResult.error && ae.terminalCount(cancelledSenderId) == 1, "sender cancellation terminal matches completion error and expected ID once")
     eventually("partial staging removed") { !FileManager.default.fileExists(atPath: partial.path) }
     cancelObservation.close()
     check(be.terminalCount(cancelledOffer.id) == 1 && cancelled.count == 1, "cancel terminal once")
-    passed("cancel after received bytes: sender interrupted, receiver Cancelled once, partial staging deleted")
+    passed("cancel after received bytes: sender NetworkLost, receiver Cancelled, matching terminal IDs once, partial staging deleted")
 
     let offlineStart = ae.all.count
     ok { b.stop(completion: $0) }
@@ -190,11 +211,11 @@ func runPeers() {
     ok { a.stop(completion: $0) }; ok { b.stop(completion: $0) }
     Thread.sleep(forTimeInterval: 0.2)
     check(sends.allSatisfy { $0.count == 1 }, "late callbacks do not duplicate send completions")
-    check(received.allSatisfy { be.terminalCount($0) == 1 } && sent.allSatisfy { ae.terminalCount($0) == 1 }, "late terminal events not duplicated")
-    ae.verifyTerminals(8); be.verifyTerminals(8)
+    ae.verifyTerminals(expectedA); be.verifyTerminals(expectedB)
     ae.close(); be.close(); a.close(); b.close()
     a = newSdk(serviceA, nameA); b = newSdk(serviceB, nameB)
     ae = Events(a); be = Events(b)
+    expectedA.removeAll(); expectedB.removeAll()
     check((try! a.connections.getTrustedDevices()) == trustA && (try! b.connections.getTrustedDevices()) == trustB, "Keychain trust survives SDK recreation")
     ok { a.start(completion: $0) }; ok { b.start(completion: $0) }
     check(discover(a, name: nameB).id == peerB.id && discover(b, name: nameA).id == peerA.id, "Keychain identities survive SDK recreation")
@@ -203,18 +224,26 @@ func runPeers() {
     transfer(Data("after recreation".utf8), type: .text, mime: "text/plain", name: "trusted text")
 
     let interruptionStart = be.all.count
+    let interruptionSenderStart = ae.all.count
     let interrupted = Operation { a.transfers.sendText("background pending offer", to: peerB.id, completion: $0) }
     let pending = Offer(be, after: interruptionStart)
+    let interruptedSenderId = ae.senderId(after: interruptionSenderStart)
+    expectedA.insert(interruptedSenderId); expectedB.insert(pending.id)
     DispatchQueue.main.sync { NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil) }
     eventually("background stops both SDKs") { a.state == .stopped && b.state == .stopped }
-    check(!interrupted.result().isSuccess && be.terminal(pending.id) != nil, "background interrupts pending transfer")
+    let interruptedResult = interrupted.result()
+    check(interruptedResult.error?.category == .cancelled, "background Stop cancels pending send completion")
+    check(ae.terminal(interruptedSenderId) == interruptedResult.error && ae.terminalCount(interruptedSenderId) == 1, "background sender terminal matches completion error and expected ID once")
+    check(be.terminal(pending.id)?.category == .cancelled && be.terminalCount(pending.id) == 1, "background Stop reports Cancelled for receiver's expected ID once")
     check(Operation { a.start(completion: $0) }.result().error?.category == .networkLost, "background Start denied")
     DispatchQueue.main.sync { NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil) }
+    Thread.sleep(forTimeInterval: 0.2)
+    check(a.state == .stopped && b.state == .stopped, "foreground notification alone leaves both SDKs stopped")
     ok { a.start(completion: $0) }; ok { b.start(completion: $0) }
     _ = discover(a, name: nameB)
     ok { a.stop(completion: $0) }; ok { b.stop(completion: $0) }
     check(interrupted.count == 1 && be.terminalCount(pending.id) == 1, "interruption terminal once")
-    ae.verifyTerminals(2); be.verifyTerminals(2)
+    ae.verifyTerminals(expectedA); be.verifyTerminals(expectedB)
     // Persist only public expected values for a later process; never identity key material.
     UserDefaults.standard.set(["serviceA": serviceA, "serviceB": serviceB, "nameA": nameA, "nameB": nameB,
                                "idA": peerA.id.uuidString, "idB": peerB.id.uuidString,
