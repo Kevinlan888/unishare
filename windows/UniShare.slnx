@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/UniShare.Application/UniShare.Application.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/UniShare.Application.Tests/UniShare.Application.Tests.csproj" />
+  </Folder>
+</Solution>
