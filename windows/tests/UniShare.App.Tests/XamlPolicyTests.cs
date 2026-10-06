@@ -34,6 +34,26 @@ public sealed partial class XamlPolicyTests
     }
 
     [TestMethod]
+    public void ExecutableManifestUsesPerMonitorV2InsteadOfBitmapScaling()
+    {
+        var manifest = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "app.manifest"));
+        var dpiAware = manifest.Descendants().SingleOrDefault(element => element.Name.LocalName == "dpiAware");
+        var dpiAwareness = manifest.Descendants().SingleOrDefault(element => element.Name.LocalName == "dpiAwareness");
+        Assert.AreEqual("true/pm", dpiAware?.Value, "Pre-Windows 10 DPI fallback is missing.");
+        Assert.AreEqual("PerMonitorV2", dpiAwareness?.Value, "Windows is allowed to bitmap-scale the whole UI.");
+    }
+
+    [TestMethod]
+    public void SettingsPageOwnsAVisibleAutosaveFailureSurface()
+    {
+        var page = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Settings", "SettingsPage.xaml"));
+        var error = page.Descendants().SingleOrDefault(element =>
+            element.Name.LocalName == "InfoBar" && element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value == "SettingsSaveError");
+        Assert.IsNotNull(error, "Settings save failures are only rendered on the hidden device-session page.");
+        Assert.AreEqual("Error", error.Attribute("Severity")?.Value);
+    }
+
+    [TestMethod]
     public void PairingDialogExposesCodeAndExplicitMatchOrMismatchCommandsWithoutBypass()
     {
         var path = Path.Combine(ResourceCoverageTests.AppPath, "Features", "Pairing", "PairingDialog.xaml");

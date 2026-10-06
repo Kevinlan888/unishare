@@ -55,7 +55,7 @@ public partial class App : Microsoft.UI.Xaml.Application
     }
     public void ChangeLanguage(string? language)
     {
-        Microsoft.Windows.Globalization.ApplicationLanguages.PrimaryLanguageOverride = language!;
-        MainWindow?.RebuildShell();
+        Microsoft.Windows.Globalization.ApplicationLanguages.PrimaryLanguageOverride = language ?? string.Empty;
+        MainWindow?.RefreshLanguage();
     }
 }

@@ -113,8 +113,15 @@ internal sealed class ViewModelFixture : IDisposable
     {
         public AppSettings Value = new() { ReceiveDirectory = "receive" };
         public int Saves;
+        public readonly List<AppSettings> Saved = [];
+        public Func<AppSettings, Task>? Saving;
         public Task<AppSettings> LoadAsync(CancellationToken token) => Task.FromResult(Value);
-        public Task SaveAsync(AppSettings settings, CancellationToken token) { Saves++; Value = settings; return Task.CompletedTask; }
+        public async Task SaveAsync(AppSettings settings, CancellationToken token)
+        {
+            Saves++;
+            if (Saving is not null) await Saving(settings);
+            Value = settings; Saved.Add(settings);
+        }
     }
     internal sealed class UiServices : IViewModelFiles
     {

@@ -17,10 +17,20 @@ public sealed partial class MainWindow : Window, IWindowPlatform
     private PairingDialog? pairingDialog;
     private bool shuttingDown;
     private readonly TaskCompletionSource rootReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public void ApplyTheme(ThemePolicy theme) => Root.RequestedTheme = theme switch
+    {
+        ThemePolicy.Light => ElementTheme.Light,
+        ThemePolicy.Dark => ElementTheme.Dark,
+        _ => ElementTheme.Default
+    };
     public void RebuildShell()
     {
         (ShellHost.Content as IDisposable)?.Dispose();
         ShellHost.Content = new ShellPage(model);
+    }
+    public void RefreshLanguage()
+    {
+        Title = Strings.Get("AppTitle"); WindowTitleText.Text = Strings.Get("AppTitle"); RebuildShell();
     }
     public void AttachLifecycle(AppLifecycleCoordinator lifecycle, PairingViewModel pairing)
     {

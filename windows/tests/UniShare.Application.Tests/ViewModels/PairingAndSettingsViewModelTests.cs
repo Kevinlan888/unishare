@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using UniShare.Application.Abstractions;
 using UniShare.Application.Models;
 using UniShare.Application.ViewModels;
 
@@ -7,6 +8,8 @@ namespace UniShare.Application.Tests.ViewModels;
 [TestClass]
 public sealed class PairingAndSettingsViewModelTests
 {
+    private static Task<SettingsSaveResult> Autosave(SettingsViewModel vm, AppSettings settings) =>
+        vm.AutosaveAsync(settings, CancellationToken.None);
     [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
@@ -38,14 +41,60 @@ public sealed class PairingAndSettingsViewModelTests
         Assert.IsTrue(f.Sdk.ConfirmationWasDispatched); Assert.AreEqual(new RequestId(2), vm.PendingRequest!.Request);
     }
     [TestMethod]
-    public async Task SaveValidatesImmutableCandidateAndRejectsConcurrentSave()
+    public async Task SaveValidatesImmutableCandidatesAndQueuesConcurrentAutosave()
     {
-        using var f = new ViewModelFixture(); var gate = new TaskCompletionSource<bool>(); f.Ui.Validation = _ => gate.Task;
+        using var f = new ViewModelFixture();
+        var firstValidation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var validations = 0;
+        f.Ui.Validation = _ => Interlocked.Increment(ref validations) == 1 ? firstValidation.Task : Task.FromResult(true);
         var vm = new SettingsViewModel(f.Settings, f.Ui, f.Dispatcher, f.Settings.Value);
-        vm.Settings = vm.Settings with { ReceiveDirectory = "validated" }; var first = vm.SaveCommand.ExecuteAsync(null);
-        vm.Settings = vm.Settings with { ReceiveDirectory = "not-validated" }; await vm.SaveCommand.ExecuteAsync(null);
-        Assert.IsFalse(vm.SaveCommand.CanExecute(null)); gate.SetResult(true); await first;
-        Assert.AreEqual(1, f.Settings.Saves); Assert.AreEqual("validated", f.Settings.Value.ReceiveDirectory);
+        var firstSettings = vm.Settings with { Theme = ThemePolicy.Dark, ReceiveDirectory = "first" };
+        var secondSettings = firstSettings with { Language = LanguagePolicy.English, ReceiveDirectory = "second" };
+        var first = Autosave(vm, firstSettings); var second = Autosave(vm, secondSettings);
+        firstValidation.SetResult(true); await Task.WhenAll(first, second);
+        Assert.AreEqual(2, f.Settings.Saves); Assert.AreEqual(ThemePolicy.Dark, f.Settings.Value.Theme);
+        Assert.AreEqual(LanguagePolicy.English, f.Settings.Value.Language);
+    }
+
+    [TestMethod]
+    public async Task AutosaveReturnsValidationFailureInsteadOfReportingUnsavedSettingsAsSaved()
+    {
+        using var f = new ViewModelFixture(); f.Ui.Writable = false;
+        var vm = new SettingsViewModel(f.Settings, f.Ui, f.Dispatcher, f.Settings.Value);
+        var result = await Autosave(vm, vm.Settings with { Theme = ThemePolicy.Dark, ReceiveDirectory = "unwritable" });
+        Assert.IsFalse(result.Saved);
+        Assert.AreEqual("Settings.ReceiveDirectoryNotWritable", result.ErrorResourceKey);
+        Assert.AreEqual(0, f.Settings.Saves);
+    }
+
+    [TestMethod]
+    public async Task AutosaveDoesNotBlockUnrelatedSettingWhenExistingReceiveDirectoryIsTemporarilyUnavailable()
+    {
+        using var f = new ViewModelFixture(); f.Ui.Writable = false;
+        var vm = new SettingsViewModel(f.Settings, f.Ui, f.Dispatcher, f.Settings.Value);
+        var result = await Autosave(vm, vm.Settings with { Theme = ThemePolicy.Dark });
+        Assert.IsTrue(result.Saved); Assert.AreEqual(1, f.Settings.Saves);
+        Assert.AreEqual(ThemePolicy.Dark, f.Settings.Value.Theme);
+    }
+
+    [TestMethod]
+    public async Task AutosavePersistsThreeOverlappingSnapshotsInInvocationOrderAndExitDrainsThem()
+    {
+        using var f = new ViewModelFixture();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Settings.Saving = async value => { if (value.DeviceName == "one") { entered.SetResult(); await release.Task; } };
+        var vm = new SettingsViewModel(f.Settings, f.Ui, f.Dispatcher, f.Settings.Value);
+        var first = Autosave(vm, vm.Settings with { DeviceName = "one" });
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = Autosave(vm, vm.Settings with { DeviceName = "two" });
+        var third = Autosave(vm, vm.Settings with { DeviceName = "three" });
+        IAppShutdown shutdown = vm; shutdown.BlockNewWork(); var drain = shutdown.RetireAsync();
+        Assert.IsFalse(drain.IsCompleted); release.SetResult();
+        await Task.WhenAll(first, second, third, drain).WaitAsync(TimeSpan.FromSeconds(5));
+        CollectionAssert.AreEqual(new[] { "one", "two", "three" }, f.Settings.Saved.Select(value => value.DeviceName).ToArray());
+        var rejected = await Autosave(vm, vm.Settings with { DeviceName = "late" });
+        Assert.IsFalse(rejected.Saved); Assert.AreEqual("Settings.SaveFailed", rejected.ErrorResourceKey);
     }
 
     [TestMethod]

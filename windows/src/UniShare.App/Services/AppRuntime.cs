@@ -22,29 +22,33 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     private readonly Dictionary<DeviceId, DeviceSessionViewModel> sessionModels = [];
     private readonly ShellProjection model;
     private readonly AppNotificationService notifications;
+    private readonly TrayIconService tray;
     private readonly AppEventBridge bridge;
     private readonly RuntimeProjectionAdapter projection;
-    private AppSettings settings = new();
+    private readonly MainWindow window;
     private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool disposed;
     public ShareSession Session { get; }
     public PairingViewModel Pairing { get; }
     public AppLifecycleCoordinator Lifecycle { get; }
     public StartupTaskService Startup { get; }
+    public SettingsViewModel Preferences { get; }
 
     public AppRuntime(MainWindow window, ShellProjection model, Action exit)
     {
-        this.model = model; dispatcher = window.DispatcherQueue; bindingDispatcher = new(dispatcher);
+        this.window = window; this.model = model; dispatcher = window.DispatcherQueue; bindingDispatcher = new(dispatcher);
+        SettingsViewModel? preferences = null;
+        Preferences = preferences = new(settingsStore, new WindowsViewModelFiles(() => preferences?.Settings.ReceiveDirectory), bindingDispatcher, new());
         sdk = model.IsDemo ? new DemoSdkClient() : new NativeShareSdkClient(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniShare", "Identity"));
         tracker = new(new SqliteActivityRepository(), new SystemClock());
         Session = new(sdk, tracker);
-        transfers = new(sdk, tracker, new ReceiveFileStore(), () => settings);
+        transfers = new(sdk, tracker, new ReceiveFileStore(), () => Preferences.Settings);
         Pairing = new(sdk, bindingDispatcher);
         Startup = new(new StartupTaskPlatform(), model.IsDemo);
         notifications = new(new AppNotificationPlatform(), Strings.Get, arguments => Dispatch(() => _ = ActivateNotificationAsync(arguments)));
         AppLifecycleCoordinator? lifecycle = null;
-        var tray = new TrayIconService(new Win32TrayPlatform(), Strings.Get, command =>
+        tray = new(new Win32TrayPlatform(), Strings.Get, command =>
         {
             if (lifecycle is null) return;
             _ = command switch
@@ -54,9 +58,9 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
                 _ => lifecycle.ExitAsync()
             };
         });
-        var presence = new WindowController(window, tray, request => { if (settings.NotificationsEnabled) notifications.Show(request); },
+        var presence = new WindowController(window, tray, request => { if (Preferences.Settings.NotificationsEnabled) notifications.Show(request); },
             Dispatch, exit, Dispose);
-        Lifecycle = lifecycle = new(Session, presence, new TransferShutdown(transfers, tracker));
+        Lifecycle = lifecycle = new(Session, presence, new CompositeShutdown(new TransferShutdown(transfers, tracker), Preferences));
         bridge = new(sdk, Session, tracker, transfers, presence);
         model.Runtime = this;
         projection = new(tracker, this, Dispatch);
@@ -67,10 +71,15 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     {
         try
         {
-            if (!model.IsDemo) settings = await settingsStore.LoadAsync(CancellationToken.None);
-            await Session.InitializeAsync(new() { DeviceName = settings.DeviceName });
+            if (!model.IsDemo)
+            {
+                Preferences.AcceptLoadedSettings(await settingsStore.LoadAsync(CancellationToken.None));
+                window.ApplyTheme(Preferences.Settings.Theme);
+                ApplyLanguage(Preferences.Settings.Language);
+            }
+            await Session.InitializeAsync(new() { DeviceName = Preferences.Settings.DeviceName });
             await Session.StartAsync();
-            if (settings.StartupEnabled && Startup.Available) await Startup.SetEnabledAsync(true);
+            if (Preferences.Settings.StartupEnabled && Startup.Available) await Startup.SetEnabledAsync(true);
             projection.Refresh();
         }
         catch { model.Notice = Strings.Get("Notification.SdkFailure"); bridge.NotifySdkFailure(); }
@@ -82,10 +91,30 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         try { await bridge.ActivateAsync(arguments); }
         catch { model.Notice = Strings.Get("Transfer.RejectFailed"); }
     }
-    public async Task SetStartupAsync(bool enabled)
+    public async Task<SettingsSaveResult> SetStartupAsync(bool enabled)
     {
         var actual = await Startup.SetEnabledAsync(enabled);
-        if (!model.IsDemo) { settings = settings with { StartupEnabled = actual }; await settingsStore.SaveAsync(settings, CancellationToken.None); }
+        return await UpdateSettingsAsync(value => value with { StartupEnabled = actual });
+    }
+    public async Task<SettingsSaveResult> UpdateSettingsAsync(Func<AppSettings, AppSettings> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        var candidate = update(Preferences.Settings);
+        Preferences.Settings = candidate;
+        if (model.IsDemo) return new(true, null);
+        var result = await Preferences.AutosaveAsync(candidate, CancellationToken.None);
+        if (!result.Saved && result.ErrorResourceKey is { } key) model.Notice = Strings.Get(key);
+        return result;
+    }
+    public void ApplyLanguage(LanguagePolicy language)
+    {
+        ((App)Microsoft.UI.Xaml.Application.Current).ChangeLanguage(language switch
+        {
+            LanguagePolicy.English => "en-US",
+            LanguagePolicy.SimplifiedChinese => "zh-CN",
+            _ => null
+        });
+        tray.RefreshText(); projection.Refresh();
     }
     private void Dispatch(Action action)
     {
@@ -155,7 +184,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         if (sessionModels.TryGetValue(id, out var existing)) return existing;
         var device = Session.Devices.Devices.FirstOrDefault(value => value.Id == id);
         if (device is null) return null;
-        var created = new DeviceSessionViewModel(device, Session.Devices, transfers, tracker, sdk, new WindowsViewModelFiles(() => settings.ReceiveDirectory), bindingDispatcher);
+        var created = new DeviceSessionViewModel(device, Session.Devices, transfers, tracker, sdk, new WindowsViewModelFiles(() => Preferences.Settings.ReceiveDirectory), bindingDispatcher);
         sessionModels.Add(id, created); return created;
     }
     public Task SendTextAsync(string text) => RunAsync(async vm =>
@@ -200,6 +229,11 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         bridge.Dispose(); Pairing.Dispose(); notifications.Dispose(); model.Runtime = null;
     }
     private sealed class SystemClock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
+    private sealed class CompositeShutdown(params IAppShutdown[] components) : IAppShutdown
+    {
+        public void BlockNewWork() { foreach (var component in components) component.BlockNewWork(); }
+        public Task RetireAsync() => Task.WhenAll(components.Select(component => component.RetireAsync()));
+    }
     private sealed class DispatcherAdapter(DispatcherQueue queue) : IViewModelDispatcher
     {
         public void Post(Action action) { if (!queue.TryEnqueue(action.Invoke)) throw new InvalidOperationException(); }
