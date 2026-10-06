@@ -30,6 +30,39 @@ public sealed class NativeShareSdkClientTests
         await start.WaitAsync(TimeSpan.FromSeconds(5));
         return client;
     }
+
+    [TestMethod]
+    public async Task FailedStartReportsSdkStageAndNativeFailure()
+    {
+        var api = new FakeNativeApi();
+        var entries = new List<(DiagnosticStage Stage, DiagnosticOutcome Outcome, ShareFailure? Failure, Exception? Error)>();
+        await using var client = new NativeShareSdkClient(api, null, (stage, outcome, failure, error) =>
+            entries.Add((stage, outcome, failure, error)));
+        var initialize = client.InitializeAsync(new() { DeviceName = "设备" }, default);
+        api.Complete(api.Latest.Operation);
+        await initialize.WaitAsync(TimeSpan.FromSeconds(5));
+        var start = client.StartAsync(default);
+        api.Complete(api.Latest.Operation, new() { Code = 2, HasPlatformError = 1, PlatformError = 10013 });
+        await Assert.ThrowsExactlyAsync<NativeShareSdkException>(async () => await start.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.IsTrue(entries.Any(entry => entry.Stage == DiagnosticStage.SdkInitialize && entry.Outcome == DiagnosticOutcome.Succeeded));
+        var failed = entries.Single(entry => entry.Stage == DiagnosticStage.SdkStart && entry.Outcome == DiagnosticOutcome.Failed);
+        Assert.AreEqual(10013L, failed.Failure?.PlatformError);
+        Assert.IsNull(failed.Error);
+    }
+
+    [TestMethod]
+    public async Task FailedInitializeReportsSdkStageAndNativeFailure()
+    {
+        var api = new FakeNativeApi();
+        var entries = new List<(DiagnosticStage Stage, DiagnosticOutcome Outcome, ShareFailure? Failure)>();
+        await using var client = new NativeShareSdkClient(api, null, (stage, outcome, failure, _) =>
+            entries.Add((stage, outcome, failure)));
+        var initialize = client.InitializeAsync(new() { DeviceName = "设备" }, default);
+        api.Complete(api.Latest.Operation, new() { Code = 11, HasPlatformError = 1, PlatformError = 5 });
+        await Assert.ThrowsExactlyAsync<NativeShareSdkException>(async () => await initialize.WaitAsync(TimeSpan.FromSeconds(5)));
+        var failed = entries.Single(entry => entry.Stage == DiagnosticStage.SdkInitialize && entry.Outcome == DiagnosticOutcome.Failed);
+        Assert.AreEqual(5L, failed.Failure?.PlatformError);
+    }
     private static NativeEvent Progress(Guid id) => new() { Kind = 11, Transfer = NativeMapper.ToNativeUuid(id), Transferred = 5, ByteCount = 20 };
     private static Channel<ShareSdkEvent> Events(IShareSdkClient client)
     {

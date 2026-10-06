@@ -5,6 +5,7 @@ using UniShare.Application.Models;
 using UniShare.Application.Services;
 using UniShare.Application.ViewModels;
 using UniShare.Infrastructure.Files;
+using UniShare.Infrastructure.Logging;
 using UniShare.Infrastructure.Storage;
 using UniShare.Native;
 using UniShare.App.Presentation;
@@ -18,6 +19,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     private readonly ActivityTracker tracker;
     private readonly TransferCoordinator transfers;
     private readonly JsonSettingsStore settingsStore = new();
+    private readonly PrivacyDiagnosticSink diagnostics = new();
     private readonly DispatcherQueue dispatcher;
     private readonly DispatcherAdapter bindingDispatcher;
     private readonly Dictionary<DeviceId, DeviceSessionViewModel> sessionModels = [];
@@ -41,7 +43,8 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         SettingsViewModel? preferences = null;
         Preferences = preferences = new(settingsStore, new WindowsViewModelFiles(() => preferences?.Settings.ReceiveDirectory), bindingDispatcher, new());
         sdk = model.IsDemo ? new DemoSdkClient() : new NativeShareSdkClient(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniShare", "Identity"));
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniShare", "Identity"),
+            (stage, outcome, failure, error) => TryLog(DiagnosticComponent.Sdk, stage, outcome, failure, error));
         tracker = new(new SqliteActivityRepository(), new SystemClock());
         Session = new(sdk, tracker);
         transfers = new(sdk, tracker, new ReceiveFileStore(), () => Preferences.Settings);
@@ -70,21 +73,43 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     }
     public async Task InitializeAsync()
     {
+        var stage = DiagnosticStage.SettingsLoad;
         try
         {
             if (!model.IsDemo)
             {
+                TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Began);
                 Preferences.AcceptLoadedSettings(await settingsStore.LoadAsync(CancellationToken.None));
                 window.ApplyTheme(Preferences.Settings.Theme);
                 ApplyLanguage(Preferences.Settings.Language);
+                TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Succeeded);
             }
+            stage = DiagnosticStage.SdkInitialize;
+            TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Began);
             await Session.InitializeAsync(new() { DeviceName = Preferences.Settings.DeviceName });
+            TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Succeeded);
+            stage = DiagnosticStage.SdkStart;
+            TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Began);
             await Session.StartAsync();
+            TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Succeeded);
+            stage = DiagnosticStage.StartupTask;
             if (Preferences.Settings.StartupEnabled && Startup.Available) await Startup.SetEnabledAsync(true);
             projection.Refresh();
         }
-        catch { model.Notice = Strings.Get("Notification.SdkFailure"); bridge.NotifySdkFailure(); }
+        catch (Exception error)
+        {
+            TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Failed,
+                (error as NativeShareSdkException)?.Failure, error is NativeShareSdkException ? null : error);
+            model.Notice = Strings.Get("Notification.SdkFailure"); bridge.NotifySdkFailure();
+        }
         finally { ready.TrySetResult(); }
+    }
+
+    private void TryLog(DiagnosticComponent component, DiagnosticStage stage, DiagnosticOutcome outcome,
+        ShareFailure? failure = null, Exception? error = null)
+    {
+        try { diagnostics.WriteEvent(component, stage, outcome, failure, error); }
+        catch { /* A diagnostics failure must not prevent sharing. */ }
     }
     public async Task ActivateNotificationAsync(string arguments)
     {

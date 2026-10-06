@@ -24,6 +24,7 @@ public sealed class NativeShareSdkClient : IShareSdkClient
 
     private readonly IUniShareNativeApi api;
     private readonly string identityDirectory;
+    private readonly Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic;
     private readonly object submissionGate = new();
     private readonly SemaphoreSlim lifecycle = new(1, 1);
     private readonly NativeOperationRegistry operations = new();
@@ -36,12 +37,18 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private ClientState state;
     private long nextGeneration, activeGeneration, stoppedGeneration;
 
-    public NativeShareSdkClient(string? identityDirectory = null) : this(new UniShareNativeApi(), identityDirectory) { }
+    public NativeShareSdkClient(string? identityDirectory = null,
+        Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic = null)
+        : this(new UniShareNativeApi(), identityDirectory, diagnostic) { }
 
-    internal NativeShareSdkClient(IUniShareNativeApi api, string? identityDirectory)
+    internal NativeShareSdkClient(IUniShareNativeApi api, string? identityDirectory) : this(api, identityDirectory, null) { }
+
+    internal NativeShareSdkClient(IUniShareNativeApi api, string? identityDirectory,
+        Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic)
     {
         this.api = api;
         this.identityDirectory = identityDirectory ?? string.Empty;
+        this.diagnostic = diagnostic;
         _ = Task.Run(DrainCallbacksAsync);
         _ = Task.Run(DrainEventsAsync);
     }
@@ -57,6 +64,7 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     {
         ArgumentNullException.ThrowIfNull(options);
         await lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Report(DiagnosticStage.SdkInitialize, DiagnosticOutcome.Began);
         var ownsInitialization = false;
         try
         {
@@ -93,9 +101,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             var result = await completion.ConfigureAwait(false);
             Throw(result.Terminal.Failure);
             lock (submissionGate) { RequireState(ClientState.New); state = ClientState.Initialized; }
+            Report(DiagnosticStage.SdkInitialize, DiagnosticOutcome.Succeeded);
         }
-        catch
+        catch (Exception error)
         {
+            Report(DiagnosticStage.SdkInitialize, DiagnosticOutcome.Failed, error);
             lock (submissionGate) { if (ownsInitialization && state != ClientState.Disposed) DestroySdk(); }
             throw;
         }
@@ -108,6 +118,7 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private async Task StartCoreAsync(CancellationToken cancellationToken)
     {
         await lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Report(DiagnosticStage.SdkStart, DiagnosticOutcome.Began);
         try
         {
             Task<NativeCompletion> completion;
@@ -133,9 +144,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 // this continuation runs. Its newer state must win that race.
                 if (stoppedGeneration != generation) state = ClientState.Running;
             }
+            Report(DiagnosticStage.SdkStart, DiagnosticOutcome.Succeeded);
         }
-        catch
+        catch (Exception error)
         {
+            Report(DiagnosticStage.SdkStart, DiagnosticOutcome.Failed, error);
             lock (submissionGate)
             {
                 activeGeneration = 0;
@@ -152,6 +165,7 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         await lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Report(DiagnosticStage.SdkStop, DiagnosticOutcome.Began);
         try
         {
             Task<NativeCompletion> completion;
@@ -160,7 +174,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 RequireInitialized();
                 // Native failure leaves its observer/catalog active. Explicit
                 // Stop must still retire that generation and pending operations.
-                if (state != ClientState.Running && activeGeneration == 0) return;
+                if (state != ClientState.Running && activeGeneration == 0)
+                {
+                    Report(DiagnosticStage.SdkStop, DiagnosticOutcome.Succeeded);
+                    return;
+                }
                 cancellationToken.ThrowIfCancellationRequested();
                 var submitted = Submit(new(NativeCommand.Stop));
                 if (submitted.Operation.Value == 0) Throw(submitted.Completion.GetAwaiter().GetResult().Terminal.Failure);
@@ -173,8 +191,21 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             var result = await completion.ConfigureAwait(false);
             lock (submissionGate) { operations.CancelAll(); outgoing.Clear(); }
             Throw(result.Terminal.Failure);
+            Report(DiagnosticStage.SdkStop, DiagnosticOutcome.Succeeded);
+        }
+        catch (Exception error)
+        {
+            Report(DiagnosticStage.SdkStop, DiagnosticOutcome.Failed, error);
+            throw;
         }
         finally { lifecycle.Release(); }
+    }
+
+    private void Report(DiagnosticStage stage, DiagnosticOutcome outcome, Exception? error = null)
+    {
+        try { diagnostic?.Invoke(stage, outcome, (error as NativeShareSdkException)?.Failure,
+            error is NativeShareSdkException ? null : error); }
+        catch { /* Logging must never change SDK lifecycle behavior. */ }
     }
 
     public IReadOnlyList<DeviceSnapshot> GetDevices()

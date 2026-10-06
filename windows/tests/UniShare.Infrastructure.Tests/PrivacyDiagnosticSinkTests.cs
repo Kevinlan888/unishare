@@ -44,4 +44,33 @@ public sealed class PrivacyDiagnosticSinkTests
         Assert.AreEqual(20, lines.Length);
         Assert.IsTrue(lines.All(line => line == "category=Unknown platform_code=none"));
     }
+
+    [TestMethod]
+    public void StartupEventRecordsPhaseAndCodeWithoutExceptionMessage()
+    {
+        using var writer = new StringWriter();
+        var sink = new PrivacyDiagnosticSink(writer);
+        var error = new IOException("secret C:\\private\\file.txt");
+        sink.WriteEvent(DiagnosticComponent.App, DiagnosticStage.SdkStart, DiagnosticOutcome.Failed, exception: error);
+        var line = writer.ToString();
+        StringAssert.Contains(line, "component=App stage=SdkStart outcome=Failed");
+        StringAssert.Contains(line, "exception=IOException");
+        StringAssert.Contains(line, $"platform_code={error.HResult}");
+        Assert.IsFalse(line.Contains("private", StringComparison.Ordinal));
+        Assert.IsFalse(line.Contains("secret", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void FileLogRotatesBeforeItExceedsSizeLimit()
+    {
+        using var directory = new TemporaryDirectory();
+        var sink = new PrivacyDiagnosticSink(directory.Path, maxBytes: 180);
+        for (var i = 0; i < 10; i++)
+            sink.WriteEvent(DiagnosticComponent.Sdk, DiagnosticStage.SdkStart, DiagnosticOutcome.Succeeded);
+        var current = System.IO.Path.Combine(directory.Path, "diagnostics.log");
+        var previous = current + ".1";
+        Assert.IsTrue(File.Exists(previous));
+        Assert.IsTrue(new FileInfo(current).Length <= 180);
+        Assert.IsTrue(new FileInfo(previous).Length <= 180);
+    }
 }
