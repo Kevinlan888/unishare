@@ -518,7 +518,70 @@ struct HeldCallback {
   static void Event(void *ctx, const usdk_event *) {
     static_cast<HeldCallback *>(ctx)->Hold();
   }
+  static void Diagnostic(void *ctx, const usdk_diagnostic_event *) {
+    static_cast<HeldCallback *>(ctx)->Hold();
+  }
 };
+void DiagnosticCallbacks() {
+  ApiPeer a;
+  std::vector<usdk_diagnostic_event> first, second;
+  auto collect = [](void *ctx, const usdk_diagnostic_event *event) {
+    static_cast<std::vector<usdk_diagnostic_event> *>(ctx)->push_back(*event);
+  };
+  CHECK(!usdk_set_diagnostic_handler(a.sdk, collect, &first).code);
+  Completion stop;
+  CHECK(!usdk_stop(a.sdk, Completion::Done, &stop, &a.op).code);
+  a.Barrier();
+  CHECK(!usdk_set_diagnostic_handler(a.sdk, collect, &second).code);
+  Drain(a.q, [&] { return stop.calls; });
+  CHECK(first.empty() && second.empty());
+  CHECK(!usdk_set_diagnostic_handler(a.sdk, collect, &first).code);
+  Completion visible;
+  CHECK(!usdk_stop(a.sdk, Completion::Done, &visible, &a.op).code);
+  Drain(a.q, [&] { return visible.calls && !first.empty(); });
+  CHECK(first.front().stage == USDK_DIAGNOSTIC_STOP);
+  CHECK(first.front().outcome == USDK_DIAGNOSTIC_BEGAN);
+  CHECK(first.front().sequence == 0);
+  CHECK(!usdk_set_diagnostic_handler(a.sdk, collect, &second).code);
+  Completion again;
+  CHECK(!usdk_stop(a.sdk, Completion::Done, &again, &a.op).code);
+  Drain(a.q, [&] { return again.calls && !second.empty(); });
+  CHECK(first.size() == 1 && second.size() == 1);
+  CHECK(!usdk_set_diagnostic_handler(a.sdk, nullptr, nullptr).code);
+  Completion last;
+  CHECK(!usdk_stop(a.sdk, Completion::Done, &last, &a.op).code);
+  Drain(a.q, [&] { return last.calls; });
+  CHECK(second.size() == 1);
+}
+void DiagnosticRetirement(bool destroy) {
+  ApiPeer a;
+  HeldCallback held;
+  CHECK(!usdk_set_diagnostic_handler(a.sdk, HeldCallback::Diagnostic, &held).code);
+  Completion stop;
+  CHECK(!usdk_stop(a.sdk, Completion::Done, &stop, &a.op).code);
+  a.Barrier();
+  auto entered = held.entered.get_future();
+  std::thread delivery([&] { a.q->Drain(); });
+  CHECK(entered.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  auto retired = std::async(std::launch::async, [&] {
+    return destroy ? usdk_destroy(a.sdk)
+                   : usdk_set_diagnostic_handler(a.sdk, nullptr, nullptr);
+  });
+  CHECK(retired.wait_for(std::chrono::milliseconds(100)) ==
+        std::future_status::timeout);
+  held.release.set_value();
+  CHECK(retired.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  CHECK(!retired.get().code);
+  delivery.join();
+  CHECK(held.calls == 1);
+  if (destroy) a.sdk = 0;
+  else {
+    Completion again;
+    CHECK(!usdk_stop(a.sdk, Completion::Done, &again, &a.op).code);
+    Drain(a.q, [&] { return again.calls; });
+    CHECK(held.calls == 1);
+  }
+}
 // A callback waiting for a submitting thread must not prevent that thread from
 // obtaining operation IDs, for either lifecycle or service commands.
 void ConcurrentSubmission(bool event) {
@@ -611,4 +674,7 @@ int main(int argc, char **argv) {
   Exceptions();
   CallbackLifetime();
   StopAndWrite();
+  DiagnosticCallbacks();
+  DiagnosticRetirement(false);
+  DiagnosticRetirement(true);
 }

@@ -165,6 +165,46 @@ typedef struct usdk_event {
 } usdk_event;
 typedef void(USDK_CALL *usdk_event_handler)(void *context,
                                             const usdk_event *event);
+/* Diagnostic records contain only fixed numeric fields. A sequence is local
+ * to one SDK process and must not be interpreted as a device/transfer ID. */
+#define USDK_DIAGNOSTIC_PERMISSION 1u
+#define USDK_DIAGNOSTIC_LISTEN 2u
+#define USDK_DIAGNOSTIC_PUBLISH 3u
+#define USDK_DIAGNOSTIC_BROWSE 4u
+#define USDK_DIAGNOSTIC_NETWORK_CHANGE 5u
+#define USDK_DIAGNOSTIC_STOP 6u
+#define USDK_DIAGNOSTIC_CONNECT 7u
+#define USDK_DIAGNOSTIC_SOCKET_CONNECT 8u
+#define USDK_DIAGNOSTIC_TLS_HANDSHAKE 9u
+#define USDK_DIAGNOSTIC_IDENTITY_VERIFY 10u
+#define USDK_DIAGNOSTIC_PAIRING 11u
+#define USDK_DIAGNOSTIC_OFFER 12u
+#define USDK_DIAGNOSTIC_ACCEPT 13u
+#define USDK_DIAGNOSTIC_TRANSFER_STREAM 14u
+#define USDK_DIAGNOSTIC_INTEGRITY_VERIFY 15u
+#define USDK_DIAGNOSTIC_PEER_COMPLETE 16u
+#define USDK_DIAGNOSTIC_CANCEL 17u
+#define USDK_DIAGNOSTIC_TRANSFER 18u
+#define USDK_DIAGNOSTIC_BEGAN 1u
+#define USDK_DIAGNOSTIC_SUCCEEDED 2u
+#define USDK_DIAGNOSTIC_FAILED 3u
+#define USDK_DIAGNOSTIC_CANCELLED 4u
+#define USDK_DIAGNOSTIC_NONE 0u
+#define USDK_DIAGNOSTIC_SEND 1u
+#define USDK_DIAGNOSTIC_RECEIVE 2u
+#define USDK_DIAGNOSTIC_TEXT 1u
+#define USDK_DIAGNOSTIC_IMAGE 2u
+#define USDK_DIAGNOSTIC_FILE 3u
+typedef struct usdk_diagnostic_event {
+  uint32_t stage;
+  uint32_t outcome;
+  uint32_t direction;
+  uint32_t content_type;
+  uint64_t sequence;
+  usdk_error error;
+} usdk_diagnostic_event;
+typedef void(USDK_CALL *usdk_diagnostic_handler)(void *context,
+                                                  const usdk_diagnostic_event *event);
 typedef struct usdk_source {
   usdk_stream_handle stream;
   usdk_span display_name;
@@ -195,6 +235,9 @@ USDK_API usdk_error USDK_CALL usdk_get_state(
 USDK_API usdk_error USDK_CALL usdk_set_event_handler(usdk_handle sdk,
                                                      usdk_event_handler handler,
                                                      void *context);
+/* NULL unregisters; replacement and destroy wait for in-flight delivery. */
+USDK_API usdk_error USDK_CALL usdk_set_diagnostic_handler(
+    usdk_handle sdk, usdk_diagnostic_handler handler, void *context);
 USDK_API usdk_error USDK_CALL usdk_get_devices(usdk_handle sdk,
                                                usdk_devices **result);
 USDK_API usdk_error USDK_CALL

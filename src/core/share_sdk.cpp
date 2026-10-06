@@ -27,6 +27,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  std::unique_ptr<DeviceCatalog> catalog;std::vector<Ticket> starters;
  std::function<void(DiscoveryEvent)> event_handler;std::function<void(ShareError)> error_handler;
  std::function<void(DiscoveryState)> state_handler;
+ std::function<void(DiagnosticEvent)> diagnostic_handler;
  std::map<std::string,bool> paired_metadata;
  explicit State(IPlatform& p):platform(p){}
  template<class F> auto Guard(std::uint64_t g,F f) {
@@ -39,6 +40,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
   };
  }
  void EmitState(DiscoveryState v){if(state_handler)runtime->callbacks->Post([f=state_handler,v]{f(v);});}
+ void Report(DiagnosticEvent event){if(diagnostic_handler)runtime->callbacks->Post([f=diagnostic_handler,event=std::move(event)]{try{f(event);}catch(...){}});}
  void EmitError(ShareError e){if(error_handler)runtime->callbacks->Post([f=error_handler,e=std::move(e)]{f(e);});}
  bool Paired(DeviceId id) const {return std::any_of(runtime->trusted_devices.begin(),runtime->trusted_devices.end(),[&](auto& d){return d.id==id;});}
  void Emit(std::vector<DeviceEvent> events){for(auto& e:events){e.device.paired=Paired(e.device.id);paired_metadata[e.device.id.ToString()]=e.device.paired;if(event_handler)runtime->callbacks->Post([f=event_handler,e=std::move(e)]{f(e);});}}
@@ -170,7 +172,8 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  }
  OperationId Stop(ResultCallback<void> cb) override {
   auto ticket=runtime->operations->Begin<void>(std::move(cb),false);
-  runtime->scheduler->Post([s=shared_from_this(),ticket]{
+ runtime->scheduler->Post([s=shared_from_this(),ticket]{
+   s->Report({DiagnosticStage::Stop,DiagnosticOutcome::Began});
    try {
    if(s->starting||s->state==SdkState::Running||s->catalog) {
     auto failure=s->Shutdown(Error(ErrorCode::Cancelled,"SDK stopped"),true);
@@ -240,6 +243,7 @@ OperationId ShareSdk::Initialize(SdkConfig config,IPlatform& p,ResultCallback<vo
 OperationId ShareSdk::Start(ResultCallback<void> cb){return state_->Start(std::move(cb));}
 OperationId ShareSdk::Stop(ResultCallback<void> cb){return state_->Stop(std::move(cb));}
 SdkState ShareSdk::GetState() const {SdkState out;state_->runtime->scheduler->Invoke([&]{out=state_->state;});return out;}
+void ShareSdk::SetDiagnosticHandler(std::function<void(DiagnosticEvent)> handler){state_->runtime->scheduler->Invoke([s=state_,handler=std::move(handler)]() mutable {s->diagnostic_handler=std::move(handler);});}
 std::shared_ptr<IDeviceDiscovery> ShareSdk::Discovery() const{return state_;}
 std::shared_ptr<IConnectionManager> ShareSdk::Connections() const {std::shared_ptr<IConnectionManager> out;state_->runtime->scheduler->Invoke([&]{out=state_->runtime->connections;});return out;}
 std::shared_ptr<ITransferService> ShareSdk::Transfers() const {std::shared_ptr<ITransferService> out;state_->runtime->scheduler->Invoke([&]{out=state_->runtime->transfers;});return out;}

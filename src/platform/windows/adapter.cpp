@@ -98,6 +98,7 @@ public:
  OperationId Start(ResultCallback<void> cb) override{return sdk_.Start(std::move(cb));}
  OperationId Stop(ResultCallback<void> cb) override{return sdk_.Stop(std::move(cb));}
  SdkState GetState() const override{return sdk_.GetState();}
+ void SetDiagnosticHandler(std::function<void(DiagnosticEvent)> handler) override {sdk_.SetDiagnosticHandler(std::move(handler));}
  std::shared_ptr<IDeviceDiscovery> Discovery() const override{return sdk_.Discovery();}
  std::shared_ptr<IConnectionManager> Connections() const override{return sdk_.Connections();}
  std::shared_ptr<ITransferService> Transfers() const override{return sdk_.Transfers();}

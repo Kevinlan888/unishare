@@ -199,6 +199,8 @@ usdk_error USDK_CALL usdk_destroy(usdk_handle h) {
       s->alive = false;
       s->handler = nullptr;
       s->context = nullptr;
+      s->diagnostic_handler = nullptr;
+      s->diagnostic_context = nullptr;
       sdk = std::move(s->sdk);
     }
     // Invalidate first, then wait without blocking command-state access.

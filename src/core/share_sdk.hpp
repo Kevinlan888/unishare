@@ -38,6 +38,7 @@ public:
  OperationId Start(ResultCallback<void>) override;
  OperationId Stop(ResultCallback<void>) override;
  SdkState GetState() const override;
+ void SetDiagnosticHandler(std::function<void(DiagnosticEvent)>) override;
  std::shared_ptr<IDeviceDiscovery> Discovery() const override;
  std::shared_ptr<IConnectionManager> Connections() const override;
  std::shared_ptr<ITransferService> Transfers() const override;

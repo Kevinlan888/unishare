@@ -77,6 +77,9 @@ struct State {
   uint64_t generation = 0;
   usdk_event_handler handler = nullptr;
   void *context = nullptr;
+  uint64_t diagnostic_generation = 0;
+  usdk_diagnostic_handler diagnostic_handler = nullptr;
+  void *diagnostic_context = nullptr;
   std::shared_ptr<PlatformOwner> platform;
   std::shared_ptr<core::ShareSdk> sdk;
   std::shared_ptr<IDeviceDiscovery> discovery;
@@ -144,6 +147,8 @@ struct DeviceView {
 };
 void InstallEvents(const std::shared_ptr<State> &);
 void Emit(const std::weak_ptr<State> &, uint64_t, const usdk_event &);
+void EmitDiagnostic(const std::weak_ptr<State> &, uint64_t,
+                    const DiagnosticEvent &);
 inline void Populate(usdk_result &, const Result<void> &) {}
 inline void Populate(usdk_result &out, const Result<TransferId> &r) {
   if (r.ok())

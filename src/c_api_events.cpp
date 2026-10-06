@@ -2,6 +2,31 @@
 using namespace unishare;
 using namespace unishare::abi::detail;
 namespace unishare::abi::detail {
+void EmitDiagnostic(const std::weak_ptr<State> &weak, uint64_t generation,
+                    const DiagnosticEvent &event) {
+  if (auto s = weak.lock()) {
+    std::lock_guard<std::recursive_mutex> delivery(s->callbacks);
+    usdk_diagnostic_handler handler;
+    void *context;
+    {
+      std::lock_guard<std::mutex> lock(s->gate);
+      if (!s->alive || s->diagnostic_generation != generation ||
+          !s->diagnostic_handler)
+        return;
+      handler = s->diagnostic_handler;
+      context = s->diagnostic_context;
+    }
+    usdk_diagnostic_event value{};
+    value.stage = static_cast<uint32_t>(event.stage);
+    value.outcome = static_cast<uint32_t>(event.outcome);
+    value.direction = static_cast<uint32_t>(event.direction);
+    value.content_type = static_cast<uint32_t>(event.content_kind);
+    value.sequence = event.sequence;
+    if (event.error)
+      value.error = Error(*event.error);
+    try { handler(context, &value); } catch (...) {}
+  }
+}
 void Emit(const std::weak_ptr<State> &weak, uint64_t generation,
           const usdk_event &event) {
   if (auto s = weak.lock()) {
@@ -150,6 +175,27 @@ struct TrustOwner {
 };
 } // namespace
 extern "C" {
+usdk_error USDK_CALL usdk_set_diagnostic_handler(
+    usdk_handle h, usdk_diagnostic_handler cb, void *ctx) {
+  return Boundary([&] {
+    auto s = Registry<State>::Get(h);
+    auto sdk = s->Core();
+    std::lock_guard<std::recursive_mutex> delivery(s->callbacks);
+    uint64_t generation;
+    {
+      std::lock_guard<std::mutex> lock(s->gate);
+      Require(s->alive);
+      Require(s->diagnostic_generation != UINT64_MAX, USDK_RESOURCE_LIMIT);
+      generation = ++s->diagnostic_generation;
+      s->diagnostic_handler = cb;
+      s->diagnostic_context = ctx;
+    }
+    std::weak_ptr<State> weak = s;
+    sdk->SetDiagnosticHandler(cb ? [weak, generation](DiagnosticEvent event) {
+      EmitDiagnostic(weak, generation, event);
+    } : std::function<void(DiagnosticEvent)>{});
+  });
+}
 usdk_error USDK_CALL usdk_set_event_handler(usdk_handle h,
                                             usdk_event_handler cb, void *ctx) {
   return Boundary([&] {
