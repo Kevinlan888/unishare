@@ -365,14 +365,14 @@ public sealed class TransferCoordinator
             submittingAcceptance = false;
             Report(TransferDiagnosticStage.AcceptSubmit, NativeDiagnosticOutcome.Succeeded,
                 DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence);
-            lock (gate) if (work.Cancelled || work.PendingTerminal is not null || IsTerminal(Record(work).Status)) throw new OperationCanceledException();
-            if (text is not null)
+            terminal = await work.NativeCompletion.Task.ConfigureAwait(false);
+            if (terminal.Failure is null && text is not null)
             {
                 var bytes = await File.ReadAllBytesAsync(text.Path, contentCancellation).ConfigureAwait(false);
                 var body = new UTF8Encoding(false, true).GetString(bytes);
                 preview = new(ContentKind.Text, body, work.Offer.MimeType, []);
             }
-            else
+            else if (terminal.Failure is null)
             {
                 if (work.Offer.Kind == ContentKind.Image)
                 {
@@ -478,29 +478,29 @@ public sealed class TransferCoordinator
 
     private void OnEvent(object? sender, ShareSdkEvent value)
     {
-        using var owner = TryOwn();
-        if (owner is null) return;
-        if (value is ShareSdkEvent.OfferReceived offer)
-        {
-            lock (gate) incomingTransfers.Add(offer.Offer.TransferId);
-            _ = AdmitOfferAsync(offer.Offer, OwnContinuation()); return;
-        }
         if (value is ShareSdkEvent.TransferCompleted completed)
         {
             Incoming? prompt = null;
             var apply = false;
             lock (gate)
             {
-                if (completed.Terminal.Failure is not null && completed.Terminal.TransferId is { } transfer && incomingTransfers.Contains(transfer))
+                if (completed.Terminal.TransferId is { } transfer && incomingTransfers.Contains(transfer))
                 {
                     var work = incoming.Values.FirstOrDefault(work => work.Offer.TransferId == transfer);
-                    if (work?.Phase is ReceivePhase.Preparing or ReceivePhase.Submitted)
+                    var terminal = new TransferTerminal(transfer, completed.Terminal.Failure is { } failure
+                        ? new(failure.Kind, "Content transfer failed.", failure.PlatformError) : null);
+                    if (work?.Phase == ReceivePhase.Submitted)
+                    {
+                        if (terminal.Failure is not null) work.PendingTerminal ??= terminal;
+                        work.NativeCompletion.TrySetResult(terminal);
+                    }
+                    else if (terminal.Failure is not null && work?.Phase == ReceivePhase.Preparing)
                     {
                         // The receive owner must retire its destination before
                         // releasing drain. Retain only kind + stable diagnostics.
-                        work.PendingTerminal ??= new(transfer, new(completed.Terminal.Failure.Kind, "Content transfer failed."));
+                        work.PendingTerminal ??= terminal;
                     }
-                    else if (work is null || work.Phase == ReceivePhase.Pending)
+                    else if (terminal.Failure is not null && (work is null || work.Phase == ReceivePhase.Pending))
                     {
                         prompt = work;
                         if (prompt is not null) prompt.Phase = ReceivePhase.Finishing;
@@ -514,6 +514,13 @@ public sealed class TransferCoordinator
                 if (prompt is not null) lock (gate) prompt.Phase = ReceivePhase.Terminal;
             }
             return; // Accepted completion tasks own resource lifetimes.
+        }
+        using var owner = TryOwn();
+        if (owner is null) return;
+        if (value is ShareSdkEvent.OfferReceived offer)
+        {
+            lock (gate) incomingTransfers.Add(offer.Offer.TransferId);
+            _ = AdmitOfferAsync(offer.Offer, OwnContinuation()); return;
         }
         tracker.Apply(value);
         if (value is ShareSdkEvent.OutgoingTransferRegistered registered)
@@ -576,7 +583,6 @@ public sealed class TransferCoordinator
             if (retiring) return;
             retiring = true;
             tracker.BlockNewTransfers();
-            sdk.EventReceived -= OnEvent;
             receives = incoming.Values.ToArray();
             foreach (var work in receives) work.Cancelled = true;
         }
@@ -589,7 +595,20 @@ public sealed class TransferCoordinator
     public Task RetireAsync()
     {
         BeginRetirement();
-        lock (gate) return retired ??= RetireCoreAsync();
+        lock (gate)
+        {
+            if (retired is not null) return retired;
+            // AppLifecycle calls RetireAsync only after SDK Stop/Dispose has
+            // drained native owners. Its event generation is already retired,
+            // so accepted receives that saw no terminal event can now release.
+            foreach (var work in incoming.Values.Where(work => work.Phase == ReceivePhase.Submitted))
+            {
+                var cancelled = Cancelled(work.Offer.TransferId);
+                work.PendingTerminal ??= cancelled;
+                work.NativeCompletion.TrySetResult(cancelled);
+            }
+            return retired = RetireCoreAsync();
+        }
     }
 
     private async Task RetireCoreAsync()
@@ -598,7 +617,11 @@ public sealed class TransferCoordinator
         lock (gate) idle = ownersIdle.Task;
         await idle.ConfigureAwait(false);
         Incoming[] receives; Outgoing[] sends;
-        lock (gate) { receives = incoming.Values.ToArray(); sends = outgoing.Values.ToArray(); }
+        lock (gate)
+        {
+            sdk.EventReceived -= OnEvent;
+            receives = incoming.Values.ToArray(); sends = outgoing.Values.ToArray();
+        }
         foreach (var work in receives)
         {
             if (!IsTerminal(Record(work).Status)) tracker.Complete(work.Id, Cancelled(work.Offer.TransferId));
@@ -668,6 +691,7 @@ public sealed class TransferCoordinator
         public Task? Acceptance { get; set; } public bool Cancelled { get; set; } public bool Rejecting { get; set; }
         public ReceivePhase Phase { get; set; }
         public TransferTerminal? PendingTerminal { get; set; }
+        public TaskCompletionSource<TransferTerminal> NativeCompletion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public CancellationTokenSource Cancellation { get; } = new();
         public string? PublishedPath { get; set; }
     }

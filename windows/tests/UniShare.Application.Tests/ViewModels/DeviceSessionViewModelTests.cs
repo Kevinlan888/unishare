@@ -86,7 +86,10 @@ public sealed class DeviceSessionViewModelTests
         cancel.SetResult(); await cancellation;
         Assert.IsFalse(acceptance.IsCompleted); Assert.AreEqual(0, f.Files.Aborted); Assert.AreEqual(0, f.Files.Published);
         Assert.IsTrue(f.Tracker.HasActiveTransfers); Assert.IsFalse(vm.CancelCommand.CanExecute(id));
-        native.SetResult(); await acceptance; Assert.AreEqual(1, f.Files.Aborted); Assert.AreEqual(0, f.Files.Published);
+        native.SetResult();
+        f.Sdk.Emit(new ShareSdkEvent.TransferCompleted(new(offer.TransferId,
+            new(ShareErrorKind.Cancelled, "cancelled"))));
+        await acceptance; Assert.AreEqual(1, f.Files.Aborted); Assert.AreEqual(0, f.Files.Published);
         Assert.AreEqual(ActivityStatus.Cancelled, vm.Activities.Single().Record.Status); Assert.IsFalse(f.Tracker.HasActiveTransfers);
     }
 
@@ -173,7 +176,9 @@ public sealed class DeviceSessionViewModelTests
         var incoming = vm.Activities.Single(); var gate = new TaskCompletionSource(); f.Sdk.Wait = () => gate.Task;
         var accept = vm.AcceptCommand.ExecuteAsync(incoming.Id); await vm.AcceptCommand.ExecuteAsync(incoming.Id);
         await vm.RejectCommand.ExecuteAsync(incoming.Id); Assert.AreEqual(1, f.Sdk.Calls.Count);
-        gate.SetResult(); await accept; f.Sdk.Wait = null;
+        gate.SetResult();
+        f.Sdk.Emit(new ShareSdkEvent.TransferCompleted(new(offer.TransferId, null)));
+        await accept; f.Sdk.Wait = null;
         Assert.IsFalse(vm.CancelCommand.CanExecute(incoming.Id));
         var cancelled = offer with { RequestId = new(9), TransferId = new(Guid.NewGuid()) };
         f.Sdk.Emit(new ShareSdkEvent.OfferReceived(cancelled));

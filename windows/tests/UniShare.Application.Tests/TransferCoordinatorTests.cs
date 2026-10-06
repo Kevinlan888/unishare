@@ -11,6 +11,29 @@ namespace UniShare.Application.Tests;
 public sealed class TransferCoordinatorTests
 {
     [TestMethod]
+    public async Task AcceptedTextWaitsForNativeTerminalBeforeReadingAndDeletingDestination()
+    {
+        var sdk = new Sdk { AutoCompleteAcceptedTransfers = false }; var tracker = Tracker(); var files = new Files();
+        var coordinator = Coordinator(sdk, tracker, files); var offer = Offer(ContentKind.Text);
+        sdk.Emit(new ShareSdkEvent.OfferReceived(offer));
+        await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 1);
+        var id = tracker.GetDeviceSnapshot(Device).Single().Id;
+
+        var acceptance = coordinator.AcceptAsync(id, default);
+        await WaitUntil(() => sdk.AcceptCount == 1);
+
+        Assert.IsFalse(acceptance.IsCompleted, "Accept submission is not transfer completion.");
+        Assert.IsFalse(files.Destination!.Deleted, "The destination must stay alive while native transfer owns it.");
+        await File.WriteAllTextAsync(files.Destination.Path, "received body", new UTF8Encoding(false));
+        sdk.Emit(new ShareSdkEvent.TransferCompleted(new(offer.TransferId, null)));
+
+        await acceptance.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual("received body", tracker.GetPreview(id)!.Text);
+        Assert.AreEqual(ActivityStatus.Completed, tracker.GetDeviceSnapshot(Device).Single().Status);
+        Assert.IsTrue(files.Destination.Deleted);
+    }
+
+    [TestMethod]
     public async Task TransferBoundariesUseLocalSequenceAndNeverCarrySensitiveValues()
     {
         var entries = new List<TransferDiagnosticRecord>();
@@ -708,14 +731,28 @@ public sealed class TransferCoordinatorTests
         public Action? OnSending { get; set; } public bool ZeroOperation { get; set; }
         public Func<Task>? Rejecting { get; set; } public Func<Task>? Cancelling { get; set; }
         public Func<Task>? Stopping { get; set; }
+        public bool AutoCompleteAcceptedTransfers { get; set; } = true;
         public List<string> LifecycleCalls { get; } = [];
+        private readonly Dictionary<RequestId, TransferId> offers = [];
+        private readonly HashSet<TransferId> terminals = [];
         private TaskCompletionSource<TransferTerminal> completion = new(TaskCreationOptions.RunContinuationsAsynchronously); private ulong next;
-        public void Emit(ShareSdkEvent value) => EventReceived?.Invoke(this, value);
+        public void Emit(ShareSdkEvent value)
+        {
+            if (value is ShareSdkEvent.OfferReceived offer) offers[offer.Offer.RequestId] = offer.Offer.TransferId;
+            if (value is ShareSdkEvent.TransferCompleted { Terminal.TransferId: { } transfer }) terminals.Add(transfer);
+            EventReceived?.Invoke(this, value);
+        }
         public void Finish(TransferTerminal terminal) => completion.SetResult(terminal);
         private PendingSend Send(string route) { if (ThrowSend) throw new IOException("private source"); Sends.Add(route); OnSending?.Invoke(); completion = new(TaskCreationOptions.RunContinuationsAsynchronously); return ZeroOperation ? new(default, Task.FromResult(new TransferTerminal(null, new(ShareErrorKind.NetworkLost, "private source")))) : new(new(++next), completion.Task); }
         public PendingSend BeginSendText(DeviceId device, string text) => Send("text:" + text);
         public PendingSend BeginSendFile(DeviceId device, ContentKind kind, ShareSource source) => Send(kind + ":" + source.Path);
-        public async Task AcceptAsync(RequestId request, string stagingPath, CancellationToken cancellationToken) { AcceptCount++; if (Accept is not null) await Accept(stagingPath); }
+        public async Task AcceptAsync(RequestId request, string stagingPath, CancellationToken cancellationToken)
+        {
+            AcceptCount++;
+            if (Accept is not null) await Accept(stagingPath);
+            if (AutoCompleteAcceptedTransfers && offers.TryGetValue(request, out var transfer) && !terminals.Contains(transfer))
+                Emit(new ShareSdkEvent.TransferCompleted(new(transfer, null)));
+        }
         public Task RejectAsync(RequestId request, CancellationToken cancellationToken) { Commands.Add("reject:" + request); return Rejecting?.Invoke() ?? Task.CompletedTask; }
         public Task CancelAsync(TransferId transfer, CancellationToken cancellationToken) { Commands.Add("cancel:" + transfer); return Cancelling?.Invoke() ?? Task.CompletedTask; }
         public Task<ShareContent> ReadClipboardAsync(CancellationToken cancellationToken) => Task.FromResult(Clipboard);
