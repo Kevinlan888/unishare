@@ -27,6 +27,18 @@ foreach ($pattern in @('unishare.dll','libcrypto-3*.dll','libssl-3*.dll')) {
 }
 [xml]$manifest = Get-Content -LiteralPath (Join-Path $PackageRoot 'AppxManifest.xml')
 if ($manifest.Package.Identity.ProcessorArchitecture -ne 'x64') { throw 'Package must target x64.' }
+$unsignedMarker = 'OID.2.25.311729368913984317654407730594956997722=1'
+$identity = $manifest.SelectSingleNode("/*[local-name()='Package']/*[local-name()='Identity']")
+$publisher = if ($identity) { $identity.GetAttribute('Publisher') } else { '' }
+if ([string]::IsNullOrWhiteSpace($publisher)) { throw 'Package Publisher is required.' }
+if ($Unsigned) {
+    $markerCount = [regex]::Matches($publisher, [regex]::Escape($unsignedMarker)).Count
+    if ($markerCount -ne 1 -or !$publisher.EndsWith($unsignedMarker, [StringComparison]::Ordinal)) {
+        throw 'Unsigned package Publisher must end with exactly one unsigned namespace marker.'
+    }
+} elseif ($publisher.IndexOf($unsignedMarker, [StringComparison]::Ordinal) -ge 0) {
+    throw 'Signed package Publisher must not contain the unsigned namespace marker.'
+}
 $applications = @($manifest.Package.Applications.Application)
 if ($applications.Count -ne 1 -or $applications[0].Executable -ne 'UniShare.App.exe') { throw 'Package must have exactly one application executable.' }
 foreach ($declaration in $manifest.SelectNodes('//*[@Executable]')) {

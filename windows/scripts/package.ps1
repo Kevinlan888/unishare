@@ -25,13 +25,21 @@ if ($packages.Count -ne 1) { throw "Expected exactly one x64 MSIX, found $($pack
 $package = $packages[0].FullName
 $unpacked = Join-Path $packageDirectory 'inspection'
 Invoke-Checked $makeappx @('unpack','/p',$package,'/d',$unpacked,'/o')
+if ($Unsigned) {
+    Invoke-Checked 'powershell.exe' @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'set-unsigned-package-identity.ps1'),'-ManifestPath',(Join-Path $unpacked 'AppxManifest.xml'))
+}
 # Repack without /nv exercises MakeAppx manifest/schema and semantic validation.
-$validated = Join-Path $packageDirectory 'validated.appx'
+$validated = Join-Path $packageDirectory 'validated.msix'
 Invoke-Checked $makeappx @('pack','/d',$unpacked,'/p',$validated,'/o')
-Remove-Item -LiteralPath $validated
+if ($Unsigned) {
+    Move-Item -LiteralPath $validated -Destination $package -Force
+} else {
+    Remove-Item -LiteralPath $validated
+}
 $dump = Join-Path $packageDirectory 'resources.xml'
 Invoke-Checked $makepri @('dump','/if',(Join-Path $unpacked 'resources.pri'),'/of',$dump,'/dt','detailed','/o')
-$contentList = & (Join-Path $PSScriptRoot 'inspect-package.ps1') -PackageRoot $unpacked -NativeRoot $native -ResourceDump $dump -Unsigned
+$inspectionArguments = @{ PackageRoot=$unpacked; NativeRoot=$native; ResourceDump=$dump; Unsigned=[bool]$Unsigned }
+$contentList = & (Join-Path $PSScriptRoot 'inspect-package.ps1') @inspectionArguments
 $contentList | Set-Content -LiteralPath (Join-Path $packageDirectory 'contents.txt')
 if (!$?) { throw 'Package content inspection failed.' }
 if (!$Unsigned) {

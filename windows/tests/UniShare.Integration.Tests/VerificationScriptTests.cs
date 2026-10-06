@@ -70,6 +70,33 @@ public sealed class VerificationScriptTests
     }
 
     [TestMethod]
+    public void UnsignedPackageIdentityUsesTheRequiredUnsignedNamespaceMarker()
+    {
+        string temporary = Path.Combine(Path.GetTempPath(), "unishare-unsigned-manifest-" + Guid.NewGuid());
+        Directory.CreateDirectory(temporary);
+        string manifest = Path.Combine(temporary, "AppxManifest.xml");
+        try
+        {
+            File.WriteAllText(manifest, """
+                <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10">
+                  <Identity Name="UniShare" Publisher="CN=UniShare" Version="1.0.0.0" ProcessorArchitecture="x64"/>
+                </Package>
+                """);
+
+            var first = Run("set-unsigned-package-identity.ps1", "-ManifestPath", manifest);
+            Assert.AreEqual(0, first.Exit, first.Text);
+            var document = System.Xml.Linq.XDocument.Load(manifest);
+            string? publisher = document.Root?.Elements().Single(element => element.Name.LocalName == "Identity").Attribute("Publisher")?.Value;
+            Assert.AreEqual("CN=UniShare, OID.2.25.311729368913984317654407730594956997722=1", publisher);
+
+            var second = Run("set-unsigned-package-identity.ps1", "-ManifestPath", manifest);
+            Assert.AreEqual(0, second.Exit, second.Text);
+            Assert.AreEqual(1, File.ReadAllText(manifest).Split("OID.2.25.311729368913984317654407730594956997722=1").Length - 1);
+        }
+        finally { Directory.Delete(temporary, recursive: true); }
+    }
+
+    [TestMethod]
     public void PackageInspectionRejectsPrivateFilesAndChangedNativeDll()
     {
         string temporary = Path.Combine(Path.GetTempPath(), "unishare-package-policy-" + Guid.NewGuid());
@@ -90,7 +117,7 @@ public sealed class VerificationScriptTests
             File.WriteAllText(Path.Combine(package, "licenses", "OpenSSL-NOTICES.txt"), "notice fixture");
             File.WriteAllText(Path.Combine(package, "AppxManifest.xml"), """
                 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10">
-                <Identity ProcessorArchitecture="x64"/><Dependencies><TargetDeviceFamily MinVersion="10.0.17763.0"/></Dependencies>
+                <Identity Publisher="CN=UniShare" ProcessorArchitecture="x64"/><Dependencies><TargetDeviceFamily MinVersion="10.0.17763.0"/></Dependencies>
                 <Resources><Resource Language="en-US"/><Resource Language="zh-CN"/></Resources>
                 <Applications><Application Executable="UniShare.App.exe"><Extensions><desktop:Extension Category="windows.startupTask"><desktop:StartupTask Enabled="false"/></desktop:Extension><desktop:Extension Category="windows.toastNotificationActivation"/></Extensions></Application></Applications></Package>
                 """);
@@ -105,6 +132,9 @@ public sealed class VerificationScriptTests
             string[] arguments = ["-PackageRoot", package, "-NativeRoot", native, "-ResourceDump", dump];
             var valid = Run("inspect-package.ps1", arguments);
             Assert.AreEqual(0, valid.Exit, valid.Text);
+            var unsignedWithoutMarker = Run("inspect-package.ps1", arguments.Concat(["-Unsigned"]).ToArray());
+            Assert.AreNotEqual(0, unsignedWithoutMarker.Exit);
+            StringAssert.Contains(unsignedWithoutMarker.Text, "unsigned namespace marker");
             File.WriteAllText(dump, "<PriInfo><Qualifier name=\"Language\" value=\"en-US\"/><Qualifier name=\"Language\" value=\"zh-CN\"/></PriInfo>");
             var frameworkOnly = Run("inspect-package.ps1", arguments);
             Assert.AreNotEqual(0, frameworkOnly.Exit);
