@@ -7,6 +7,90 @@ namespace UniShare.Application.Tests.ViewModels;
 public sealed class DeviceSessionViewModelTests
 {
     [TestMethod]
+    public async Task TrustedDisconnectedDeviceReconnectsBeforeSendingText()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(connected: false); using var vm = f.Session(device);
+        vm.ComposerText = "reconnect";
+
+        await vm.SendTextCommand.ExecuteAsync(null);
+
+        CollectionAssert.AreEqual(new[] { "connect", "text:reconnect" }, f.Sdk.Calls);
+        Assert.AreEqual(1, vm.Activities.Count);
+    }
+
+    [TestMethod]
+    public async Task UntrustedDeviceCannotSendBeforePairing()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(trusted: false, connected: false); using var vm = f.Session(device);
+        vm.ComposerText = "not paired";
+
+        Assert.IsFalse(vm.SendTextCommand.CanExecute(null));
+        await vm.SendTextCommand.ExecuteAsync(null);
+
+        Assert.AreEqual(0, f.Sdk.Calls.Count);
+        Assert.AreEqual(0, vm.Activities.Count);
+    }
+
+    [TestMethod]
+    public async Task TrustedDisconnectedDeviceReconnectsBeforeReadingClipboard()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(connected: false); using var vm = f.Session(device);
+
+        await vm.SendClipboardCommand.ExecuteAsync(null);
+
+        CollectionAssert.AreEqual(new[] { "connect", "clipboard", "text:clipboard" }, f.Sdk.Calls);
+    }
+
+    [TestMethod]
+    public async Task TrustedDisconnectedDeviceReconnectsBeforeOpeningFile()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(connected: false); using var vm = f.Session(device);
+        var path = Path.GetTempFileName();
+        try
+        {
+            await vm.SendFileCommand.ExecuteAsync(path);
+            CollectionAssert.AreEqual(new[] { "connect", "File:" + path }, f.Sdk.Calls);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [TestMethod]
+    public async Task TrustedDisconnectedDeviceReconnectsBeforeRetry()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(); using var vm = f.Session(device); vm.ComposerText = "retry";
+        await vm.SendTextCommand.ExecuteAsync(null);
+        f.Sdk.Completions.Single().SetResult(new(null, new(ShareErrorKind.NetworkLost, "private")));
+        await f.Tracker.WaitForIdleAsync(default); vm.Refresh();
+        var failed = vm.Activities.Single().Id;
+        f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Disconnected,
+            new(ShareErrorKind.NetworkLost, "private")));
+        f.Sdk.Calls.Clear();
+
+        await vm.RetryCommand.ExecuteAsync(failed);
+
+        CollectionAssert.AreEqual(new[] { "connect", "text:retry" }, f.Sdk.Calls);
+    }
+
+    [TestMethod]
+    public async Task DisconnectWhileReconnectIsCompletingDoesNotSubmitTransfer()
+    {
+        using var f = new ViewModelFixture(); var device = f.Online(connected: false); using var vm = f.Session(device);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); f.Sdk.Wait = () => release.Task;
+        vm.ComposerText = "raced";
+        var sending = vm.SendTextCommand.ExecuteAsync(null);
+        CollectionAssert.AreEqual(new[] { "connect" }, f.Sdk.Calls);
+
+        f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Disconnected,
+            new(ShareErrorKind.NetworkLost, "private")));
+        release.SetResult();
+        await sending;
+
+        CollectionAssert.AreEqual(new[] { "connect" }, f.Sdk.Calls);
+        Assert.AreEqual(0, vm.Activities.Count);
+        Assert.AreEqual("raced", vm.ComposerText);
+    }
+
+    [TestMethod]
     [DataRow(false, false)]
     [DataRow(false, true)]
     [DataRow(true, false)]
@@ -107,7 +191,13 @@ public sealed class DeviceSessionViewModelTests
         read.SetResult(); await sending;
         Assert.AreEqual(1, f.Sdk.Calls.Count); Assert.AreEqual(0, f.Tracker.GetDeviceSnapshot(device.Id).Count);
         Assert.IsFalse(vm.SendClipboardCommand.CanExecute(null));
-        if (identityChanged) await vm.ForgetCommand.ExecuteAsync(null);
+        if (identityChanged)
+        {
+            await vm.ForgetCommand.ExecuteAsync(null);
+            f.Sdk.Trusted.Add(device.Id);
+            f.Sdk.Emit(new ShareSdkEvent.PairingCompleted(new(99), device.Id, null));
+            f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Connected, null));
+        }
         f.Sdk.Emit(new ShareSdkEvent.DeviceOnline(device.Snapshot!)); f.Sdk.Wait = null;
         await vm.SendClipboardCommand.ExecuteAsync(null); Assert.AreEqual("text:clipboard", f.Sdk.Calls.Last());
     }
@@ -189,6 +279,8 @@ public sealed class DeviceSessionViewModelTests
         f.Sdk.Emit(new ShareSdkEvent.OfferReceived(rejected)); var id = vm.Activities.Single(x => x.Record.TransferId == rejected.TransferId).Id;
         await vm.RejectCommand.ExecuteAsync(id); await vm.RejectCommand.ExecuteAsync(id);
         Assert.AreEqual(1, f.Sdk.Calls.Count(x => x == "reject:8"));
+        f.Sdk.Trusted.Add(device.Id);
+        f.Sdk.Emit(new ShareSdkEvent.PairingCompleted(new(10), device.Id, null));
         vm.ComposerText = "retry me"; await vm.SendTextCommand.ExecuteAsync(null);
         f.Sdk.Completions.Single().SetResult(new(null, new(ShareErrorKind.NetworkLost, "private")));
         await f.Tracker.WaitForIdleAsync(default); vm.Refresh();

@@ -142,8 +142,8 @@ class Connections final : public IConnectionManager,
             return;
         auto c = std::move(found->second);
         connections_.erase(found);
-        if(!c.paired)Report(c,DiagnosticStage::Connect,
-            error.code==ErrorCode::Cancelled?DiagnosticOutcome::Cancelled:DiagnosticOutcome::Failed,error);
+        const auto outcome=error.code==ErrorCode::Cancelled?DiagnosticOutcome::Cancelled:DiagnosticOutcome::Failed;
+        Report(c,c.paired?DiagnosticStage::Disconnect:DiagnosticStage::Connect,outcome,error);
         c.session->Close(error);
         transfers.detach(id, error);
         if (c.connect)

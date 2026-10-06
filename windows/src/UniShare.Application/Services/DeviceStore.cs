@@ -27,7 +27,7 @@ public sealed class DeviceEntry
     public bool IsTrusted => Data.Trusted;
     public bool IsBlocked => Data.Blocked;
     public bool IsConnected => Data.Connected;
-    public bool CanTransfer { get { var value = Data; return value.Online && !value.Blocked; } }
+    public bool CanTransfer { get { var value = Data; return value.Online && value.Trusted && !value.Blocked; } }
 }
 
 public sealed class DeviceStore : IDisposable

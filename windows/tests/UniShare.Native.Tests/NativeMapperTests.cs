@@ -22,6 +22,10 @@ public sealed class NativeMapperTests
         Assert.AreEqual(DiagnosticContentKind.File, known.ContentKind);
         Assert.AreEqual(ShareErrorKind.StorageFailed, known.Category);
         Assert.AreEqual(-5L, known.PlatformCode);
+        var disconnected = NativeMapper.Diagnostic(new NativeDiagnosticEvent
+        { Stage = 19, Outcome = 3, Direction = 1, Sequence = 7,
+          Error = new NativeError { Code = 3 } });
+        Assert.AreEqual(NativeDiagnosticStage.Disconnect, disconnected.Stage);
         var unknown = NativeMapper.Diagnostic(new NativeDiagnosticEvent
         { Stage = uint.MaxValue, Outcome = uint.MaxValue, Direction = uint.MaxValue,
           ContentType = uint.MaxValue, Error = new NativeError { Code = uint.MaxValue } });

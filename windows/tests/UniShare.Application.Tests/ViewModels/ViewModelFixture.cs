@@ -22,11 +22,12 @@ internal sealed class ViewModelFixture : IDisposable
         Tracker = new(Repository, Clock); Devices = new(Sdk);
         Coordinator = new(Sdk, Tracker, Files, () => Settings.Value);
     }
-    public DeviceEntry Online(bool trusted = true)
+    public DeviceEntry Online(bool trusted = true, bool connected = true)
     {
         var snapshot = new DeviceSnapshot(new(Guid.NewGuid()), "Laptop", DevicePlatform.Windows, 1, 0, [], 42, trusted, Clock.UtcNow);
         Sdk.Devices.Add(snapshot); if (trusted) Sdk.Trusted.Add(snapshot.Id);
         Sdk.Emit(new ShareSdkEvent.DeviceOnline(snapshot));
+        if (connected) Sdk.Emit(new ShareSdkEvent.ConnectionChanged(snapshot.Id, ConnectionState.Connected, null));
         return Devices.Devices.Single(value => value.Id == snapshot.Id);
     }
     public DeviceSessionViewModel Session(DeviceEntry device) => new(device, Devices, Coordinator, Tracker, Sdk, Ui, Dispatcher);

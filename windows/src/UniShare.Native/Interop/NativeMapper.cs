@@ -63,7 +63,7 @@ internal static class NativeMapper
 
     internal static ShareFailure? Failure(NativeError error) => MapError(error.Code, error.HasPlatformError != 0, error.PlatformError);
     internal static DiagnosticRecord Diagnostic(NativeDiagnosticEvent value) => new(
-        value.Stage is >= 1 and <= 18 ? (NativeDiagnosticStage)value.Stage : NativeDiagnosticStage.Unknown,
+        value.Stage is >= 1 and <= 19 ? (NativeDiagnosticStage)value.Stage : NativeDiagnosticStage.Unknown,
         value.Outcome is >= 1 and <= 4 ? (NativeDiagnosticOutcome)value.Outcome : NativeDiagnosticOutcome.Unknown,
         value.Direction <= 2 ? (DiagnosticDirection)value.Direction : DiagnosticDirection.Unknown,
         value.ContentType <= 3 ? (DiagnosticContentKind)value.ContentType : DiagnosticContentKind.Unknown,

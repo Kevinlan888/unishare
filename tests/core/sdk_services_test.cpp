@@ -474,6 +474,14 @@ void DiagnosticConnectionAndTransfers() {
                e.content_kind == DiagnosticContentKind::File && e.error &&
                e.error->code == ErrorCode::TransferRejected;
     }));
+    b.incoming_socket->Close();
+    Settle(a, b);
+    constexpr auto disconnected = static_cast<DiagnosticStage>(19);
+    CHECK(std::any_of(sending.begin(), sending.end(), [&](const auto &e) {
+        return e.stage == disconnected && e.outcome == DiagnosticOutcome::Failed &&
+               e.direction == DiagnosticDirection::Send && e.sequence == connect->sequence && e.error &&
+               e.error->code == ErrorCode::NetworkLost;
+    }));
 }
 void DiagnosticPairingRejected() {
     Peer a, b;

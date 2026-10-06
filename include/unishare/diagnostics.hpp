@@ -9,7 +9,7 @@ enum class DiagnosticStage : std::uint32_t {
     NetworkChange = 5, Stop = 6, Connect = 7, SocketConnect = 8,
     TlsHandshake = 9, IdentityVerify = 10, Pairing = 11, Offer = 12,
     Accept = 13, TransferStream = 14, IntegrityVerify = 15,
-    PeerComplete = 16, Cancel = 17, Transfer = 18
+    PeerComplete = 16, Cancel = 17, Transfer = 18, Disconnect = 19
 };
 enum class DiagnosticOutcome : std::uint32_t {
     Began = 1, Succeeded = 2, Failed = 3, Cancelled = 4

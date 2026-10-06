@@ -7,7 +7,7 @@ public enum NativeDiagnosticStage
 {
     Unknown, Permission, Listen, Publish, Browse, NetworkChange, Stop, Connect,
     SocketConnect, TlsHandshake, IdentityVerify, Pairing, Offer, Accept,
-    TransferStream, IntegrityVerify, PeerComplete, Cancel, Transfer, DiagnosticQueue
+    TransferStream, IntegrityVerify, PeerComplete, Cancel, Transfer, Disconnect, DiagnosticQueue
 }
 public enum NativeDiagnosticOutcome { Unknown, Began, Succeeded, Failed, Cancelled }
 public enum DiagnosticDirection { None, Send, Receive, Unknown }

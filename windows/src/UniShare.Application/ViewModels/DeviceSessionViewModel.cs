@@ -16,6 +16,8 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     private readonly HashSet<ActivityId> cancellationSubmitted = [];
     private readonly object eligibilityGate = new();
     private EligibilityGeneration sendEligibility = new();
+    private volatile bool connectionAvailable;
+    private long connectionGeneration;
     private IReadOnlyList<ActivityItemViewModel> activities = [];
     private string composerText = string.Empty;
     private volatile bool disposed;
@@ -24,11 +26,13 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         ActivityTracker tracker, IShareSdkClient sdk, IViewModelFiles files, IViewModelDispatcher dispatcher) : base(dispatcher)
     {
         Device = device; this.devices = devices; this.coordinator = coordinator; this.tracker = tracker; this.sdk = sdk; this.files = files;
+        connectionAvailable = device.IsConnected;
         var cancellationLane = CreateCommandLane();
         SendTextCommand = Command(async () =>
         {
             var submitted = ComposerText;
             var eligibility = CaptureEligibilityToken();
+            await EnsureConnectedAsync(eligibility).ConfigureAwait(false);
             await coordinator.SendTextAsync(Device.Id, submitted, ShareOrigin.Direct, eligibility).ConfigureAwait(false);
             await Dispatcher.InvokeAsync(() => { if (ComposerText == submitted) ComposerText = string.Empty; }).ConfigureAwait(false);
         }, () => CanSend && !string.IsNullOrWhiteSpace(ComposerText), "Transfer.SubmissionFailed");
@@ -37,6 +41,7 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         SendClipboardCommand = Command(async () =>
         {
             var eligibility = CaptureEligibilityToken();
+            await EnsureConnectedAsync(eligibility).ConfigureAwait(false);
             await coordinator.SendClipboardAsync(Device.Id, eligibility).ConfigureAwait(false);
         }, () => CanSend, "Transfer.SubmissionFailed");
         AcceptCommand = Command<ActivityId>(id => coordinator.AcceptAsync(id, CancellationToken.None), id => CanDecide(id), "Transfer.AcceptFailed");
@@ -54,6 +59,7 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         RetryCommand = Command<ActivityId>(async id =>
         {
             var eligibility = CaptureEligibilityToken();
+            await EnsureConnectedAsync(eligibility).ConfigureAwait(false);
             await coordinator.RetryAsync(id, eligibility).ConfigureAwait(false);
         }, id => CanSend && Find(id) is not null && tracker.CanRetry(id), "Transfer.RetryFailed");
         ForgetCommand = Command(async () =>
@@ -96,8 +102,12 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     public IAsyncRelayCommand LoadHistoryCommand { get; }
 
     public Task DropFilesAsync(IReadOnlyList<string> paths) => paths.Count == 1 ? SendFileCommand.ExecuteAsync(paths[0]) : Task.CompletedTask;
-    private async Task SendFileAsync(string path, ContentKind kind) =>
-        _ = await coordinator.SendFileAsync(Device.Id, path, kind, ShareOrigin.Direct, CaptureEligibilityToken()).ConfigureAwait(false);
+    private async Task SendFileAsync(string path, ContentKind kind)
+    {
+        var eligibility = CaptureEligibilityToken();
+        await EnsureConnectedAsync(eligibility).ConfigureAwait(false);
+        _ = await coordinator.SendFileAsync(Device.Id, path, kind, ShareOrigin.Direct, eligibility).ConfigureAwait(false);
+    }
     private ActivityRecord? Find(ActivityId id) => tracker.GetDeviceSnapshot(Device.Id).FirstOrDefault(value => value.Id == id);
     private bool CanDecide(ActivityId id) => !IdentityChanged && !cancellationSubmitted.Contains(id) && Find(id) is { Direction: ShareDirection.Incoming, Status: ActivityStatus.AwaitingDecision };
 
@@ -133,13 +143,22 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     private void OnSdkEvent(object? sender, ShareSdkEvent value)
     {
         if (disposed) return;
+        if (value is ShareSdkEvent.ConnectionChanged connectionState && connectionState.Device == Device.Id)
+        {
+            connectionAvailable = connectionState.State == ConnectionState.Connected;
+            if (!connectionAvailable) Interlocked.Increment(ref connectionGeneration);
+        }
         // This is non-binding state: revoke synchronously on the SDK thread.
         // Clipboard/staging continuations do not wait for UI notifications.
         if (value is ShareSdkEvent.DeviceOffline offline && offline.Device == Device.Id ||
             value is ShareSdkEvent.IdentityChanged changed && changed.Device == Device.Id ||
             value is ShareSdkEvent.ConnectionChanged { Failure.Kind: ShareErrorKind.IdentityChanged } connection && connection.Device == Device.Id ||
             value is ShareSdkEvent.PairingCompleted { Failure.Kind: ShareErrorKind.IdentityChanged } pairing && pairing.Device == Device.Id)
+        {
+            connectionAvailable = false;
+            if (value is not ShareSdkEvent.ConnectionChanged) Interlocked.Increment(ref connectionGeneration);
             RevokeSendEligibility();
+        }
         if (value is ShareSdkEvent.DeviceOnline or ShareSdkEvent.DeviceUpdated or ShareSdkEvent.DeviceOffline or
             ShareSdkEvent.ConnectionChanged or ShareSdkEvent.IdentityChanged or ShareSdkEvent.PairingCompleted)
             Dispatcher.Post(Refresh);
@@ -148,6 +167,17 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     private CancellationToken CaptureEligibilityToken()
     {
         lock (eligibilityGate) return sendEligibility.Source.Token;
+    }
+
+    private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
+    {
+        if (connectionAvailable || Device.IsConnected) return;
+        var generation = Volatile.Read(ref connectionGeneration);
+        await sdk.ConnectAsync(Device.Id, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Volatile.Read(ref connectionGeneration) != generation)
+            throw new IOException("Connection was lost before sharing started.");
+        connectionAvailable = true;
     }
 
     private void RevokeSendEligibility()
