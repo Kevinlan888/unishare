@@ -10,6 +10,61 @@ namespace UniShare.Application.Tests;
 [TestClass]
 public sealed class TransferCoordinatorTests
 {
+    [TestMethod]
+    public async Task TransferBoundariesUseLocalSequenceAndNeverCarrySensitiveValues()
+    {
+        var entries = new List<TransferDiagnosticRecord>();
+        var sdk = new Sdk(); var tracker = Tracker(); var files = new Files();
+        var coordinator = new TransferCoordinator(sdk, tracker, files,
+            () => new AppSettings { ReceiveDirectory = "private-directory" }, entries.Add);
+        await Assert.ThrowsAsync<IOException>(async () => await coordinator.SendFileAsync(Device,
+            "C:\\private\\missing-secret.txt", ContentKind.File, ShareOrigin.Direct, default));
+        Assert.IsTrue(entries.Any(value => value is { Stage: TransferDiagnosticStage.SourceOpen,
+            Outcome: NativeDiagnosticOutcome.Failed, Category: ShareErrorKind.StorageFailed }));
+        entries.Clear();
+        var id = await coordinator.SendTextAsync(Device, "private body", ShareOrigin.Direct, default);
+        sdk.Finish(new(null, null));
+        await WaitUntil(() => entries.Any(value => value is { Stage: TransferDiagnosticStage.Completion,
+            Outcome: NativeDiagnosticOutcome.Succeeded }));
+        Assert.IsTrue(entries.Any(value => value is { Stage: TransferDiagnosticStage.CommandSubmit,
+            Outcome: NativeDiagnosticOutcome.Succeeded }));
+        Assert.AreEqual(1, entries.Select(value => value.Sequence).Distinct().Count());
+        Assert.IsFalse(string.Join(" ", entries).Contains("private", StringComparison.OrdinalIgnoreCase));
+        entries.Clear();
+        files.CanPrepareReceive = _ => false;
+        sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File)));
+        await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 2);
+        await Assert.ThrowsAsync<IOException>(async () => await coordinator.AcceptAsync(
+            tracker.GetDeviceSnapshot(Device).Single(value => value.Id != id).Id, default));
+        Assert.IsTrue(entries.Any(value => value is { Stage: TransferDiagnosticStage.DestinationPrepare,
+            Outcome: NativeDiagnosticOutcome.Failed, Category: ShareErrorKind.StorageFailed }));
+        Assert.IsFalse(string.Join(" ", entries).Contains("private-directory", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public async Task FailedSubmitAndAcceptHaveTerminalBoundaryEvents()
+    {
+        var entries = new List<TransferDiagnosticRecord>();
+        var sdk = new Sdk { ThrowSend = true }; var tracker = Tracker();
+        var coordinator = new TransferCoordinator(sdk, tracker, new Files(), () => new AppSettings(), entries.Add);
+        await Assert.ThrowsAsync<IOException>(async () => await coordinator.SendTextAsync(Device, "secret body", ShareOrigin.Direct, default));
+        Assert.IsTrue(entries.Any(value => value is { Stage: TransferDiagnosticStage.CommandSubmit,
+            Outcome: NativeDiagnosticOutcome.Failed }));
+        entries.Clear(); sdk.ThrowSend = false;
+        var id = await coordinator.SendTextAsync(Device, "secret body", ShareOrigin.Direct, default);
+        sdk.Finish(new(null, new(ShareErrorKind.NetworkLost, "secret message")));
+        await WaitUntil(() => entries.Any(value => value is { Stage: TransferDiagnosticStage.Completion,
+            Outcome: NativeDiagnosticOutcome.Failed, Category: ShareErrorKind.NetworkLost }));
+        entries.Clear();
+        sdk.Emit(new ShareSdkEvent.OfferReceived(Offer(ContentKind.File)));
+        await WaitUntil(() => tracker.GetDeviceSnapshot(Device).Count == 2);
+        await coordinator.AcceptAsync(tracker.GetDeviceSnapshot(Device).Single(value => value.Id != id).Id, default);
+        Assert.IsTrue(entries.Any(value => value is { Stage: TransferDiagnosticStage.AcceptSubmit,
+            Outcome: NativeDiagnosticOutcome.Succeeded }));
+        Assert.IsTrue(entries.Any(value => value is { Stage: TransferDiagnosticStage.Completion,
+            Outcome: NativeDiagnosticOutcome.Succeeded }));
+        Assert.IsFalse(string.Join(" ", entries).Contains("secret", StringComparison.Ordinal));
+    }
     private static readonly DeviceId Device = new(Guid.NewGuid());
     private static TransferCoordinator Coordinator(Sdk sdk, ActivityTracker tracker, Files files)
     {

@@ -12,6 +12,8 @@ public sealed class TransferCoordinator
     private readonly ActivityTracker tracker;
     private readonly ITransferFiles files;
     private readonly Func<AppSettings> settings;
+    private readonly Action<TransferDiagnosticRecord>? diagnostic;
+    private long nextDiagnosticSequence;
     private readonly object gate = new();
     private readonly CancellationTokenSource retirement = new();
     private bool retiring;
@@ -24,12 +26,14 @@ public sealed class TransferCoordinator
     private readonly HashSet<TransferId> incomingTransfers = [];
     private readonly HashSet<(RequestId Request, TransferId Transfer)> blockedOffers = [];
 
-    public TransferCoordinator(IShareSdkClient sdk, ActivityTracker tracker, ITransferFiles files, Func<AppSettings> settings)
+    public TransferCoordinator(IShareSdkClient sdk, ActivityTracker tracker, ITransferFiles files, Func<AppSettings> settings,
+        Action<TransferDiagnosticRecord>? diagnostic = null)
     {
         this.sdk = sdk ?? throw new ArgumentNullException(nameof(sdk));
         this.tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
         this.files = files ?? throw new ArgumentNullException(nameof(files));
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        this.diagnostic = diagnostic;
         sdk.EventReceived += OnEvent;
     }
 
@@ -45,6 +49,8 @@ public sealed class TransferCoordinator
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (kind is not (ContentKind.File or ContentKind.Image)) throw new ArgumentException("Select a file or image.", nameof(kind));
+        var sequence = NextDiagnosticSequence();
+        Report(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Began, DiagnosticDirection.Send, kind, sequence);
         ShareSource source;
         try
         {
@@ -52,8 +58,13 @@ public sealed class TransferCoordinator
             if (!file.Exists) throw new IOException();
             source = new(file.FullName, file.Name, kind == ContentKind.Image ? ImageMime(file.Extension) : "application/octet-stream", checked((ulong)file.Length));
         }
-        catch (Exception error) when (IsSourceError(error)) { throw new IOException("Unable to open selected content."); }
-        return StartOutgoingAsync(new(device, kind, origin, source.DisplayName, source.MimeType, source.ByteCount, null, source), null, cancellationToken);
+        catch (Exception error) when (IsSourceError(error))
+        {
+            Report(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Failed, DiagnosticDirection.Send, kind, sequence, ShareErrorKind.StorageFailed);
+            throw new IOException("Unable to open selected content.");
+        }
+        Report(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Succeeded, DiagnosticDirection.Send, kind, sequence);
+        return StartOutgoingAsync(new(device, kind, origin, source.DisplayName, source.MimeType, source.ByteCount, null, source), null, cancellationToken, sequence);
     }
 
     public async Task<ActivityId> SendClipboardAsync(DeviceId device, CancellationToken cancellationToken)
@@ -227,8 +238,9 @@ public sealed class TransferCoordinator
         return StartOutgoingAsync(previous.Spec, activity, cancellationToken);
     }
 
-    private async Task<ActivityId> StartOutgoingAsync(SourceSpec spec, ActivityId? retryOf, CancellationToken cancellationToken)
+    private async Task<ActivityId> StartOutgoingAsync(SourceSpec spec, ActivityId? retryOf, CancellationToken cancellationToken, ulong sequence = 0)
     {
+        if (sequence == 0) sequence = NextDiagnosticSequence();
         using var owner = Own();
         var callerCancellation = cancellationToken;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retirement.Token);
@@ -243,6 +255,7 @@ public sealed class TransferCoordinator
             callerCancellation.ThrowIfCancellationRequested();
             cancellationToken.ThrowIfCancellationRequested();
             PendingSend pending;
+            Report(TransferDiagnosticStage.CommandSubmit, NativeDiagnosticOutcome.Began, DiagnosticDirection.Send, spec.Kind, sequence);
             try
             {
                 lock (gate)
@@ -253,8 +266,17 @@ public sealed class TransferCoordinator
                         : sdk.BeginSendFile(spec.Device, spec.Kind, stage?.Source ?? spec.Source!);
                 }
             }
-            catch { throw new IOException("Unable to submit content transfer."); }
-            if (pending.OperationId.Value == 0) throw new IOException("Content transfer was not accepted.");
+            catch
+            {
+                Report(TransferDiagnosticStage.CommandSubmit, NativeDiagnosticOutcome.Failed, DiagnosticDirection.Send, spec.Kind, sequence, ShareErrorKind.StorageFailed);
+                throw new IOException("Unable to submit content transfer.");
+            }
+            if (pending.OperationId.Value == 0)
+            {
+                Report(TransferDiagnosticStage.CommandSubmit, NativeDiagnosticOutcome.Failed, DiagnosticDirection.Send, spec.Kind, sequence, ShareErrorKind.InvalidInput);
+                throw new IOException("Content transfer was not accepted.");
+            }
+            Report(TransferDiagnosticStage.CommandSubmit, NativeDiagnosticOutcome.Succeeded, DiagnosticDirection.Send, spec.Kind, sequence);
             ActivityRecord record;
             try
             {
@@ -267,7 +289,7 @@ public sealed class TransferCoordinator
                 stage = null;
                 throw;
             }
-            var work = new Outgoing(spec, stage);
+            var work = new Outgoing(spec, stage, sequence);
             lock (gate) outgoing.Add(record.Id, work);
             stage = null;
             work.Cancellation = callerCancellation.Register(() => _ = RequestCancellationAsync(record.Id));
@@ -287,6 +309,8 @@ public sealed class TransferCoordinator
         try { if (work.Stage is not null) await work.Stage.DisposeAsync().ConfigureAwait(false); }
         catch { terminal = Failed(terminal.TransferId); }
         tracker.Complete(id, terminal);
+        Report(TransferDiagnosticStage.Completion, terminal.Failure is null ? NativeDiagnosticOutcome.Succeeded : NativeDiagnosticOutcome.Failed,
+            DiagnosticDirection.Send, work.Spec.Kind, work.Sequence, terminal.Failure?.Kind, terminal.Failure?.PlatformError);
     }
     private static async Task RetireUntrackedAsync(Task<TransferTerminal> completion, TransientSource? stage, IDisposable owner)
     {
@@ -302,6 +326,7 @@ public sealed class TransferCoordinator
         string? finalPath = null;
         ShareContent? preview = null;
         var preparingDestination = false;
+        var submittingAcceptance = false;
         var preparationFailed = false;
         var submitCancellation = false;
         using var cancellation = cancellationToken.Register(() => _ = RequestCancellationAsync(work.Id));
@@ -313,12 +338,19 @@ public sealed class TransferCoordinator
             if (work.Offer.Kind == ContentKind.Image && (!work.Offer.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
                 work.Offer.ByteCount is 0 or > 100UL * 1024 * 1024)) throw new IOException("Invalid incoming image metadata.");
             preparingDestination = true;
+            Report(TransferDiagnosticStage.DestinationPrepare, NativeDiagnosticOutcome.Began,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence);
             if (work.Offer.Kind == ContentKind.Text) text = await files.CreateTextDestinationAsync(contentCancellation).ConfigureAwait(false);
             else receive = await files.CreateReceiveAsync(work.Offer, settings().ReceiveDirectory ?? string.Empty, contentCancellation).ConfigureAwait(false);
             preparingDestination = false;
+            Report(TransferDiagnosticStage.DestinationPrepare, NativeDiagnosticOutcome.Succeeded,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence);
             contentCancellation.ThrowIfCancellationRequested();
             tracker.ApplyProgress(new(work.Offer.TransferId, 0, work.Offer.ByteCount));
             Task accepted;
+            submittingAcceptance = true;
+            Report(TransferDiagnosticStage.AcceptSubmit, NativeDiagnosticOutcome.Began,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence);
             lock (gate)
             {
                 // A reentrant cancel during progress must retire the prepared
@@ -330,6 +362,9 @@ public sealed class TransferCoordinator
                 accepted = sdk.AcceptAsync(work.Offer.RequestId, text?.Path ?? receive!.StagingPath, CancellationToken.None);
             }
             await accepted.ConfigureAwait(false);
+            submittingAcceptance = false;
+            Report(TransferDiagnosticStage.AcceptSubmit, NativeDiagnosticOutcome.Succeeded,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence);
             lock (gate) if (work.Cancelled || work.PendingTerminal is not null || IsTerminal(Record(work).Status)) throw new OperationCanceledException();
             if (text is not null)
             {
@@ -348,9 +383,18 @@ public sealed class TransferCoordinator
                 work.PublishedPath = finalPath;
             }
         }
-        catch (OperationCanceledException) { terminal = Cancelled(work.Offer.TransferId); }
+        catch (OperationCanceledException)
+        {
+            if (submittingAcceptance) Report(TransferDiagnosticStage.AcceptSubmit, NativeDiagnosticOutcome.Cancelled,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence);
+            terminal = Cancelled(work.Offer.TransferId);
+        }
         catch
         {
+            if (preparingDestination) Report(TransferDiagnosticStage.DestinationPrepare, NativeDiagnosticOutcome.Failed,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence, ShareErrorKind.StorageFailed);
+            else if (submittingAcceptance) Report(TransferDiagnosticStage.AcceptSubmit, NativeDiagnosticOutcome.Failed,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence, ShareErrorKind.StorageFailed);
             if (preparingDestination && work.Offer.Kind is ContentKind.Image or ContentKind.File) preparationFailed = true;
             else terminal = Failed(work.Offer.TransferId);
         }
@@ -405,6 +449,8 @@ public sealed class TransferCoordinator
             finally { tracker.Complete(work.Id, new(work.Offer.TransferId, null), finalPath); }
             lock (gate) work.Phase = ReceivePhase.Terminal;
             try { await receive!.DisposeAsync().ConfigureAwait(false); } catch { }
+            Report(TransferDiagnosticStage.Completion, NativeDiagnosticOutcome.Succeeded,
+                DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence);
             return true;
         }
         if (terminal.Failure is null && preview is not null)
@@ -413,6 +459,9 @@ public sealed class TransferCoordinator
         }
         tracker.Complete(work.Id, terminal, finalPath);
         lock (gate) work.Phase = ReceivePhase.Terminal;
+        Report(TransferDiagnosticStage.Completion, terminal.Failure is null ? NativeDiagnosticOutcome.Succeeded :
+            terminal.Failure.Kind == ShareErrorKind.Cancelled ? NativeDiagnosticOutcome.Cancelled : NativeDiagnosticOutcome.Failed,
+            DiagnosticDirection.Receive, work.Offer.Kind, work.Sequence, terminal.Failure?.Kind, terminal.Failure?.PlatformError);
         return true;
     }
 
@@ -487,7 +536,7 @@ public sealed class TransferCoordinator
             lock (gate)
             {
                 if (incoming.ContainsKey(record.Id) || IsTerminal(record.Status)) return;
-                incoming.Add(record.Id, new(record.Id, offer));
+                incoming.Add(record.Id, new(record.Id, offer, NextDiagnosticSequence()));
                 if (retiring) return;
             }
             bool autoAccept;
@@ -589,19 +638,33 @@ public sealed class TransferCoordinator
     private ActivityRecord FindSendRecord(ActivityId id, DeviceId device) => tracker.GetDeviceSnapshot(device).Single(value => value.Id == id);
     private static bool IsTerminal(ActivityStatus status) => status is ActivityStatus.Completed or ActivityStatus.Failed or ActivityStatus.Cancelled or ActivityStatus.Rejected;
     private static bool IsSourceError(Exception error) => error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
+    private ulong NextDiagnosticSequence() => (ulong)Interlocked.Increment(ref nextDiagnosticSequence);
+    private void Report(TransferDiagnosticStage stage, NativeDiagnosticOutcome outcome, DiagnosticDirection direction,
+        ContentKind content, ulong sequence, ShareErrorKind? category = null, long? platformCode = null)
+    {
+        if (diagnostic is null) return;
+        try { diagnostic(new(stage, outcome, direction, content switch
+            {
+                ContentKind.Text => DiagnosticContentKind.Text, ContentKind.Image => DiagnosticContentKind.Image,
+                ContentKind.File => DiagnosticContentKind.File, _ => DiagnosticContentKind.Unknown
+            }, sequence, category, platformCode)); }
+        catch { /* Diagnostic delivery must not affect transfer state. */ }
+    }
     private static TransferTerminal Failed(TransferId? transfer) => new(transfer, new(ShareErrorKind.StorageFailed, "Content transfer failed."));
     private static TransferTerminal Cancelled(TransferId? transfer) => new(transfer, new(ShareErrorKind.Cancelled, "Content transfer cancelled."));
     private static string ImageMime(string extension) => extension.ToLowerInvariant() switch
     { ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".webp" => "image/webp", ".bmp" => "image/bmp", _ => "application/octet-stream" };
     private sealed record SourceSpec(DeviceId Device, ContentKind Kind, ShareOrigin Origin, string Name, string Mime, ulong Bytes, ShareContent? Preview, ShareSource? Source);
-    private sealed class Outgoing(SourceSpec spec, TransientSource? stage)
+    private sealed class Outgoing(SourceSpec spec, TransientSource? stage, ulong sequence)
     {
         public SourceSpec Spec { get; } = spec; public TransientSource? Stage { get; } = stage;
+        public ulong Sequence { get; } = sequence;
         public CancellationTokenRegistration Cancellation { get; set; } public bool Cancelled { get; set; }
     }
-    private sealed class Incoming(ActivityId id, IncomingOffer offer)
+    private sealed class Incoming(ActivityId id, IncomingOffer offer, ulong sequence)
     {
         public ActivityId Id { get; } = id; public IncomingOffer Offer { get; } = offer;
+        public ulong Sequence { get; } = sequence;
         public Task? Acceptance { get; set; } public bool Cancelled { get; set; } public bool Rejecting { get; set; }
         public ReceivePhase Phase { get; set; }
         public TransferTerminal? PendingTerminal { get; set; }

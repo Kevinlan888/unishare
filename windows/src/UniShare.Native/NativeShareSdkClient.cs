@@ -26,13 +26,15 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private readonly string identityDirectory;
     private readonly Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic;
     private readonly Action<DiagnosticRecord>? nativeDiagnostic;
+    private readonly Action<TransferDiagnosticRecord>? transferDiagnostic;
+    private long nextTransferDiagnosticSequence;
     private readonly object submissionGate = new();
     private readonly SemaphoreSlim lifecycle = new(1, 1);
     private readonly NativeOperationRegistry operations = new();
     private readonly OutgoingTransferRegistry outgoing = new();
     private readonly Channel<Action> callbacks = Channel.CreateUnbounded<Action>(new() { SingleReader = true });
     private readonly Channel<(long Generation, ShareSdkEvent Event)> events = Channel.CreateUnbounded<(long, ShareSdkEvent)>(new() { SingleReader = true });
-    private readonly Channel<DiagnosticRecord> diagnosticEvents;
+    private readonly Channel<(DiagnosticRecord? Native, TransferDiagnosticRecord? Transfer)> diagnosticEvents;
     private readonly List<GCHandle> eventRoots = [];
     private GCHandle callbackRoot;
     private ApiHandle? sdk;
@@ -43,21 +45,24 @@ public sealed class NativeShareSdkClient : IShareSdkClient
 
     public NativeShareSdkClient(string? identityDirectory = null,
         Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic = null,
-        Action<DiagnosticRecord>? nativeDiagnostic = null)
-        : this(new UniShareNativeApi(), identityDirectory, diagnostic, nativeDiagnostic) { }
+        Action<DiagnosticRecord>? nativeDiagnostic = null,
+        Action<TransferDiagnosticRecord>? transferDiagnostic = null)
+        : this(new UniShareNativeApi(), identityDirectory, diagnostic, nativeDiagnostic, transferDiagnostic) { }
 
     internal NativeShareSdkClient(IUniShareNativeApi api, string? identityDirectory) : this(api, identityDirectory, null) { }
 
     internal NativeShareSdkClient(IUniShareNativeApi api, string? identityDirectory,
         Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic,
-        Action<DiagnosticRecord>? nativeDiagnostic = null, int diagnosticQueueCapacity = 1024)
+        Action<DiagnosticRecord>? nativeDiagnostic = null,
+        Action<TransferDiagnosticRecord>? transferDiagnostic = null, int diagnosticQueueCapacity = 1024)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(diagnosticQueueCapacity);
         this.api = api;
         this.identityDirectory = identityDirectory ?? string.Empty;
         this.diagnostic = diagnostic;
         this.nativeDiagnostic = nativeDiagnostic;
-        diagnosticEvents = Channel.CreateBounded<DiagnosticRecord>(new BoundedChannelOptions(diagnosticQueueCapacity)
+        this.transferDiagnostic = transferDiagnostic;
+        diagnosticEvents = Channel.CreateBounded<(DiagnosticRecord?, TransferDiagnosticRecord?)>(new BoundedChannelOptions(diagnosticQueueCapacity)
         { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait });
         _ = Task.Run(DrainCallbacksAsync);
         _ = Task.Run(DrainEventsAsync);
@@ -287,38 +292,92 @@ public sealed class NativeShareSdkClient : IShareSdkClient
 
     public PendingSend BeginSendFile(DeviceId device, ContentKind kind, ShareSource source)
     {
-        lock (submissionGate)
+        var sequence = NextTransferDiagnosticSequence();
+        var sourceOpened = false;
+        ReportTransfer(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Began,
+            DiagnosticDirection.Send, kind, sequence);
+        try
         {
-            RequireState(ClientState.Running);
-            var command = kind switch
+            lock (submissionGate)
             {
-                ContentKind.Text => NativeCommand.SendTextStream,
-                ContentKind.Image => NativeCommand.SendImage,
-                ContentKind.File => NativeCommand.SendFile,
-                _ => throw new ArgumentOutOfRangeException(nameof(kind))
-            };
-            using var file = OpenSource(source.Path);
-            using var stream = Register(file, destination: false);
-            using var name = new NativeUtf8(source.DisplayName);
-            using var mime = new NativeUtf8(source.MimeType);
-            var value = new NativeSource { Stream = stream.Token, DisplayName = name.Span, MimeType = mime.Span, ByteCount = source.ByteCount };
-            var submitted = Submit(new(command, NativeMapper.ToNativeUuid(device.Value), Source: value), outgoingSend: true);
-            return new(submitted.Operation, TerminalAsync(submitted.Completion));
+                RequireState(ClientState.Running);
+                var command = kind switch
+                {
+                    ContentKind.Text => NativeCommand.SendTextStream,
+                    ContentKind.Image => NativeCommand.SendImage,
+                    ContentKind.File => NativeCommand.SendFile,
+                    _ => throw new ArgumentOutOfRangeException(nameof(kind))
+                };
+                using var file = OpenSource(source.Path);
+                using var stream = Register(file, destination: false);
+                sourceOpened = true;
+                ReportTransfer(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Succeeded,
+                    DiagnosticDirection.Send, kind, sequence);
+                using var name = new NativeUtf8(source.DisplayName);
+                using var mime = new NativeUtf8(source.MimeType);
+                var value = new NativeSource { Stream = stream.Token, DisplayName = name.Span, MimeType = mime.Span, ByteCount = source.ByteCount };
+                var submitted = Submit(new(command, NativeMapper.ToNativeUuid(device.Value), Source: value), outgoingSend: true);
+                return new(submitted.Operation, TerminalAsync(submitted.Completion));
+            }
+        }
+        catch (Exception error)
+        {
+            if (!sourceOpened) ReportTransfer(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Failed,
+                DiagnosticDirection.Send, kind, sequence, (error as NativeShareSdkException)?.Failure.Kind ?? ShareErrorKind.StorageFailed,
+                (error as NativeShareSdkException)?.Failure.PlatformError);
+            throw;
         }
     }
 
     public Task AcceptAsync(RequestId request, string stagingPath, CancellationToken cancellationToken)
     {
-        Task<NativeCompletion> completion;
-        lock (submissionGate)
+        var sequence = NextTransferDiagnosticSequence();
+        var destinationOpened = false;
+        ReportTransfer(TransferDiagnosticStage.DestinationPrepare, NativeDiagnosticOutcome.Began,
+            DiagnosticDirection.Receive, (ContentKind)0, sequence);
+        try
         {
-            RequireState(ClientState.Running);
-            cancellationToken.ThrowIfCancellationRequested();
-            using var file = WindowsNativeFile.OpenDestination(stagingPath);
-            using var stream = Register(file, destination: true);
-            completion = Submit(new(NativeCommand.Accept, Request: request.Value, Stream: stream.Token)).Completion;
+            Task<NativeCompletion> completion;
+            lock (submissionGate)
+            {
+                RequireState(ClientState.Running);
+                cancellationToken.ThrowIfCancellationRequested();
+                using var file = WindowsNativeFile.OpenDestination(stagingPath);
+                using var stream = Register(file, destination: true);
+                destinationOpened = true;
+                ReportTransfer(TransferDiagnosticStage.DestinationPrepare, NativeDiagnosticOutcome.Succeeded,
+                    DiagnosticDirection.Receive, (ContentKind)0, sequence);
+                completion = Submit(new(NativeCommand.Accept, Request: request.Value, Stream: stream.Token)).Completion;
+            }
+            return CheckAsync(completion, cancellationToken);
         }
-        return CheckAsync(completion, cancellationToken);
+        catch (Exception error)
+        {
+            if (!destinationOpened) ReportTransfer(TransferDiagnosticStage.DestinationPrepare,
+                error is OperationCanceledException ? NativeDiagnosticOutcome.Cancelled : NativeDiagnosticOutcome.Failed,
+                DiagnosticDirection.Receive, (ContentKind)0, sequence,
+                error is OperationCanceledException ? ShareErrorKind.Cancelled :
+                (error as NativeShareSdkException)?.Failure.Kind ?? ShareErrorKind.StorageFailed,
+                (error as NativeShareSdkException)?.Failure.PlatformError);
+            throw;
+        }
+    }
+
+    private ulong NextTransferDiagnosticSequence() => 0x8000000000000000UL | (ulong)Interlocked.Increment(ref nextTransferDiagnosticSequence);
+    private void ReportTransfer(TransferDiagnosticStage stage, NativeDiagnosticOutcome outcome,
+        DiagnosticDirection direction, ContentKind kind, ulong sequence, ShareErrorKind? category = null, long? platformCode = null)
+    {
+        if (transferDiagnostic is null) return;
+        try
+        {
+            var record = new TransferDiagnosticRecord(stage, outcome, direction, kind switch
+            {
+                ContentKind.Text => DiagnosticContentKind.Text, ContentKind.Image => DiagnosticContentKind.Image,
+                ContentKind.File => DiagnosticContentKind.File, _ => DiagnosticContentKind.Unknown
+            }, sequence, category, platformCode);
+            if (!diagnosticEvents.Writer.TryWrite((null, record))) Interlocked.Increment(ref droppedDiagnosticEvents);
+        }
+        catch { /* File operations must not depend on diagnostics. */ }
     }
 
     public async Task<ShareContent> ReadClipboardAsync(CancellationToken cancellationToken)
@@ -414,7 +473,7 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         {
             var client = (NativeShareSdkClient)GCHandle.FromIntPtr(context).Target!;
             var record = NativeMapper.Diagnostic(Marshal.PtrToStructure<NativeDiagnosticEvent>(pointer));
-            if (!client.diagnosticEvents.Writer.TryWrite(record))
+            if (!client.diagnosticEvents.Writer.TryWrite((record, null)))
                 Interlocked.Increment(ref client.droppedDiagnosticEvents);
         }
         catch { /* Diagnostic delivery is best-effort and never unwinds into native code. */ }
@@ -504,7 +563,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     {
         await foreach (var record in diagnosticEvents.Reader.ReadAllAsync().ConfigureAwait(false))
         {
-            try { nativeDiagnostic?.Invoke(record); }
+            try
+            {
+                if (record.Native is { } native) nativeDiagnostic?.Invoke(native);
+                if (record.Transfer is { } transfer) transferDiagnostic?.Invoke(transfer);
+            }
             catch { /* Logging cannot affect SDK behavior or halt diagnostics. */ }
             ReportDroppedDiagnostics();
         }

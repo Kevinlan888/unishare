@@ -404,6 +404,32 @@ public sealed class NativeShareSdkClientTests
     }
 
     [TestMethod]
+    public async Task NativeFileOpenFailuresReportFixedBoundariesWithoutPaths()
+    {
+        var api = new FakeNativeApi();
+        var channel = Channel.CreateUnbounded<TransferDiagnosticRecord>();
+        await using var client = new NativeShareSdkClient(api, null, null, null, value => channel.Writer.TryWrite(value));
+        var initialize = client.InitializeAsync(new() { DeviceName = "device" }, default);
+        api.Complete(api.Latest.Operation);
+        await initialize.WaitAsync(TimeSpan.FromSeconds(5));
+        var start = client.StartAsync(default);
+        api.Complete(api.Latest.Operation);
+        await start.WaitAsync(TimeSpan.FromSeconds(5));
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString(), "private-secret.txt");
+        Assert.ThrowsExactly<NativeShareSdkException>(() => client.BeginSendFile(Peer, ContentKind.File,
+            new(path, "private-secret.txt", "application/octet-stream", 0)));
+        await Assert.ThrowsExactlyAsync<NativeShareSdkException>(async () => await client.AcceptAsync(new(1), path, default));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var values = new[] { await channel.Reader.ReadAsync(timeout.Token), await channel.Reader.ReadAsync(timeout.Token),
+            await channel.Reader.ReadAsync(timeout.Token), await channel.Reader.ReadAsync(timeout.Token) };
+        Assert.IsTrue(values.Any(value => value is { Stage: TransferDiagnosticStage.SourceOpen,
+            Outcome: NativeDiagnosticOutcome.Failed, Category: ShareErrorKind.StorageFailed }));
+        Assert.IsTrue(values.Any(value => value is { Stage: TransferDiagnosticStage.DestinationPrepare,
+            Outcome: NativeDiagnosticOutcome.Failed, Category: ShareErrorKind.StorageFailed }));
+        Assert.IsFalse(string.Join(" ", values).Contains("private-secret", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public async Task CancellingAcceptedInitializationReleasesCallerWhileSdkStillCompletesInitialization()
     {
         var api = new FakeNativeApi();

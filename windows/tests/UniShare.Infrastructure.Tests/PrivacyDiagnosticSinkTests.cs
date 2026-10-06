@@ -22,6 +22,19 @@ public sealed class PrivacyDiagnosticSinkTests
         StringAssert.Contains(text, "direction=Send content=File");
         Assert.IsFalse(text.Contains("C:\\private", StringComparison.Ordinal));
     }
+
+    [TestMethod]
+    public void TransferEventUsesAppComponentAndFixedSeverityFields()
+    {
+        using var directory = new TemporaryDirectory();
+        var sink = new PrivacyDiagnosticSink(directory.Path);
+        sink.WriteTransferEvent(new(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Failed,
+            DiagnosticDirection.Send, DiagnosticContentKind.File, 12, ShareErrorKind.StorageFailed, -5));
+        var line = File.ReadAllText(System.IO.Path.Combine(directory.Path, "diagnostics.log"));
+        StringAssert.Contains(line, "level=Error component=App stage=SourceOpen outcome=Failed");
+        StringAssert.Contains(line, "sequence=12 category=StorageFailed platform_code=-5");
+        Assert.IsFalse(line.Contains("private", StringComparison.OrdinalIgnoreCase));
+    }
     [TestMethod]
     public void FailureLogsFixedCategoryAndPlatformCodeWithoutSensitiveMessage()
     {

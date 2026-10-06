@@ -15,3 +15,7 @@ public enum DiagnosticContentKind { None, Text, Image, File, Unknown }
 public sealed record DiagnosticRecord(NativeDiagnosticStage Stage, NativeDiagnosticOutcome Outcome,
     DiagnosticDirection Direction, DiagnosticContentKind ContentKind, ulong Sequence,
     ShareErrorKind? Category, long? PlatformCode);
+public enum TransferDiagnosticStage { Unknown, SourceOpen, CommandSubmit, DestinationPrepare, AcceptSubmit, Completion }
+public sealed record TransferDiagnosticRecord(TransferDiagnosticStage Stage, NativeDiagnosticOutcome Outcome,
+    DiagnosticDirection Direction, DiagnosticContentKind ContentKind, ulong Sequence,
+    ShareErrorKind? Category, long? PlatformCode);

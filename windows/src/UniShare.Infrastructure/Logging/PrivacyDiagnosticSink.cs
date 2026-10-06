@@ -73,6 +73,21 @@ public sealed class PrivacyDiagnosticSink
         Write(outcome == NativeDiagnosticOutcome.Failed ? LogLevel.Error : LogLevel.Info, line);
     }
 
+    public void WriteTransferEvent(TransferDiagnosticRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        var stage = Enum.IsDefined(record.Stage) ? record.Stage : TransferDiagnosticStage.Unknown;
+        var outcome = Enum.IsDefined(record.Outcome) ? record.Outcome : NativeDiagnosticOutcome.Unknown;
+        var direction = Enum.IsDefined(record.Direction) ? record.Direction : DiagnosticDirection.Unknown;
+        var content = Enum.IsDefined(record.ContentKind) ? record.ContentKind : DiagnosticContentKind.Unknown;
+        var category = record.Category is { } code && Enum.IsDefined(code) ? code.ToString() :
+            record.Category is null ? "none" : nameof(ShareErrorKind.Unknown);
+        var line = $"component=App stage={stage} outcome={outcome} direction={direction} content={content} " +
+            $"sequence={record.Sequence.ToString(CultureInfo.InvariantCulture)} category={category} " +
+            $"platform_code={record.PlatformCode?.ToString(CultureInfo.InvariantCulture) ?? "none"}";
+        Write(outcome == NativeDiagnosticOutcome.Failed ? LogLevel.Error : LogLevel.Info, line);
+    }
+
     private void Write(LogLevel level, ShareErrorKind category, long? platformCode)
     {
         var name = Enum.IsDefined(category) ? category.ToString() : nameof(ShareErrorKind.Unknown);
