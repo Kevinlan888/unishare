@@ -22,11 +22,11 @@ struct Store : IIdentityStore {
  Result<void> RemoveTrust(DeviceId) override {return Result<void>::Success();}
 };
 struct Dns : IDnsSd {
- ServiceRecord publication; int publishes=0,stops=0; ResultCallback<void> published;
+ ServiceRecord publication; int publishes=0,stops=0; bool throw_browse=false; ResultCallback<void> published;
  std::function<void(Result<ServiceRecord>)> found; std::function<void(ServiceInstanceId)> removed;
  OperationId Publish(ServiceRecord r,ResultCallback<void> cb) override {publication=std::move(r);++publishes;published=std::move(cb);return 1;}
  OperationId Browse(std::string,std::function<void(Result<ServiceRecord>)> cb) override {found=std::move(cb);return 2;}
- OperationId BrowseEvents(std::string type,std::function<void(Result<ServiceRecord>)> cb,std::function<void(ServiceInstanceId)> rm) override {CHECK(type=="_share._tcp.local.");removed=std::move(rm);return Browse(type,std::move(cb));}
+ OperationId BrowseEvents(std::string type,std::function<void(Result<ServiceRecord>)> cb,std::function<void(ServiceInstanceId)> rm) override {CHECK(type=="_share._tcp.local.");if(throw_browse)throw ShareError{ErrorCode::DiscoveryFailed,"private",23};removed=std::move(rm);return Browse(type,std::move(cb));}
  void Stop() override {++stops;}
 };
 struct Sockets : ISocketFactory {
@@ -59,6 +59,66 @@ struct PlatformFake : IPlatform,IStreamFactory,IPlatformClipboard {
 struct Permission : IPermissionAgent { ResultCallback<void> pending; void RequestLocalNetwork(ResultCallback<void> cb) override{pending=std::move(cb);} };
 void Barrier(ShareSdk& sdk) {sdk.Runtime()->scheduler->Invoke([]{});}
 void Ready(ShareSdk& sdk,PlatformFake& p) {Barrier(sdk);p.sockets.ready(Result<std::uint16_t>::Success(43123));Barrier(sdk);p.dns.published(Result<void>::Success());Barrier(sdk);}
+void DiagnosticStartup() {
+ auto check=[](const std::vector<DiagnosticEvent>& events,DiagnosticStage stage,DiagnosticOutcome outcome,ErrorCode code=ErrorCode::InvalidInput,std::optional<std::int64_t> platform={}) {
+  return std::count_if(events.begin(),events.end(),[&](const auto& e){return e.stage==stage&&e.outcome==outcome&&(!platform||(e.error&&e.error->code==code&&e.error->platform_error==platform));});
+ };
+ auto make=[](PlatformFake& p,const std::shared_ptr<Queue>& q){auto sdk=std::make_unique<ShareSdk>(p);SdkConfig c;c.device_name="diagnostic";c.callback_executor=q;sdk->Initialize(c,[](auto r){CHECK(r.ok());});Barrier(*sdk);q->Drain();return sdk;};
+ {
+  PlatformFake p;auto q=std::make_shared<Queue>();auto sdk=make(p,q);auto permission=std::make_shared<Permission>();
+  // A permission failure must identify its phase, not merely a generic Start failure.
+  std::vector<DiagnosticEvent> events;sdk->SetDiagnosticHandler([&](auto e){events.push_back(e);});
+  sdk->Runtime()->scheduler->Invoke([&]{sdk->Runtime()->config.permissions=permission;});
+  sdk->Start([](auto r){CHECK(!r.ok());});Barrier(*sdk);
+  permission->pending(Result<void>::Failure({ErrorCode::PermissionDenied,"private message",7}));Barrier(*sdk);q->Drain();
+  CHECK(check(events,DiagnosticStage::Permission,DiagnosticOutcome::Began)==1);
+  CHECK(check(events,DiagnosticStage::Permission,DiagnosticOutcome::Failed,ErrorCode::PermissionDenied,7)==1);
+  CHECK(check(events,DiagnosticStage::Listen,DiagnosticOutcome::Began)==0);
+ }
+ {
+  PlatformFake p;auto q=std::make_shared<Queue>();auto sdk=make(p,q);auto permission=std::make_shared<Permission>();
+  sdk->Runtime()->scheduler->Invoke([&]{sdk->Runtime()->config.permissions=permission;});
+  std::vector<DiagnosticEvent> events;sdk->SetDiagnosticHandler([&](auto e){events.push_back(e);});
+  sdk->Start([](auto r){CHECK(!r.ok()&&r.error().code==ErrorCode::Cancelled);});Barrier(*sdk);
+  sdk->Stop([](auto r){CHECK(r.ok());});Barrier(*sdk);q->Drain();
+  CHECK(check(events,DiagnosticStage::Permission,DiagnosticOutcome::Cancelled)==1);
+  CHECK(check(events,DiagnosticStage::Stop,DiagnosticOutcome::Succeeded)==1);
+ }
+ {
+  PlatformFake p;auto q=std::make_shared<Queue>();auto sdk=make(p,q);std::vector<DiagnosticEvent> events;sdk->SetDiagnosticHandler([&](auto e){events.push_back(e);});
+  sdk->Start([](auto r){CHECK(!r.ok());});Barrier(*sdk);p.sockets.ready(Result<std::uint16_t>::Failure({ErrorCode::NetworkLost,"private",55}));Barrier(*sdk);q->Drain();
+  CHECK(check(events,DiagnosticStage::Listen,DiagnosticOutcome::Began)==1);
+  CHECK(check(events,DiagnosticStage::Listen,DiagnosticOutcome::Failed,ErrorCode::NetworkLost,55)==1);
+ }
+ {
+  PlatformFake p;auto q=std::make_shared<Queue>();auto sdk=make(p,q);std::vector<DiagnosticEvent> events;sdk->SetDiagnosticHandler([&](auto e){events.push_back(e);});
+  sdk->Start([](auto r){CHECK(!r.ok());});Barrier(*sdk);p.sockets.ready(Result<std::uint16_t>::Success(43123));Barrier(*sdk);
+  p.dns.published(Result<void>::Failure({ErrorCode::DiscoveryFailed,"private",17}));Barrier(*sdk);q->Drain();
+  CHECK(check(events,DiagnosticStage::Publish,DiagnosticOutcome::Began)==1);
+  CHECK(check(events,DiagnosticStage::Publish,DiagnosticOutcome::Failed,ErrorCode::DiscoveryFailed,17)==1);
+ }
+ {
+  PlatformFake p;p.dns.throw_browse=true;auto q=std::make_shared<Queue>();auto sdk=make(p,q);std::vector<DiagnosticEvent> events;sdk->SetDiagnosticHandler([&](auto e){events.push_back(e);});
+  sdk->Start([](auto r){CHECK(!r.ok());});Barrier(*sdk);p.sockets.ready(Result<std::uint16_t>::Success(43123));Barrier(*sdk);
+  p.dns.published(Result<void>::Success());Barrier(*sdk);q->Drain();
+  CHECK(check(events,DiagnosticStage::Browse,DiagnosticOutcome::Failed,ErrorCode::DiscoveryFailed,23)==1);
+ }
+ {
+  PlatformFake p;auto q=std::make_shared<Queue>();auto sdk=make(p,q);std::vector<DiagnosticEvent> events;sdk->SetDiagnosticHandler([&](auto e){events.push_back(e);});
+  sdk->Start([](auto r){CHECK(r.ok());});Ready(*sdk,p);q->Drain();
+  CHECK(check(events,DiagnosticStage::Browse,DiagnosticOutcome::Began)==1);
+  CHECK(check(events,DiagnosticStage::Browse,DiagnosticOutcome::Succeeded)==1);
+  p.dns.found(Result<ServiceRecord>::Failure({ErrorCode::DiscoveryFailed,"private",19}));
+  p.dns.found(Result<ServiceRecord>::Failure({ErrorCode::DiscoveryFailed,"private",19}));Barrier(*sdk);q->Drain();
+  CHECK(check(events,DiagnosticStage::Browse,DiagnosticOutcome::Failed,ErrorCode::DiscoveryFailed,19)==1);
+  p.changed();Barrier(*sdk);Ready(*sdk,p);q->Drain();
+  CHECK(check(events,DiagnosticStage::NetworkChange,DiagnosticOutcome::Began)==1);
+  CHECK(check(events,DiagnosticStage::NetworkChange,DiagnosticOutcome::Succeeded)==1);
+  sdk->Stop([](auto r){CHECK(r.ok());});Barrier(*sdk);q->Drain();
+  CHECK(check(events,DiagnosticStage::Stop,DiagnosticOutcome::Began)==1);
+  CHECK(check(events,DiagnosticStage::Stop,DiagnosticOutcome::Succeeded)==1);
+ }
+}
 ServiceRecord Peer() {ServiceRecord r;r.instance="peer";r.interface_id="wifi";r.srv_target="peer.local.";r.service_type="_share._tcp.local.";r.port=1234;r.addresses={"192.0.2.1"};r.txt={{"id","01234567-89ab-4def-8123-456789abcdef"},{"name","peer"},{"platform","ios"},{"pv","1.0"}};return r;}
 void InitializePreservesRequestedExecutors() {
  PlatformFake platform;
@@ -229,6 +289,7 @@ int main(int argc,char** argv) {
  LifecycleDuringInitializeUsesConfiguredExecutor();
  RecoveryExpiresPeers(false);
  RecoveryExpiresPeers(true);
+ DiagnosticStartup();
  PlatformFake p;auto q=std::make_shared<Queue>();SdkConfig config;config.device_name="phone";config.callback_executor=q;
  ShareSdk sdk(p);int initialized=0,starts=0,stops=0;std::vector<DiscoveryEventKind> events;std::vector<ErrorCode> errors;std::vector<DiscoveryState> states;
  sdk.Initialize(config,[&](auto r){CHECK(r.ok());++initialized;});Barrier(sdk);CHECK(initialized==0);q->Drain();CHECK(initialized==1);

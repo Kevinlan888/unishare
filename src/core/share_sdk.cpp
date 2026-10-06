@@ -28,6 +28,8 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  std::function<void(DiscoveryEvent)> event_handler;std::function<void(ShareError)> error_handler;
  std::function<void(DiscoveryState)> state_handler;
  std::function<void(DiagnosticEvent)> diagnostic_handler;
+ std::optional<ErrorCode> last_browse_error;
+ std::optional<DiagnosticStage> pending_start_stage;
  std::map<std::string,bool> paired_metadata;
  explicit State(IPlatform& p):platform(p){}
  template<class F> auto Guard(std::uint64_t g,F f) {
@@ -41,6 +43,14 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  }
  void EmitState(DiscoveryState v){if(state_handler)runtime->callbacks->Post([f=state_handler,v]{f(v);});}
  void Report(DiagnosticEvent event){if(diagnostic_handler)runtime->callbacks->Post([f=diagnostic_handler,event=std::move(event)]{try{f(event);}catch(...){}});}
+ void Report(DiagnosticStage stage,DiagnosticOutcome outcome,std::optional<ShareError> error={}){
+  Report({stage,outcome,DiagnosticDirection::None,DiagnosticContentKind::None,0,std::move(error)});
+ }
+ void BeginPhase(DiagnosticStage stage){pending_start_stage=stage;Report(stage,DiagnosticOutcome::Began);}
+ void EndPhase(DiagnosticStage stage,DiagnosticOutcome outcome,std::optional<ShareError> error={}){
+  if(pending_start_stage==stage)pending_start_stage.reset();
+  Report(stage,outcome,std::move(error));
+ }
  void EmitError(ShareError e){if(error_handler)runtime->callbacks->Post([f=error_handler,e=std::move(e)]{f(e);});}
  bool Paired(DeviceId id) const {return std::any_of(runtime->trusted_devices.begin(),runtime->trusted_devices.end(),[&](auto& d){return d.id==id;});}
  void Emit(std::vector<DeviceEvent> events){for(auto& e:events){e.device.paired=Paired(e.device.id);paired_metadata[e.device.id.ToString()]=e.device.paired;if(event_handler)runtime->callbacks->Post([f=event_handler,e=std::move(e)]{f(e);});}}
@@ -48,6 +58,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  void FinishStart(Result<void> result) {auto pending=std::move(starters);starters.clear();for(auto& t:pending)t.Complete(result);}
  std::optional<ShareError> Shutdown(ShareError reason,bool cancel,bool preserve_catalog=false) {
   std::optional<ShareError> failure;
+  if(pending_start_stage){Report(*pending_start_stage,DiagnosticOutcome::Cancelled);pending_start_stage.reset();}
   auto attempt=[&](auto f){try{f();}catch(...){if(!failure)failure=CurrentException();}};
   ++generation;
   starting=false;
@@ -68,6 +79,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
   return failure;
  }
  void FailStart(ShareError error) {
+  if(pending_start_stage){Report(*pending_start_stage,DiagnosticOutcome::Failed,error);pending_start_stage.reset();}
   EmitError(error);
   FinishStart(Result<void>::Failure(error));
   // A failed replacement must still retire previously visible devices through
@@ -89,31 +101,43 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  }
  void Publish(std::uint16_t port,std::uint64_t g) {
   if(!port) {
-   FailStart(Error(ErrorCode::NetworkLost,"listener returned zero port"));
+   auto error=Error(ErrorCode::NetworkLost,"listener returned zero port");
+   FailStart(error);
    return;
   }
   auto r=Record(runtime->config,runtime->identity->material.id,platform.PlatformKind(),port);
+  BeginPhase(DiagnosticStage::Publish);
   platform.DnsSd().Publish(std::move(r),Guard(g,[g](State& s,Result<void> result){
-   if(!result.ok()){s.FailStart(result.error());return;}
+   if(!result.ok()){s.EndPhase(DiagnosticStage::Publish,DiagnosticOutcome::Failed,result.error());s.FailStart(result.error());return;}
+   s.EndPhase(DiagnosticStage::Publish,DiagnosticOutcome::Succeeded);
+   s.last_browse_error.reset();
+   s.BeginPhase(DiagnosticStage::Browse);
    s.platform.DnsSd().BrowseEvents("_share._tcp.local.",
     s.Guard(g,[](State& owner,Result<ServiceRecord> record){
-     if(!record.ok()){owner.EmitError(record.error());return;}
+     if(!record.ok()){
+      if(owner.last_browse_error!=record.error().code){owner.Report(DiagnosticStage::Browse,DiagnosticOutcome::Failed,record.error());owner.last_browse_error=record.error().code;}
+      owner.EmitError(record.error());return;
+     }
+     owner.last_browse_error.reset();
      owner.Emit(owner.catalog->Apply(record.value()));
     }),
     s.Guard(g,[](State& owner,ServiceInstanceId id){
      owner.Emit(owner.catalog->Remove(std::move(id),std::chrono::system_clock::now()));
     }));
-   s.starting=false;
-   s.state=SdkState::Running;
+    s.starting=false;
+    s.state=SdkState::Running;
+   s.EndPhase(DiagnosticStage::Browse,DiagnosticOutcome::Succeeded);
    s.EmitState(DiscoveryState::Browsing);
    s.FinishStart(Result<void>::Success());
   }));
  }
  void Listen(std::uint64_t g) {
+  BeginPhase(DiagnosticStage::Listen);
   platform.Sockets().ListenBound(0,
    Guard(g,[g](State& s,Result<std::uint16_t> result){
-    if(!result.ok())s.FailStart(result.error());
-    else s.Publish(result.value(),g);
+    if(!result.ok()){s.EndPhase(DiagnosticStage::Listen,DiagnosticOutcome::Failed,result.error());s.FailStart(result.error());}
+    else if(!result.value()){auto error=Error(ErrorCode::NetworkLost,"listener returned zero port");s.EndPhase(DiagnosticStage::Listen,DiagnosticOutcome::Failed,error);s.FailStart(error);}
+    else {s.EndPhase(DiagnosticStage::Listen,DiagnosticOutcome::Succeeded);s.Publish(result.value(),g);}
    }),
    [weak=weak_from_this(),queue=runtime->scheduler,g](Result<std::shared_ptr<ISocket>> result){
     queue->Post([weak,g,result]{
@@ -139,6 +163,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
    queue->Post([weak,g]{
     auto s=weak.lock();
     if(!s||!s->alive||s->generation!=g||(!s->starting&&s->state!=SdkState::Running))return;
+    s->Report(DiagnosticStage::NetworkChange,DiagnosticOutcome::Began);
     s->EmitState(DiscoveryState::NetworkChanged);
     s->catalog->InvalidateNetwork(std::chrono::system_clock::now());
     s->platform.DnsSd().Stop();
@@ -146,12 +171,14 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
     if(s->runtime->stop_services)s->runtime->stop_services(Error(ErrorCode::NetworkLost,"network changed"));
     s->state=SdkState::Stopped;
     s->BeginNetwork();
+    s->Report(DiagnosticStage::NetworkChange,DiagnosticOutcome::Succeeded);
    });
   });
   if(runtime->config.permissions) {
+   BeginPhase(DiagnosticStage::Permission);
    runtime->config.permissions->RequestLocalNetwork(Guard(g,[g](State& s,Result<void> r){
-    if(!r.ok())s.FailStart(r.error());
-    else s.Listen(g);
+    if(!r.ok()){s.EndPhase(DiagnosticStage::Permission,DiagnosticOutcome::Failed,r.error());s.FailStart(r.error());}
+    else {s.EndPhase(DiagnosticStage::Permission,DiagnosticOutcome::Succeeded);s.Listen(g);}
    }));
   } else Listen(g);
  }
@@ -173,19 +200,20 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
  OperationId Stop(ResultCallback<void> cb) override {
   auto ticket=runtime->operations->Begin<void>(std::move(cb),false);
  runtime->scheduler->Post([s=shared_from_this(),ticket]{
-   s->Report({DiagnosticStage::Stop,DiagnosticOutcome::Began});
+   s->Report(DiagnosticStage::Stop,DiagnosticOutcome::Began);
    try {
    if(s->starting||s->state==SdkState::Running||s->catalog) {
     auto failure=s->Shutdown(Error(ErrorCode::Cancelled,"SDK stopped"),true);
-    if(failure){ticket.Complete(Result<void>::Failure(*failure));return;}
+    if(failure){s->Report(DiagnosticStage::Stop,DiagnosticOutcome::Failed,*failure);ticket.Complete(Result<void>::Failure(*failure));return;}
     s->EmitState(DiscoveryState::Stopped);
    } else {
     if(s->runtime->stop_services)s->runtime->stop_services(Error(ErrorCode::Cancelled,"SDK stopped"));
     s->runtime->operations->CancelAll();
     if(s->state==SdkState::Initialized)s->state=SdkState::Stopped;
    }
+   s->Report(DiagnosticStage::Stop,DiagnosticOutcome::Succeeded);
    ticket.Complete(Result<void>::Success());
-   } catch(...) {auto error=CurrentException();s->Shutdown(error,true);ticket.Complete(Result<void>::Failure(error));}
+   } catch(...) {auto error=CurrentException();s->Report(DiagnosticStage::Stop,DiagnosticOutcome::Failed,error);s->Shutdown(error,true);ticket.Complete(Result<void>::Failure(error));}
   });
   return ticket.id;
  }

@@ -546,12 +546,12 @@ void DiagnosticCallbacks() {
   Completion again;
   CHECK(!usdk_stop(a.sdk, Completion::Done, &again, &a.op).code);
   Drain(a.q, [&] { return again.calls && !second.empty(); });
-  CHECK(first.size() == 1 && second.size() == 1);
+  CHECK(first.size() == 2 && second.size() == 2);
   CHECK(!usdk_set_diagnostic_handler(a.sdk, nullptr, nullptr).code);
   Completion last;
   CHECK(!usdk_stop(a.sdk, Completion::Done, &last, &a.op).code);
   Drain(a.q, [&] { return last.calls; });
-  CHECK(second.size() == 1);
+  CHECK(second.size() == 2);
 }
 void DiagnosticRetirement(bool destroy) {
   ApiPeer a;
@@ -573,13 +573,14 @@ void DiagnosticRetirement(bool destroy) {
   CHECK(retired.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
   CHECK(!retired.get().code);
   delivery.join();
-  CHECK(held.calls == 1);
+  const auto calls_at_retirement = held.calls.load();
+  CHECK(calls_at_retirement >= 1 && calls_at_retirement <= 2);
   if (destroy) a.sdk = 0;
   else {
     Completion again;
     CHECK(!usdk_stop(a.sdk, Completion::Done, &again, &a.op).code);
     Drain(a.q, [&] { return again.calls; });
-    CHECK(held.calls == 1);
+    CHECK(held.calls == calls_at_retirement);
   }
 }
 // A callback waiting for a submitting thread must not prevent that thread from
