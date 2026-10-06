@@ -8,6 +8,21 @@ namespace UniShare.Infrastructure.Tests;
 public sealed class PrivacyDiagnosticSinkTests
 {
     [TestMethod]
+    public void NativeEventWritesOnlyFixedFieldsAndRotates()
+    {
+        using var directory = new TemporaryDirectory();
+        var sink = new PrivacyDiagnosticSink(directory.Path, maxBytes: 220);
+        for (var i = 0; i < 6; i++)
+            sink.WriteNativeEvent(new(NativeDiagnosticStage.Transfer, NativeDiagnosticOutcome.Failed,
+                DiagnosticDirection.Send, DiagnosticContentKind.File, (ulong)i, ShareErrorKind.StorageFailed, -5));
+        var logs = Directory.GetFiles(directory.Path, "diagnostics*");
+        Assert.IsTrue(logs.Length is >= 1 and <= 2);
+        var text = string.Join("\n", logs.Select(File.ReadAllText));
+        StringAssert.Contains(text, "component=Sdk stage=Transfer outcome=Failed");
+        StringAssert.Contains(text, "direction=Send content=File");
+        Assert.IsFalse(text.Contains("C:\\private", StringComparison.Ordinal));
+    }
+    [TestMethod]
     public void FailureLogsFixedCategoryAndPlatformCodeWithoutSensitiveMessage()
     {
         using var directory = new TemporaryDirectory();

@@ -29,6 +29,9 @@ internal sealed class FakeNativeApi : IUniShareNativeApi
     internal ulong LastStream;
     internal int DestroyCount;
     internal nint EventCallback, EventContext;
+    internal nint DiagnosticCallback, DiagnosticContext;
+    internal Exception? DiagnosticRegistrationException;
+    internal List<(nint Callback, nint Context)> DiagnosticRegistrations { get; } = [];
     internal (nint Callback, nint Context) LastRegistration;
     [ThreadStatic] internal static bool OnNativeStack;
     private long next;
@@ -71,13 +74,21 @@ internal sealed class FakeNativeApi : IUniShareNativeApi
         return error;
     }
     public NativeError Destroy(ulong sdk)
-    { DuringDestroy?.Invoke(); DestroyCount++; Calls.Clear(); EventCallback = 0; return default; }
+    { DuringDestroy?.Invoke(); DestroyCount++; Calls.Clear(); EventCallback = 0; DiagnosticCallback = 0; return default; }
     public NativeError SetEventHandler(ulong sdk, nint callback, nint context)
     {
         EventCallback = callback; EventContext = context;
         if (callback != 0) LastRegistration = (callback, context);
         return default;
     }
+    public NativeError SetDiagnosticHandler(ulong sdk, nint callback, nint context)
+    {
+        if (DiagnosticRegistrationException is not null) throw DiagnosticRegistrationException;
+        DiagnosticCallback = callback; DiagnosticContext = context;
+        DiagnosticRegistrations.Add((callback, context));
+        return default;
+    }
+    internal void EmitDiagnostic(NativeDiagnosticEvent value) => Invoke(DiagnosticCallback, DiagnosticContext, value);
     public NativeError GetDevices(ulong sdk, out nint devices) { devices = DeviceRoot; return default; }
     public NativeError GetTrustedDevices(ulong sdk, out nint devices) { devices = TrustedRoot; return default; }
     public NativeError Free(nint allocation) { FreeAllocation?.Invoke(allocation); return default; }

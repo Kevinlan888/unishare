@@ -11,6 +11,85 @@ namespace UniShare.Native.Tests;
 [TestClass]
 public sealed class NativeShareSdkClientTests
 {
+    [TestMethod]
+    public async Task MissingDiagnosticExportFailsInitializationWithFixedExceptionType()
+    {
+        var api = new FakeNativeApi { DiagnosticRegistrationException = new EntryPointNotFoundException("secret path") };
+        var events = new List<(DiagnosticStage Stage, DiagnosticOutcome Outcome, Exception? Error)>();
+        await using var client = new NativeShareSdkClient(api, null,
+            (stage, outcome, _, error) => events.Add((stage, outcome, error)));
+        var initialize = client.InitializeAsync(new() { DeviceName = "device" }, default);
+        await Assert.ThrowsExactlyAsync<EntryPointNotFoundException>(async () => await initialize.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.AreEqual(1, api.DestroyCount);
+        Assert.IsTrue(events.Any(value => value is { Stage: DiagnosticStage.SdkInitialize, Outcome: DiagnosticOutcome.Failed,
+            Error: EntryPointNotFoundException }));
+    }
+    [TestMethod]
+    public async Task NativeDiagnosticsRemainRegisteredThroughStopAndUnregisterBeforeDestroy()
+    {
+        var api = new FakeNativeApi();
+        var received = Channel.CreateUnbounded<DiagnosticRecord>();
+        await using var client = new NativeShareSdkClient(api, null, null, value => received.Writer.TryWrite(value));
+        var initialize = client.InitializeAsync(new() { DeviceName = "device" }, default);
+        Assert.AreNotEqual((nint)0, api.DiagnosticCallback);
+        api.Complete(api.Latest.Operation);
+        await initialize.WaitAsync(TimeSpan.FromSeconds(5));
+        var start = client.StartAsync(default);
+        api.Complete(api.Latest.Operation);
+        await start.WaitAsync(TimeSpan.FromSeconds(5));
+        var stop = client.StopAsync(default);
+        api.Complete(api.Latest.Operation);
+        await stop.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreNotEqual((nint)0, api.DiagnosticCallback);
+        api.EmitDiagnostic(new() { Stage = 6, Outcome = 2 });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(NativeDiagnosticStage.Stop, (await received.Reader.ReadAsync(timeout.Token)).Stage);
+        await client.DisposeAsync();
+        Assert.AreEqual((nint)0, api.DiagnosticCallback);
+        Assert.AreEqual((nint)0, api.DiagnosticRegistrations[^1].Callback);
+    }
+
+    [TestMethod]
+    public async Task FullDiagnosticQueueDropsWithoutBlockingNativeAndReportsCount()
+    {
+        var api = new FakeNativeApi();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var received = Channel.CreateUnbounded<DiagnosticRecord>();
+        await using var client = new NativeShareSdkClient(api, null, null, value =>
+        {
+            if (value.Sequence == 1) { entered.Set(); release.Wait(TimeSpan.FromSeconds(5)); }
+            received.Writer.TryWrite(value);
+        }, diagnosticQueueCapacity: 1);
+        var initialize = client.InitializeAsync(new() { DeviceName = "device" }, default);
+        api.Complete(api.Latest.Operation);
+        await initialize.WaitAsync(TimeSpan.FromSeconds(5));
+        api.EmitDiagnostic(new() { Stage = 18, Outcome = 1, Sequence = 1 });
+        Assert.IsTrue(entered.Wait(TimeSpan.FromSeconds(5)));
+        api.EmitDiagnostic(new() { Stage = 18, Outcome = 1, Sequence = 2 });
+        var callback = Task.Run(() => api.EmitDiagnostic(new() { Stage = 18, Outcome = 1, Sequence = 3 }));
+        await callback.WaitAsync(TimeSpan.FromSeconds(1));
+        release.Set();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var values = new[] { await received.Reader.ReadAsync(timeout.Token), await received.Reader.ReadAsync(timeout.Token),
+            await received.Reader.ReadAsync(timeout.Token) };
+        Assert.IsTrue(values.Any(value => value.Stage == NativeDiagnosticStage.DiagnosticQueue && value.Sequence == 1));
+        Assert.IsFalse(values.Any(value => value.Stage == NativeDiagnosticStage.Transfer && value.Sequence == 3));
+    }
+
+    [TestMethod]
+    public async Task ThrowingDiagnosticSinkDoesNotBreakNativeCallback()
+    {
+        var api = new FakeNativeApi();
+        await using var client = new NativeShareSdkClient(api, null, null, _ => throw new IOException("secret"));
+        var initialize = client.InitializeAsync(new() { DeviceName = "device" }, default);
+        api.Complete(api.Latest.Operation);
+        await initialize.WaitAsync(TimeSpan.FromSeconds(5));
+        api.EmitDiagnostic(new() { Stage = 18, Outcome = 3 });
+        var start = client.StartAsync(default);
+        api.Complete(api.Latest.Operation);
+        await start.WaitAsync(TimeSpan.FromSeconds(5));
+    }
     private static readonly DeviceId Peer = new(Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"));
     private static IShareSdkClient Create(FakeNativeApi api)
     {

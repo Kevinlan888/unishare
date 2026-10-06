@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using UniShare.Native.Interop;
@@ -32,6 +33,8 @@ public sealed class NativeAbiSmokeTests
         nint deviceName = 0;
         var roots = new List<Completion>();
         var counts = new List<Func<int>>();
+        var diagnostics = new ConcurrentQueue<NativeDiagnosticEvent>();
+        DiagnosticCallback diagnosticCallback = (_, pointer) => diagnostics.Enqueue(Marshal.PtrToStructure<NativeDiagnosticEvent>(pointer));
         try
         {
             T Export<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
@@ -64,6 +67,7 @@ public sealed class NativeAbiSmokeTests
             Assert.AreEqual(0u, Export<Create>("usdk_create")(platform, in config, create.Callback, 0, out sdk, out ulong createOperation).Code);
             Assert.AreNotEqual(0ul, sdk);
             Assert.AreNotEqual(0ul, createOperation);
+            Assert.AreEqual(0u, Export<SetDiagnosticHandler>("usdk_set_diagnostic_handler")(sdk, diagnosticCallback, 0).Code);
             Assert.AreEqual(0u, Export<Release>("usdk_platform_release")(platform).Code);
             platform = 0;
             var created = await create.Result.WaitAsync(TimeSpan.FromSeconds(20));
@@ -82,6 +86,8 @@ public sealed class NativeAbiSmokeTests
             var stopped = await stop.Result.WaitAsync(TimeSpan.FromSeconds(20));
             Assert.AreEqual(stopOperation, stopped.Operation);
             Assert.AreEqual(0u, stopped.Error.Code);
+            Assert.IsTrue(diagnostics.Any(value => value.Stage == 6 && value.Outcome == 1));
+            Assert.AreEqual(0u, Export<SetDiagnosticHandler>("usdk_set_diagnostic_handler")(sdk, null, 0).Code);
             Assert.AreEqual(0u, Export<Release>("usdk_destroy")(sdk).Code);
             sdk = 0; // Destroy is the callback quiescence barrier, not a timing delay.
             foreach (var count in counts) Assert.AreEqual(1, count());
@@ -104,4 +110,6 @@ public sealed class NativeAbiSmokeTests
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate NativeError Create(ulong platform, in NativeConfig config, Completion callback, nint context, out ulong sdk, out ulong operation);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate NativeError Command(ulong sdk, Completion callback, nint context, out ulong operation);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate NativeError Release(ulong handle);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void DiagnosticCallback(nint context, nint value);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate NativeError SetDiagnosticHandler(ulong sdk, DiagnosticCallback? callback, nint context);
 }

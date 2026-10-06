@@ -9,6 +9,13 @@ internal struct NativeSpan { internal nint Data; internal ulong Length; }
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeError { internal uint Code; internal uint HasPlatformError; internal long PlatformError; }
 [StructLayout(LayoutKind.Sequential)]
+internal struct NativeDiagnosticEvent
+{
+    internal uint Stage, Outcome, Direction, ContentType;
+    internal ulong Sequence;
+    internal NativeError Error;
+}
+[StructLayout(LayoutKind.Sequential)]
 internal struct NativeContent { internal uint Type; internal NativeSpan Text; internal NativeSpan MimeType; internal NativeSpan Image; }
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeConfig

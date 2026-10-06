@@ -22,6 +22,7 @@ internal interface IUniShareNativeApi
     NativeError Submit(ulong sdk, in NativeSubmission submission, nint callback, nint context, out ulong operation);
     NativeError Destroy(ulong sdk);
     NativeError SetEventHandler(ulong sdk, nint callback, nint context);
+    NativeError SetDiagnosticHandler(ulong sdk, nint callback, nint context);
     NativeError GetDevices(ulong sdk, out nint devices);
     NativeError GetTrustedDevices(ulong sdk, out nint devices);
     NativeError Free(nint allocation);

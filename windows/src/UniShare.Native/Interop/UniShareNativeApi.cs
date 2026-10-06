@@ -13,6 +13,7 @@ internal sealed class UniShareNativeApi : IUniShareNativeApi
         => NativeMethods.usdk_create(platform, config, callback, context, out sdk, out operation);
     public NativeError Destroy(ulong sdk) => NativeMethods.usdk_destroy(sdk);
     public NativeError SetEventHandler(ulong sdk, nint callback, nint context) => NativeMethods.usdk_set_event_handler(sdk, callback, context);
+    public NativeError SetDiagnosticHandler(ulong sdk, nint callback, nint context) => NativeMethods.usdk_set_diagnostic_handler(sdk, callback, context);
     public NativeError GetDevices(ulong sdk, out nint devices) => NativeMethods.usdk_get_devices(sdk, out devices);
     public NativeError GetTrustedDevices(ulong sdk, out nint devices) => NativeMethods.usdk_get_trusted_devices(sdk, out devices);
     public NativeError Free(nint allocation) => NativeMethods.usdk_free(allocation);

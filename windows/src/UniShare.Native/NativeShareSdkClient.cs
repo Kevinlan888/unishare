@@ -25,32 +25,43 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private readonly IUniShareNativeApi api;
     private readonly string identityDirectory;
     private readonly Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic;
+    private readonly Action<DiagnosticRecord>? nativeDiagnostic;
     private readonly object submissionGate = new();
     private readonly SemaphoreSlim lifecycle = new(1, 1);
     private readonly NativeOperationRegistry operations = new();
     private readonly OutgoingTransferRegistry outgoing = new();
     private readonly Channel<Action> callbacks = Channel.CreateUnbounded<Action>(new() { SingleReader = true });
     private readonly Channel<(long Generation, ShareSdkEvent Event)> events = Channel.CreateUnbounded<(long, ShareSdkEvent)>(new() { SingleReader = true });
+    private readonly Channel<DiagnosticRecord> diagnosticEvents;
     private readonly List<GCHandle> eventRoots = [];
     private GCHandle callbackRoot;
     private ApiHandle? sdk;
     private ClientState state;
+    private bool diagnosticRegistered;
+    private long droppedDiagnosticEvents;
     private long nextGeneration, activeGeneration, stoppedGeneration;
 
     public NativeShareSdkClient(string? identityDirectory = null,
-        Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic = null)
-        : this(new UniShareNativeApi(), identityDirectory, diagnostic) { }
+        Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic = null,
+        Action<DiagnosticRecord>? nativeDiagnostic = null)
+        : this(new UniShareNativeApi(), identityDirectory, diagnostic, nativeDiagnostic) { }
 
     internal NativeShareSdkClient(IUniShareNativeApi api, string? identityDirectory) : this(api, identityDirectory, null) { }
 
     internal NativeShareSdkClient(IUniShareNativeApi api, string? identityDirectory,
-        Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic)
+        Action<DiagnosticStage, DiagnosticOutcome, ShareFailure?, Exception?>? diagnostic,
+        Action<DiagnosticRecord>? nativeDiagnostic = null, int diagnosticQueueCapacity = 1024)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(diagnosticQueueCapacity);
         this.api = api;
         this.identityDirectory = identityDirectory ?? string.Empty;
         this.diagnostic = diagnostic;
+        this.nativeDiagnostic = nativeDiagnostic;
+        diagnosticEvents = Channel.CreateBounded<DiagnosticRecord>(new BoundedChannelOptions(diagnosticQueueCapacity)
+        { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait });
         _ = Task.Run(DrainCallbacksAsync);
         _ = Task.Run(DrainEventsAsync);
+        _ = Task.Run(DrainDiagnosticsAsync);
     }
 
     public event EventHandler<ShareSdkEvent>? EventReceived;
@@ -96,6 +107,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                     Throw(error);
                     throw InvalidSubmission();
                 }
+                Throw(api.SetDiagnosticHandler(sdkToken, DiagnosticPointer, GCHandle.ToIntPtr(callbackRoot)));
+                diagnosticRegistered = true;
                 completion = operations.Register(new(operation));
             }
             var result = await completion.ConfigureAwait(false);
@@ -392,6 +405,20 @@ public sealed class NativeShareSdkClient : IShareSdkClient
 
     private static unsafe nint CompletionPointer => (nint)(delegate* unmanaged[Cdecl]<nint, nint, void>)&OnCompletion;
     private static unsafe nint EventPointer => (nint)(delegate* unmanaged[Cdecl]<nint, nint, void>)&OnEvent;
+    private static unsafe nint DiagnosticPointer => (nint)(delegate* unmanaged[Cdecl]<nint, nint, void>)&OnDiagnostic;
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static void OnDiagnostic(nint context, nint pointer)
+    {
+        try
+        {
+            var client = (NativeShareSdkClient)GCHandle.FromIntPtr(context).Target!;
+            var record = NativeMapper.Diagnostic(Marshal.PtrToStructure<NativeDiagnosticEvent>(pointer));
+            if (!client.diagnosticEvents.Writer.TryWrite(record))
+                Interlocked.Increment(ref client.droppedDiagnosticEvents);
+        }
+        catch { /* Diagnostic delivery is best-effort and never unwinds into native code. */ }
+    }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void OnCompletion(nint context, nint pointer)
@@ -473,10 +500,35 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         }
     }
 
+    private async Task DrainDiagnosticsAsync()
+    {
+        await foreach (var record in diagnosticEvents.Reader.ReadAllAsync().ConfigureAwait(false))
+        {
+            try { nativeDiagnostic?.Invoke(record); }
+            catch { /* Logging cannot affect SDK behavior or halt diagnostics. */ }
+            ReportDroppedDiagnostics();
+        }
+        ReportDroppedDiagnostics();
+    }
+
+    private void ReportDroppedDiagnostics()
+    {
+        var count = Interlocked.Exchange(ref droppedDiagnosticEvents, 0);
+        if (count == 0) return;
+        try { nativeDiagnostic?.Invoke(new(NativeDiagnosticStage.DiagnosticQueue, NativeDiagnosticOutcome.Failed,
+            DiagnosticDirection.None, DiagnosticContentKind.None, (ulong)count, ShareErrorKind.ResourceLimit, null)); }
+        catch { /* Best-effort diagnostic. */ }
+    }
+
     private void DestroySdk()
     {
         if (sdk is not null)
         {
+            if (diagnosticRegistered)
+            {
+                Throw(api.SetDiagnosticHandler(sdk.Token, 0, 0));
+                diagnosticRegistered = false;
+            }
             Throw(api.Destroy(sdk.Token));
             sdk.SetHandleAsInvalid(); sdk.Dispose(); sdk = null;
         }
@@ -495,7 +547,7 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             outgoing.Clear();
             operations.CancelAll();
             DestroySdk();
-            callbacks.Writer.TryComplete(); events.Writer.TryComplete();
+            callbacks.Writer.TryComplete(); events.Writer.TryComplete(); diagnosticEvents.Writer.TryComplete();
         }
         // Do not await the event reader: disposal is allowed from its subscriber.
         return ValueTask.CompletedTask;

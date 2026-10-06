@@ -17,6 +17,7 @@ public sealed class NativeLayoutTests
     [DataRow("NativeResult", 96)]
     [DataRow("NativeEvent", 192)]
     [DataRow("NativeSource", 48)]
+    [DataRow("NativeDiagnosticEvent", 40)]
     public void FrozenX64Layout(string name, int expected)
     {
         Assert.AreEqual(8, IntPtr.Size);
@@ -37,5 +38,7 @@ public sealed class NativeLayoutTests
         Assert.AreEqual(48L, Marshal.OffsetOf<NativeEvent>("Device").ToInt64());
         Assert.AreEqual(144L, Marshal.OffsetOf<NativeEvent>("DisplayName").ToInt64());
         Assert.AreEqual(176L, Marshal.OffsetOf<NativeEvent>("ByteCount").ToInt64());
+        Assert.AreEqual(16L, Marshal.OffsetOf<NativeDiagnosticEvent>("Sequence").ToInt64());
+        Assert.AreEqual(24L, Marshal.OffsetOf<NativeDiagnosticEvent>("Error").ToInt64());
     }
 }

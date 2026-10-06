@@ -10,6 +10,27 @@ namespace UniShare.Native.Tests;
 [TestClass]
 public sealed class NativeMapperTests
 {
+    [TestMethod]
+    public void DiagnosticMapsKnownAndUnknownFixedValues()
+    {
+        var known = NativeMapper.Diagnostic(new NativeDiagnosticEvent
+        { Stage = 12, Outcome = 3, Direction = 1, ContentType = 3, Sequence = 42,
+          Error = new NativeError { Code = 11, HasPlatformError = 1, PlatformError = -5 } });
+        Assert.AreEqual(NativeDiagnosticStage.Offer, known.Stage);
+        Assert.AreEqual(NativeDiagnosticOutcome.Failed, known.Outcome);
+        Assert.AreEqual(DiagnosticDirection.Send, known.Direction);
+        Assert.AreEqual(DiagnosticContentKind.File, known.ContentKind);
+        Assert.AreEqual(ShareErrorKind.StorageFailed, known.Category);
+        Assert.AreEqual(-5L, known.PlatformCode);
+        var unknown = NativeMapper.Diagnostic(new NativeDiagnosticEvent
+        { Stage = uint.MaxValue, Outcome = uint.MaxValue, Direction = uint.MaxValue,
+          ContentType = uint.MaxValue, Error = new NativeError { Code = uint.MaxValue } });
+        Assert.AreEqual(NativeDiagnosticStage.Unknown, unknown.Stage);
+        Assert.AreEqual(NativeDiagnosticOutcome.Unknown, unknown.Outcome);
+        Assert.AreEqual(DiagnosticDirection.Unknown, unknown.Direction);
+        Assert.AreEqual(DiagnosticContentKind.Unknown, unknown.ContentKind);
+        Assert.AreEqual(ShareErrorKind.Unknown, unknown.Category);
+    }
     private static object? Map(string method, params object[] arguments)
     {
         var type = Assembly.Load("UniShare.Native").GetType("UniShare.Native.Interop.NativeMapper");

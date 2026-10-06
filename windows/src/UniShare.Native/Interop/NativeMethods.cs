@@ -43,6 +43,10 @@ internal static partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial NativeError usdk_set_event_handler(ulong sdk, nint handler, nint context);
 
+    [LibraryImport("unishare")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial NativeError usdk_set_diagnostic_handler(ulong sdk, nint handler, nint context);
+
     [LibraryImport("unishare", StringMarshalling = StringMarshalling.Utf8)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial NativeError usdk_get_devices(ulong sdk, out nint result);

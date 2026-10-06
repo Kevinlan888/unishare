@@ -44,7 +44,8 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         Preferences = preferences = new(settingsStore, new WindowsViewModelFiles(() => preferences?.Settings.ReceiveDirectory), bindingDispatcher, new());
         sdk = model.IsDemo ? new DemoSdkClient() : new NativeShareSdkClient(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniShare", "Identity"),
-            (stage, outcome, failure, error) => TryLog(DiagnosticComponent.Sdk, stage, outcome, failure, error));
+            (stage, outcome, failure, error) => TryLog(DiagnosticComponent.Sdk, stage, outcome, failure, error),
+            record => { try { diagnostics.WriteNativeEvent(record); } catch { /* Logging is best-effort. */ } });
         tracker = new(new SqliteActivityRepository(), new SystemClock());
         Session = new(sdk, tracker);
         transfers = new(sdk, tracker, new ReceiveFileStore(), () => Preferences.Settings);
