@@ -31,5 +31,6 @@ public sealed partial class DeviceListPane : UserControl
     {
         foreach (var label in new[] { ShareLabel, DevicesLabel, HistoryLabel, SettingsLabel, RecentHeading, NearbyHeading })
             label.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        EmptyHint.Visibility = !compact && model.Recent.Count + model.Nearby.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 }
