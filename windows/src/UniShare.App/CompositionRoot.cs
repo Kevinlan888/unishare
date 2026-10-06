@@ -95,6 +95,7 @@ public sealed class ShellProjection : ObservableObject
     public ObservableCollection<DeviceProjection> Recent { get; } = [];
     public ObservableCollection<DeviceProjection> Nearby { get; } = [];
     public ObservableCollection<ActivityProjection> Activities { get; } = [];
+    public ObservableCollection<ActivityProjection> SharedFiles { get; } = [];
     public DeviceProjection? SelectedDevice
     {
         get => selected;
@@ -102,6 +103,7 @@ public sealed class ShellProjection : ObservableObject
         {
             if (!SetProperty(ref selected, value)) return;
             Activities.Clear();
+            SharedFiles.Clear();
             if (IsDemo && value?.Name == "Kevin’s iPhone")
             {
                 Activities.Add(new(ContentKind.Text, ShareDirection.Outgoing, "", Strings.Get("DemoGreeting"), "", "19:20", ActivityStatus.Completed));

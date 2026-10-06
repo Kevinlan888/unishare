@@ -1,4 +1,5 @@
 using Microsoft.UI.Dispatching;
+using System.Globalization;
 using UniShare.Application.Abstractions;
 using UniShare.Application.Models;
 using UniShare.Application.Services;
@@ -108,12 +109,8 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     }
     public void ApplyLanguage(LanguagePolicy language)
     {
-        ((App)Microsoft.UI.Xaml.Application.Current).ChangeLanguage(language switch
-        {
-            LanguagePolicy.English => "en-US",
-            LanguagePolicy.SimplifiedChinese => "zh-CN",
-            _ => null
-        });
+        ((App)Microsoft.UI.Xaml.Application.Current).ChangeLanguage(
+            LanguagePolicyResolver.Resolve(language, CultureInfo.CurrentUICulture.Name));
         tray.RefreshText(); projection.Refresh();
     }
     private void Dispatch(Action action)
@@ -174,9 +171,14 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     private void RenderActivities(DeviceId device)
     {
         model.Activities.Clear();
-        foreach (var record in tracker.GetDeviceSnapshot(device))
+        model.SharedFiles.Clear();
+        var records = tracker.GetDeviceSnapshot(device);
+        foreach (var record in records)
             model.Activities.Add(new(record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
                 tracker.GetPreview(record.Id)?.Text ?? "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin) { Id = record.Id });
+        foreach (var record in RecentFileActivities.Select(records))
+            model.SharedFiles.Add(new(record.Kind, record.Direction, record.DisplayName,
+                "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin) { Id = record.Id });
     }
     private DeviceSessionViewModel? CurrentSession()
     {

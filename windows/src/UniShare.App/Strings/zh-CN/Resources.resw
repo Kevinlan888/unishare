@@ -183,4 +183,5 @@
 <data name="ConnectPair.Content" xml:space="preserve"><value>连接并配对</value></data>
 <data name="ForgetDevice.Content" xml:space="preserve"><value>忘记设备</value></data>
 <data name="IdentityWarning" xml:space="preserve"><value>此设备的身份已变化。请先忘记设备，再重新配对。</value></data>
+<data name="NoSharedFiles.Text" xml:space="preserve"><value>暂无分享文件</value></data>
 </root>

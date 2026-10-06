@@ -183,4 +183,5 @@
 <data name="ConnectPair.Content" xml:space="preserve"><value>Connect and pair</value></data>
 <data name="ForgetDevice.Content" xml:space="preserve"><value>Forget device</value></data>
 <data name="IdentityWarning" xml:space="preserve"><value>This device’s identity changed. Forget it and pair again before sharing.</value></data>
+<data name="NoSharedFiles.Text" xml:space="preserve"><value>No shared files yet</value></data>
 </root>

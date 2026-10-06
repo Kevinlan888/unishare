@@ -6,9 +6,11 @@ public sealed partial class DeviceDetailsPane : UserControl, IDisposable
 {
     private readonly ShellProjection model;
     private readonly ViewSubscriptions subscriptions;
-    public DeviceDetailsPane(ShellProjection model) { InitializeComponent(); this.model = model; DataContext = model; subscriptions = new(model, property => { if (property == nameof(model.SelectedDevice)) Refresh(); }); Refresh(); }
-    public void Dispose() { subscriptions.Dispose(); DataContext = null; }
-    private void Refresh() { DeviceStatus.Text = model.SelectedDevice is null ? Strings.Get("NoSelection") : Strings.Get(model.CanSend ? "Online" : "Offline"); TrustValue.Text = Strings.Get(model.SelectedDevice?.Trusted == true ? "Yes" : "No"); HeroOnlineDot.Visibility = model.CanSend ? Visibility.Visible : Visibility.Collapsed; }
+    public DeviceDetailsPane(ShellProjection model) { InitializeComponent(); this.model = model; DataContext = model; subscriptions = new(model, property => { if (property == nameof(model.SelectedDevice)) Refresh(); }); model.SharedFiles.CollectionChanged += OnSharedFilesChanged; Refresh(); }
+    public void Dispose() { model.SharedFiles.CollectionChanged -= OnSharedFilesChanged; subscriptions.Dispose(); DataContext = null; }
+    private void OnSharedFilesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => RefreshSharedFiles();
+    private void RefreshSharedFiles() => NoSharedFiles.Visibility = model.SharedFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    private void Refresh() { DeviceStatus.Text = model.SelectedDevice is null ? Strings.Get("NoSelection") : Strings.Get(model.CanSend ? "Online" : "Offline"); TrustValue.Text = Strings.Get(model.SelectedDevice?.Trusted == true ? "Yes" : "No"); HeroOnlineDot.Visibility = model.CanSend ? Visibility.Visible : Visibility.Collapsed; RefreshSharedFiles(); }
     private void TextClick(object sender, RoutedEventArgs e)
     {
         // Focus the composer through the visual tree, without creating an operation.
