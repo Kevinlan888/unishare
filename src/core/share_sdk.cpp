@@ -42,7 +42,7 @@ struct ShareSdk::State final : IDeviceDiscovery,std::enable_shared_from_this<Sta
   };
  }
  void EmitState(DiscoveryState v){if(state_handler)runtime->callbacks->Post([f=state_handler,v]{f(v);});}
- void Report(DiagnosticEvent event){if(diagnostic_handler)runtime->callbacks->Post([f=diagnostic_handler,event=std::move(event)]{try{f(event);}catch(...){}});}
+ void Report(DiagnosticEvent event) noexcept {try{if(diagnostic_handler)runtime->callbacks->Post([f=diagnostic_handler,event=std::move(event)]{try{f(event);}catch(...){}});}catch(...){}}
  void Report(DiagnosticStage stage,DiagnosticOutcome outcome,std::optional<ShareError> error={}){
   Report({stage,outcome,DiagnosticDirection::None,DiagnosticContentKind::None,0,std::move(error)});
  }
@@ -271,7 +271,7 @@ OperationId ShareSdk::Initialize(SdkConfig config,IPlatform& p,ResultCallback<vo
 OperationId ShareSdk::Start(ResultCallback<void> cb){return state_->Start(std::move(cb));}
 OperationId ShareSdk::Stop(ResultCallback<void> cb){return state_->Stop(std::move(cb));}
 SdkState ShareSdk::GetState() const {SdkState out;state_->runtime->scheduler->Invoke([&]{out=state_->state;});return out;}
-void ShareSdk::SetDiagnosticHandler(std::function<void(DiagnosticEvent)> handler){state_->runtime->scheduler->Invoke([s=state_,handler=std::move(handler)]() mutable {s->diagnostic_handler=std::move(handler);});}
+void ShareSdk::SetDiagnosticHandler(std::function<void(DiagnosticEvent)> handler){state_->runtime->scheduler->Invoke([s=state_,handler=std::move(handler)]() mutable {s->diagnostic_handler=std::move(handler);std::weak_ptr<State> weak=s;s->runtime->diagnostic_sink=[weak](DiagnosticEvent event){if(auto owner=weak.lock())owner->Report(std::move(event));};});}
 std::shared_ptr<IDeviceDiscovery> ShareSdk::Discovery() const{return state_;}
 std::shared_ptr<IConnectionManager> ShareSdk::Connections() const {std::shared_ptr<IConnectionManager> out;state_->runtime->scheduler->Invoke([&]{out=state_->runtime->connections;});return out;}
 std::shared_ptr<ITransferService> ShareSdk::Transfers() const {std::shared_ptr<ITransferService> out;state_->runtime->scheduler->Invoke([&]{out=state_->runtime->transfers;});return out;}

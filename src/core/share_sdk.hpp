@@ -27,6 +27,10 @@ struct SdkRuntime {
  // Stop/network loss invokes cleanup before cancelling public operations.
  std::function<void(ShareError)> stop_services;
  std::function<void()> start_services;
+ std::uint64_t next_diagnostic_sequence=1;
+ std::function<void(DiagnosticEvent)> diagnostic_sink;
+ std::uint64_t NextDiagnosticSequence(){return next_diagnostic_sequence++;}
+ void ReportDiagnostic(DiagnosticEvent event) noexcept {try{if(diagnostic_sink)diagnostic_sink(std::move(event));}catch(...){}}
 };
 class ShareSdk final : public IShareSdk {
  struct State;std::shared_ptr<State> state_;

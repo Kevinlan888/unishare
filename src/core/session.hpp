@@ -2,6 +2,7 @@
 #include "identity.hpp"
 #include "pairing.hpp"
 #include "byte_budget.hpp"
+#include "unishare/diagnostics.hpp"
 #include "../protocol/frame_codec.hpp"
 #include <deque>
 #include <map>
@@ -41,7 +42,7 @@ class Session : public std::enable_shared_from_this<Session> {
 public:
  using SocketHandle=std::shared_ptr<ISocket>;
  using Handler=std::function<void(SessionEvent)>;
- Session(LocalIdentity,TrustStore&,ISocketFactory&,ISessionScheduler&,SessionAdmission&,std::shared_ptr<IExecutor>,Handler,std::shared_ptr<ISessionScheduler> scheduler_owner = {});
+ Session(LocalIdentity,TrustStore&,ISocketFactory&,ISessionScheduler&,SessionAdmission&,std::shared_ptr<IExecutor>,Handler,std::shared_ptr<ISessionScheduler> scheduler_owner = {},std::function<void(DiagnosticEvent)> diagnostic = {},std::uint64_t diagnostic_sequence = 0,DiagnosticDirection diagnostic_direction = DiagnosticDirection::None);
  ~Session();
  Session(const Session&)=delete; Session& operator=(const Session&)=delete;
  void Connect(DeviceInfo);
@@ -71,6 +72,9 @@ private:
  LocalIdentity identity_; TrustStore& trust_; ISocketFactory& factory_;
  ISessionScheduler& scheduler_; SessionAdmission& admission_;
  std::shared_ptr<IExecutor> executor_; Handler handler_; SocketHandle socket_;
+ std::function<void(DiagnosticEvent)> diagnostic_;std::uint64_t diagnostic_sequence_=0;
+ DiagnosticDirection diagnostic_direction_=DiagnosticDirection::None;
+ std::optional<DiagnosticStage> diagnostic_pending_stage_;
  SSL_CTX* ctx_=nullptr; SSL* ssl_=nullptr;
  bool started_=false,closed_=false,initiator_=false,handshake_=false,reading_=false,writing_=false;
  bool admitted_=false,pair_slot_=false,hello_received_=false,local_confirmed_=false,peer_confirmed_=false;
@@ -99,5 +103,8 @@ private:
  void Message(const protocol::Message&); void Queue(protocol::Message);
  void MaybeConnected(); void Emit(SessionEvent::Kind,std::optional<ShareError> error={},std::string sas={});
  bool InitTls(); bool VerifyPeer(); void Fail(ErrorCode,const char*);
+ void Diagnostic(DiagnosticStage,DiagnosticOutcome,std::optional<ShareError> = {}) noexcept;
+ void BeginDiagnostic(DiagnosticStage);
+ void EndDiagnostic(DiagnosticStage,DiagnosticOutcome,std::optional<ShareError> = {});
 };
 }

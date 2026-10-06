@@ -14,6 +14,8 @@ class Connections final : public IConnectionManager,
         RequestId public_request = 0;
         OperationId local_request = 0;
         bool decision = false, paired = false;
+        std::uint64_t diagnostic_sequence = 0;
+        DiagnosticDirection diagnostic_direction = DiagnosticDirection::None;
     };
     IPlatform &platform_;
     TrustStore trust_;
@@ -25,6 +27,11 @@ class Connections final : public IConnectionManager,
     std::function<void(PairingRequest)> pairing_;
     std::function<void(PairingResult)> paired_;
     std::function<void(DeviceId)> identity_;
+    void Report(const Connection &c,DiagnosticStage stage,DiagnosticOutcome outcome,
+                std::optional<ShareError> error={}) {
+        if(auto r=runtime.lock())r->ReportDiagnostic({stage,outcome,c.diagnostic_direction,
+            DiagnosticContentKind::None,c.diagnostic_sequence,std::move(error)});
+    }
     Result<void> Refresh(SdkRuntime &r) {
         auto result = platform_.IdentityStore().LoadTrust();
         if (!result.ok())
@@ -39,13 +46,15 @@ class Connections final : public IConnectionManager,
             return;
         auto &c = connections_.at(id);
         std::weak_ptr<Connections> weak = shared_from_this();
+        std::weak_ptr<SdkRuntime> weak_runtime=r;
         c.session = std::make_shared<Session>(
             *r->identity, trust_, platform_.Sockets(), *queue, r->admission, queue,
             [weak, id](auto e) {
                 if (auto s = weak.lock())
                     s->Event(id, e);
             },
-            queue);
+            queue,[weak_runtime](DiagnosticEvent event){if(auto owner=weak_runtime.lock())owner->ReportDiagnostic(std::move(event));},
+            c.diagnostic_sequence,c.diagnostic_direction);
         if (socket)
             c.session->Accept(std::move(socket));
         else {
@@ -102,6 +111,7 @@ class Connections final : public IConnectionManager,
                 return;
             }
             c.paired = true;
+            Report(c,DiagnosticStage::Connect,DiagnosticOutcome::Succeeded);
             transfers.attach(id, c.session);
             if (c.public_request) {
                 PublicEvent(*r, paired_,
@@ -132,6 +142,8 @@ class Connections final : public IConnectionManager,
             return;
         auto c = std::move(found->second);
         connections_.erase(found);
+        if(!c.paired)Report(c,DiagnosticStage::Connect,
+            error.code==ErrorCode::Cancelled?DiagnosticOutcome::Cancelled:DiagnosticOutcome::Failed,error);
         c.session->Close(error);
         transfers.detach(id, error);
         if (c.connect)
@@ -178,7 +190,9 @@ class Connections final : public IConnectionManager,
             return;
         }
         auto id = next_++;
-        connections_.emplace(id, Connection{});
+        Connection c;c.diagnostic_sequence=r->NextDiagnosticSequence();c.diagnostic_direction=DiagnosticDirection::Receive;
+        connections_.emplace(id,std::move(c));
+        Report(connections_.at(id),DiagnosticStage::Connect,DiagnosticOutcome::Began);
         Begin(id, std::move(socket));
     }
     void Shutdown(ShareError error, bool disable) {
@@ -228,7 +242,10 @@ class Connections final : public IConnectionManager,
                 Connection c;
                 c.device = *i;
                 c.connect = ticket;
+                c.diagnostic_sequence=r.NextDiagnosticSequence();
+                c.diagnostic_direction=DiagnosticDirection::Send;
                 s.connections_.emplace(id, std::move(c));
+                s.Report(s.connections_.at(id),DiagnosticStage::Connect,DiagnosticOutcome::Began);
                 s.Begin(id);
             });
     }

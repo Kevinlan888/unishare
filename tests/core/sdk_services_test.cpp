@@ -421,6 +421,74 @@ void Connect(Peer &a, Peer &b) {
     CHECK(a.sdk.Connections()->GetTrustedDevices().size() >= 1);
     CHECK(a.sdk.Discovery()->GetDevices()[0].paired);
 }
+void DiagnosticConnectionAndTransfers() {
+    Peer a, b;
+    std::vector<DiagnosticEvent> sending, receiving;
+    a.sdk.SetDiagnosticHandler([&](auto event) { sending.push_back(event); });
+    b.sdk.SetDiagnosticHandler([&](auto event) { receiving.push_back(event); });
+    auto count = [](const auto &events, DiagnosticStage stage, DiagnosticOutcome outcome,
+                    DiagnosticDirection direction = DiagnosticDirection::None) {
+        return std::count_if(events.begin(), events.end(), [&](const auto &e) {
+            return e.stage == stage && e.outcome == outcome && e.direction == direction;
+        });
+    };
+    a.sdk.Transfers()->SendText(b.Id(), "private body", [](auto r) {
+        CHECK(!r.ok() && r.error().code == ErrorCode::AuthenticationFailed);
+    });
+    Pump(a.sdk, a.q);
+    CHECK(std::any_of(sending.begin(), sending.end(), [](const auto &e) {
+        return e.stage == DiagnosticStage::Transfer && e.outcome == DiagnosticOutcome::Failed &&
+               e.direction == DiagnosticDirection::Send && e.error &&
+               e.error->code == ErrorCode::AuthenticationFailed && e.sequence != 0;
+    }));
+    Connect(a, b);
+    CHECK(count(sending, DiagnosticStage::Connect, DiagnosticOutcome::Began, DiagnosticDirection::Send) >= 1);
+    CHECK(count(sending, DiagnosticStage::TlsHandshake, DiagnosticOutcome::Succeeded, DiagnosticDirection::Send) >= 1);
+    CHECK(count(receiving, DiagnosticStage::Pairing, DiagnosticOutcome::Succeeded, DiagnosticDirection::Receive) >= 1);
+    const auto connect = std::find_if(sending.begin(), sending.end(), [](const auto &e) {
+        return e.stage == DiagnosticStage::Connect && e.outcome == DiagnosticOutcome::Began;
+    });
+    const auto tls = std::find_if(sending.begin(), sending.end(), [](const auto &e) {
+        return e.stage == DiagnosticStage::TlsHandshake && e.outcome == DiagnosticOutcome::Succeeded;
+    });
+    CHECK(connect != sending.end() && tls != sending.end() && connect->sequence != 0 && connect->sequence == tls->sequence);
+    a.sdk.Transfers()->SendText(b.Id(), "hello", [](auto r) { CHECK(r.ok()); });
+    Settle(a, b);
+    CHECK(count(sending, DiagnosticStage::Offer, DiagnosticOutcome::Began, DiagnosticDirection::Send) == 1);
+    CHECK(count(receiving, DiagnosticStage::Offer, DiagnosticOutcome::Succeeded, DiagnosticDirection::Receive) == 1);
+    b.sdk.Transfers()->Accept(b.offers.back().request_id, std::make_shared<Memory>(), [](auto r) { CHECK(r.ok()); });
+    Settle(a, b);
+    CHECK(count(receiving, DiagnosticStage::Accept, DiagnosticOutcome::Succeeded, DiagnosticDirection::Receive) == 1);
+    CHECK(count(sending, DiagnosticStage::TransferStream, DiagnosticOutcome::Began, DiagnosticDirection::Send) == 1);
+    CHECK(count(receiving, DiagnosticStage::IntegrityVerify, DiagnosticOutcome::Succeeded, DiagnosticDirection::Receive) == 1);
+    CHECK(count(sending, DiagnosticStage::PeerComplete, DiagnosticOutcome::Succeeded, DiagnosticDirection::Send) == 1);
+    CHECK(count(sending, DiagnosticStage::Transfer, DiagnosticOutcome::Succeeded, DiagnosticDirection::Send) == 1);
+    CHECK(count(receiving, DiagnosticStage::Transfer, DiagnosticOutcome::Succeeded, DiagnosticDirection::Receive) == 1);
+    auto source = std::make_shared<Memory>(); source->bytes = {1, 2, 3};
+    a.sdk.Transfers()->SendFile(b.Id(), {"private.txt", "application/octet-stream", 3, source}, [](auto r) { CHECK(!r.ok()); });
+    Settle(a, b);
+    b.sdk.Transfers()->Reject(b.offers.back().request_id, [](auto r) { CHECK(r.ok()); });
+    Settle(a, b);
+    CHECK(std::any_of(sending.begin(), sending.end(), [](const auto &e) {
+        return e.stage == DiagnosticStage::Transfer && e.outcome == DiagnosticOutcome::Failed &&
+               e.content_kind == DiagnosticContentKind::File && e.error &&
+               e.error->code == ErrorCode::TransferRejected;
+    }));
+}
+void DiagnosticPairingRejected() {
+    Peer a, b;
+    std::vector<DiagnosticEvent> received;
+    b.sdk.SetDiagnosticHandler([&](auto event) { received.push_back(event); });
+    a.Discover(b);a.Wire(b);
+    a.sdk.Connections()->Connect(b.Id(), [](auto r) { CHECK(!r.ok()); });
+    Settle(a,b);
+    CHECK(a.pairing.size()==1&&b.pairing.size()==1);
+    a.sdk.Connections()->ConfirmPairing(a.pairing.back().id,false,[](auto r){CHECK(r.ok());});
+    b.sdk.Connections()->ConfirmPairing(b.pairing.back().id,true,[](auto r){CHECK(r.ok());});
+    Settle(a,b);
+    CHECK(std::any_of(received.begin(),received.end(),[](const auto& e){return e.stage==DiagnosticStage::Pairing&&e.outcome==DiagnosticOutcome::Failed&&e.error&&e.error->code==ErrorCode::PairingRejected;}));
+    CHECK(std::count_if(received.begin(),received.end(),[](const auto& e){return e.stage==DiagnosticStage::Connect&&e.outcome==DiagnosticOutcome::Failed;})==1);
+}
 // Missing consent gates, receipt confirmation, or global request routing fail here.
 void ContentBeforePublicConnectionHandlerAttaches() {
     Peer a, b;
@@ -989,6 +1057,8 @@ int main(int argc, char **argv) {
     PublicTransferIds();
     ClipboardContract();
     ConnectionAndTransfers();
+    DiagnosticConnectionAndTransfers();
+    DiagnosticPairingRejected();
     ReceiptBeforeStop();
     GlobalHandlesAndCleanup();
     DestroyWithPendingCallbacks();

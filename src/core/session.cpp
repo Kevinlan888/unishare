@@ -37,8 +37,13 @@ bool SessionAdmission::Pair(const std::string& source,ISessionScheduler::Time no
  auto& q=attempts_[source];if(q.size()>=3)return false;q.push_back(now);++pending_;return true;
 }
 void SessionAdmission::ReleasePair(){if(pending_)--pending_;}
-Session::Session(LocalIdentity i,TrustStore& t,ISocketFactory& f,ISessionScheduler& s,SessionAdmission& a,std::shared_ptr<IExecutor> e,Handler h,std::shared_ptr<ISessionScheduler> owner)
- :scheduler_owner_(std::move(owner)),identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(e?std::move(e):std::shared_ptr<IExecutor>(&s,[](IExecutor*){})),handler_(std::move(h)){}
+Session::Session(LocalIdentity i,TrustStore& t,ISocketFactory& f,ISessionScheduler& s,SessionAdmission& a,std::shared_ptr<IExecutor> e,Handler h,std::shared_ptr<ISessionScheduler> owner,std::function<void(DiagnosticEvent)> diagnostic,std::uint64_t diagnostic_sequence,DiagnosticDirection diagnostic_direction)
+ :scheduler_owner_(std::move(owner)),identity_(std::move(i)),trust_(t),factory_(f),scheduler_(s),admission_(a),executor_(e?std::move(e):std::shared_ptr<IExecutor>(&s,[](IExecutor*){})),handler_(std::move(h)),diagnostic_(std::move(diagnostic)),diagnostic_sequence_(diagnostic_sequence),diagnostic_direction_(diagnostic_direction){}
+void Session::Diagnostic(DiagnosticStage stage,DiagnosticOutcome outcome,std::optional<ShareError> error) noexcept {
+ try{if(diagnostic_)diagnostic_({stage,outcome,diagnostic_direction_,DiagnosticContentKind::None,diagnostic_sequence_,std::move(error)});}catch(...){}
+}
+void Session::BeginDiagnostic(DiagnosticStage stage){diagnostic_pending_stage_=stage;Diagnostic(stage,DiagnosticOutcome::Began);}
+void Session::EndDiagnostic(DiagnosticStage stage,DiagnosticOutcome outcome,std::optional<ShareError> error){if(diagnostic_pending_stage_==stage)diagnostic_pending_stage_.reset();Diagnostic(stage,outcome,std::move(error));}
 Session::~Session(){if(!closed_)Close({ErrorCode::Cancelled,"session destroyed",{}});if(deadline_)scheduler_.Cancel(deadline_);if(socket_)socket_->Close();if(pair_slot_)admission_.ReleasePair();if(admitted_)admission_.Closed();SSL_free(ssl_);SSL_CTX_free(ctx_);}
 void Session::Emit(SessionEvent::Kind kind,std::optional<ShareError> error,std::string sas){
  SessionEvent event{kind,request_,hello_received_?peer_.device_id:expected_.value_or(DeviceId{}),std::move(sas),std::move(error)};
@@ -51,6 +56,7 @@ void Session::Close(ShareError error){
  // destruction weak_from_this is expired, but the destructor owns that scope.
  auto keep_alive=weak_from_this().lock();
  if(closed_)return;closed_=true;connected_=false;
+ if(diagnostic_pending_stage_){Diagnostic(*diagnostic_pending_stage_,error.code==ErrorCode::Cancelled?DiagnosticOutcome::Cancelled:DiagnosticOutcome::Failed,error);diagnostic_pending_stage_.reset();}
  if(deadline_){scheduler_.Cancel(deadline_);deadline_=0;}
  if(socket_)socket_->Close();
  if(pair_slot_){admission_.ReleasePair();pair_slot_=false;}if(admitted_){admission_.Closed();admitted_=false;}
@@ -69,12 +75,13 @@ void Session::Close(ShareError error){
 }
 void Session::Connect(DeviceInfo device){
  if(started_||closed_)return;started_=true;initiator_=true;expected_=device.id;
+ BeginDiagnostic(DiagnosticStage::SocketConnect);
  if(device.addresses.empty()||!device.port){Fail(ErrorCode::InvalidInput,"missing connect endpoint");return;}
  auto weak=weak_from_this();deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
  auto* scheduler=&scheduler_;
- factory_.Connect(device.addresses.front(),device.port,[weak,scheduler,owner=scheduler_owner_](Result<SocketHandle> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_){if(result.ok())result.value()->Close();return;}if(!result.ok())self->Close(result.error());else self->Begin(result.value());}else if(result.ok())result.value()->Close();});});
+ factory_.Connect(device.addresses.front(),device.port,[weak,scheduler,owner=scheduler_owner_](Result<SocketHandle> result){scheduler->Post([weak,result]{if(auto self=weak.lock()){if(self->closed_){if(result.ok())result.value()->Close();return;}if(!result.ok()){self->EndDiagnostic(DiagnosticStage::SocketConnect,DiagnosticOutcome::Failed,result.error());self->Close(result.error());}else {self->EndDiagnostic(DiagnosticStage::SocketConnect,DiagnosticOutcome::Succeeded);self->Begin(result.value());}}else if(result.ok())result.value()->Close();});});
 }
-void Session::Accept(SocketHandle socket){if(started_||closed_){if(socket)socket->Close();return;}started_=true;Begin(std::move(socket));}
+void Session::Accept(SocketHandle socket){if(started_||closed_){if(socket)socket->Close();return;}started_=true;BeginDiagnostic(DiagnosticStage::SocketConnect);EndDiagnostic(DiagnosticStage::SocketConnect,DiagnosticOutcome::Succeeded);Begin(std::move(socket));}
 bool Session::InitTls(){
  ctx_=SSL_CTX_new(TLS_method());if(!ctx_)return false;
  if(SSL_CTX_set_min_proto_version(ctx_,TLS1_3_VERSION)!=1||SSL_CTX_set_max_proto_version(ctx_,TLS1_3_VERSION)!=1||SSL_CTX_set_max_early_data(ctx_,0)!=1)return false;
@@ -94,6 +101,7 @@ bool Session::InitTls(){
 }
 void Session::Begin(SocketHandle socket){
  socket_=std::move(socket);
+ BeginDiagnostic(DiagnosticStage::TlsHandshake);
  if(!socket_){Fail(ErrorCode::InvalidInput,"null socket");return;}
  if(!admission_.Open()){Fail(ErrorCode::ResourceLimit,"connection limit");return;}admitted_=true;
  auto weak=weak_from_this();if(!deadline_)deadline_=scheduler_.ScheduleAt(scheduler_.Now()+std::chrono::seconds(60),[weak]{if(auto self=weak.lock())if(!self->connected_)self->Fail(ErrorCode::Timeout,"connection approval deadline");});
@@ -211,7 +219,7 @@ void Session::Pump(){
  pumping_=true;struct PumpGuard {bool& flag;~PumpGuard(){flag=false;}} guard{pumping_};
  bool write_blocked=false;
  if(!handshake_){ERR_clear_error();const int rc=SSL_do_handshake(ssl_);const int error=rc==1?SSL_ERROR_NONE:SSL_get_error(ssl_,rc);
-  if(rc==1){if(!VerifyPeer()){Fail(ErrorCode::AuthenticationFailed,"peer certificate rejected");return;}handshake_=true;Queue(local_);}
+  if(rc==1){EndDiagnostic(DiagnosticStage::TlsHandshake,DiagnosticOutcome::Succeeded);BeginDiagnostic(DiagnosticStage::IdentityVerify);if(!VerifyPeer()){Fail(ErrorCode::AuthenticationFailed,"peer certificate rejected");return;}handshake_=true;Queue(local_);}
   else if(error!=SSL_ERROR_WANT_READ&&error!=SSL_ERROR_WANT_WRITE){Fail(ErrorCode::AuthenticationFailed,"TLS handshake failed");return;}
  }
  if(handshake_){
@@ -257,7 +265,9 @@ void Session::Message(const protocol::Message& message){
   if(peer_.public_key_fingerprint!=tls_peer_fingerprint_||(expected_&&peer_.device_id!=*expected_)){Fail(ErrorCode::IdentityChanged,"Hello identity differs from authenticated peer");return;}
   if(peer_.device_id==local_.device_id){Fail(ErrorCode::AuthenticationFailed,"self connection");return;}
   auto match=trust_.Match(peer_.device_id,peer_.public_key_fingerprint);if(!match.ok()){Close(match.error());return;}known_=match.value();
+  EndDiagnostic(DiagnosticStage::IdentityVerify,DiagnosticOutcome::Succeeded);
   if(known_&&initiator_){local_confirmed_=true;decision_sent_=true;Queue(protocol::PairDecision{true});MaybeConnected();return;}
+  BeginDiagnostic(DiagnosticStage::Pairing);
   if(!admission_.Pair(socket_->RemoteEndpoint(),scheduler_.Now())){Fail(ErrorCode::ResourceLimit,"pairing admission limit");return;}pair_slot_=true;request_=next_request.fetch_add(1);
   std::array<unsigned char,32> exporter{};constexpr char label[]="EXPORTER-unishare-pairing-v1";
   if(SSL_export_keying_material(ssl_,exporter.data(),exporter.size(),label,sizeof(label)-1,nullptr,0,0)!=1){Fail(ErrorCode::AuthenticationFailed,"TLS exporter failed");return;}
@@ -280,6 +290,7 @@ void Session::MaybeConnected(){
  if(closed_||connected_||rejecting_||!decision_flushed_||!hello_received_||!local_confirmed_||!peer_confirmed_||!decision_sent_)return;
  if(!known_){auto pin=trust_.Pin(peer_.device_id,peer_.public_key_fingerprint);if(!pin.ok()){Close(pin.error());return;}}
  connected_=true;if(io_charge_)io_charge_->Shrink(ConnectedCharge);if(deadline_){scheduler_.Cancel(deadline_);deadline_=0;}if(pair_slot_){admission_.ReleasePair();pair_slot_=false;}
+ if(diagnostic_pending_stage_==DiagnosticStage::Pairing)EndDiagnostic(DiagnosticStage::Pairing,DiagnosticOutcome::Succeeded);
  Emit(SessionEvent::Kind::Connected);
  if(delivery_)DispatchDelivery();
 }

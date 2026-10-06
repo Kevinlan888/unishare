@@ -1,5 +1,6 @@
 #include "unishare/c_api.h"
 #include "unishare/c_api_bridge.hpp"
+#include "unishare/diagnostics.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -8,6 +9,10 @@
 #include <iostream>
 #include <system_error>
 #include <thread>
+#include <type_traits>
+static_assert(std::is_same_v<decltype(unishare::DiagnosticEvent{}.error),
+                             std::optional<unishare::DiagnosticError>>,
+              "native diagnostic errors must have no free-form message");
 #define CHECK(...)                                                             \
   do {                                                                         \
     if (!(__VA_ARGS__)) {                                                      \

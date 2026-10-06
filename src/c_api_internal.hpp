@@ -13,6 +13,10 @@ inline usdk_error Error(const ShareError &e) {
   return {static_cast<uint32_t>(e.code), e.platform_error ? 1u : 0u,
           e.platform_error.value_or(0)};
 }
+inline usdk_error Error(const DiagnosticError &e) {
+  return {static_cast<uint32_t>(e.code), e.platform_error ? 1u : 0u,
+          e.platform_error.value_or(0)};
+}
 inline usdk_error Exception() noexcept {
   try {
     throw;

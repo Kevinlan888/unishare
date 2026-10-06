@@ -24,17 +24,55 @@ struct Stream : unishare::IStream {
  void AbortAndCleanup() override{aborted=true;bytes.clear();closed=true;}
 };
 struct Rig {
- Pair p;std::shared_ptr<TransferEngine> a,b;std::vector<IncomingOffer> offers;
+ Pair p;std::vector<DiagnosticEvent> ad,bd;
+ std::shared_ptr<TransferEngine> a,b;std::vector<IncomingOffer> offers;
  std::vector<TransferResult> ar,br;std::vector<TransferProgress> ap,bp;
  Rig(bool receiver=true,SdkConfig config={}) {p.Start();p.ConfirmA();p.ConfirmB();
   config.callback_executor=std::shared_ptr<IExecutor>(&p.q,[](IExecutor*){});
-  a=TransferEngine::Create(p.a,p.q,p.a_limit,config,{},[this](auto x){ap.push_back(x);},[this](auto x){ar.push_back(x);});
-  if(receiver)b=TransferEngine::Create(p.b,p.q,p.b_limit,config,[this](auto x){offers.push_back(x);},[this](auto x){bp.push_back(x);},[this](auto x){br.push_back(x);});
+  a=TransferEngine::Create(p.a,p.q,p.a_limit,config,{},[this](auto x){ap.push_back(x);},[this](auto x){ar.push_back(x);},{},[this](auto x){ad.push_back(x);});
+  if(receiver)b=TransferEngine::Create(p.b,p.q,p.b_limit,config,[this](auto x){offers.push_back(x);},[this](auto x){bp.push_back(x);},[this](auto x){br.push_back(x);},{},[this](auto x){bd.push_back(x);});
  }
  ~Rig(){p.Close();}
  ContentSource Source(ContentType type,std::shared_ptr<Stream> s){return {type,{"sample.bin","application/octet-stream",s->bytes.size(),s}};}
  TransferId Send(ContentType type,std::shared_ptr<Stream> s){auto id=a->Offer(Source(type,s));p.q.Run();return id;}
 };
+void DiagnosticStages(){
+ auto count=[](const auto& events,DiagnosticStage stage,DiagnosticOutcome outcome){return std::count_if(events.begin(),events.end(),[&](const auto& e){return e.stage==stage&&e.outcome==outcome;});};
+ {
+  Rig r;auto src=std::make_shared<Stream>(r.p.q,262145),dst=std::make_shared<Stream>(r.p.q);
+  auto id=r.Send(ContentType::File,src);r.b->Accept(id,dst);r.p.q.Run();
+  CHECK(count(r.ad,DiagnosticStage::TransferStream,DiagnosticOutcome::Began)==1);
+  CHECK(count(r.ad,DiagnosticStage::TransferStream,DiagnosticOutcome::Succeeded)==1);
+  CHECK(count(r.ad,DiagnosticStage::Transfer,DiagnosticOutcome::Succeeded)==1);
+  CHECK(count(r.bd,DiagnosticStage::Transfer,DiagnosticOutcome::Succeeded)==1);
+  CHECK(r.ad.front().sequence!=0&&r.ad.front().content_kind==DiagnosticContentKind::File);
+ }
+ {
+  Rig r;auto src=std::make_shared<Stream>(r.p.q,3),dst=std::make_shared<Stream>(r.p.q);dst->fail_write=true;
+  auto id=r.Send(ContentType::File,src);r.b->Accept(id,dst);r.p.q.Run();
+  CHECK(count(r.bd,DiagnosticStage::TransferStream,DiagnosticOutcome::Failed)==1);
+  CHECK(std::any_of(r.bd.begin(),r.bd.end(),[](const auto& e){return e.stage==DiagnosticStage::Transfer&&e.outcome==DiagnosticOutcome::Failed&&e.error&&e.error->code==ErrorCode::StorageFailed&&e.error->platform_error==28;}));
+ }
+ {
+  Rig r;auto src=std::make_shared<Stream>(r.p.q,2),dst=std::make_shared<Stream>(r.p.q);
+  auto source=r.Source(ContentType::File,src);source.content.byte_count=3;
+  auto id=r.a->Offer(source);r.p.q.Run();r.b->Accept(id,dst);r.p.q.Run();
+  CHECK(count(r.ad,DiagnosticStage::IntegrityVerify,DiagnosticOutcome::Failed)==1);
+  CHECK(count(r.ad,DiagnosticStage::Transfer,DiagnosticOutcome::Failed)==1);
+ }
+ {
+  Rig r;auto src=std::make_shared<Stream>(r.p.q,1);auto source=r.Source(ContentType::File,src);
+  source.content.display_name="../private.txt";r.a->Offer(source);r.p.q.Run();
+  CHECK(count(r.ad,DiagnosticStage::Offer,DiagnosticOutcome::Failed)==1);
+  CHECK(count(r.ad,DiagnosticStage::Transfer,DiagnosticOutcome::Failed)==1);
+ }
+ {
+  Rig r;auto src=std::make_shared<Stream>(r.p.q,3),dst=std::make_shared<Stream>(r.p.q);
+  auto id=r.Send(ContentType::File,src);src->hold=true;r.b->Accept(id,dst);r.p.q.Run();r.a->Cancel(id);src->Release();r.p.q.Run();
+  CHECK(count(r.ad,DiagnosticStage::Cancel,DiagnosticOutcome::Succeeded)==1);
+  CHECK(count(r.ad,DiagnosticStage::Transfer,DiagnosticOutcome::Cancelled)==1);
+ }
+}
 void RoundTrips(){
  for(auto type:{ContentType::Text,ContentType::Image,ContentType::File})for(auto n:{0u,3u,262144u,262145u}){
   Rig r;auto source=std::make_shared<Stream>(r.p.q,n),sink=std::make_shared<Stream>(r.p.q);
@@ -69,13 +107,15 @@ void Limits(){
 }
 void HostilePeer(){
  // Receiver is the real engine; the sender uses only the authenticated port.
- for(int mode=0;mode<7;++mode){Pair p;p.Start();p.ConfirmA();p.ConfirmB();std::vector<IncomingOffer> offers;std::vector<TransferResult> results;
-  auto e=TransferEngine::Create(p.b,p.q,p.b_limit,{},[&](auto x){offers.push_back(x);},{},[&](auto x){results.push_back(x);});
+ for(int mode=0;mode<7;++mode){Pair p;p.Start();p.ConfirmA();p.ConfirmB();std::vector<IncomingOffer> offers;std::vector<TransferResult> results;std::vector<DiagnosticEvent> diagnostics;
+  auto e=TransferEngine::Create(p.b,p.q,p.b_limit,{},[&](auto x){offers.push_back(x);},{},[&](auto x){results.push_back(x);},{},[&](auto x){diagnostics.push_back(x);});
   p.a->SetContentHandler([](auto,auto ack){ack(Result<void>::Success());},[](auto){});
   protocol::Offer o;o.transfer_id.bytes[0]=1;o.content_type=ContentType::File;o.display_name="ok";o.byte_count=1;
   if(mode==4)o.byte_count=20ULL*1024*1024*1024+1;if(mode==5)o.display_name="../escape";
   p.a->SendContent(o,[](auto x){CHECK(x.ok());});p.q.Run();auto dst=std::make_shared<Stream>(p.q);
-  if(mode>=4&&mode<=5){CHECK(offers.empty()&&results.size()==1&&!results[0].result.ok());p.Close();continue;}
+  if(mode>=4&&mode<=5){CHECK(offers.empty()&&results.size()==1&&!results[0].result.ok());
+   CHECK(std::any_of(diagnostics.begin(),diagnostics.end(),[](const auto& event){return event.stage==DiagnosticStage::Offer&&event.outcome==DiagnosticOutcome::Failed&&event.direction==DiagnosticDirection::Receive&&event.error&&(event.error->code==ErrorCode::ResourceLimit||event.error->code==ErrorCode::InvalidInput);}));
+   p.Close();continue;}
   CHECK(offers.size()==1);if(mode!=0)e->Accept(o.transfer_id,dst);p.q.Run();
   protocol::Data d;d.transfer_id=o.transfer_id;d.payload={0xa5};if(mode==2)d.payload.push_back(0xa5);if(mode==3)d.sequence=1;
   p.a->SendContent(d,[](auto){});p.q.Run();
@@ -145,4 +185,4 @@ void ExecutorsUtf8AndBudgets(){
   auto lease=r.p.a_limit.Buffers().Reserve(4*1024*1024-r.p.a_limit.Buffers().Used()-400*1024);CHECK(lease);
   r.b->Accept(id,dst);r.p.q.Run();CHECK(r.ar.size()==1&&!r.ar[0].result.ok()&&src->reads==0&&dst->aborted);lease.reset();}
 }
-int main(){RoundTrips();DecisionsAndFailures();Limits();HostilePeer();TerminalWriteFailure();FinishWriteFailure();StaleDeadline();AsyncAndBounds();SharedOfferLimit();ExecutorsUtf8AndBudgets();std::cout<<"transfer engine passed\n";}
+int main(){DiagnosticStages();RoundTrips();DecisionsAndFailures();Limits();HostilePeer();TerminalWriteFailure();FinishWriteFailure();StaleDeadline();AsyncAndBounds();SharedOfferLimit();ExecutorsUtf8AndBudgets();std::cout<<"transfer engine passed\n";}

@@ -16,12 +16,17 @@ enum class DiagnosticOutcome : std::uint32_t {
 };
 enum class DiagnosticDirection : std::uint32_t { None = 0, Send = 1, Receive = 2 };
 enum class DiagnosticContentKind : std::uint32_t { None = 0, Text = 1, Image = 2, File = 3 };
+struct DiagnosticError {
+    ErrorCode code;
+    std::optional<std::int64_t> platform_error;
+    DiagnosticError(const ShareError& error) : code(error.code), platform_error(error.platform_error) {}
+};
 struct DiagnosticEvent {
     DiagnosticStage stage;
     DiagnosticOutcome outcome;
     DiagnosticDirection direction = DiagnosticDirection::None;
     DiagnosticContentKind content_kind = DiagnosticContentKind::None;
     std::uint64_t sequence = 0;
-    std::optional<ShareError> error;
+    std::optional<DiagnosticError> error;
 };
 }

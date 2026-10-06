@@ -146,20 +146,25 @@ class TransferService final : public ITransferService,
                      std::optional<ShareError> validation = {}) {
         return Submit<TransferId>(
             shared_from_this(), std::move(cb),
-            [device, source = std::move(source), validation](auto &s, auto &r,
+             [device, source = std::move(source), validation](auto &s, auto &r,
                                                              auto ticket) mutable {
+                const auto kind=static_cast<DiagnosticContentKind>(source.type);
                 auto c = s.connection_(device);
                 if (!s.enabled || !c || !s.engines_.count(*c)) {
                     if (source.content.stream) source.content.stream->Close();
-                    ticket.Complete(Result<TransferId>::Failure(ServiceError(
-                        ErrorCode::AuthenticationFailed, "no authenticated connection")));
+                    auto error=ServiceError(ErrorCode::AuthenticationFailed, "no authenticated connection");
+                    r.ReportDiagnostic({DiagnosticStage::Transfer,DiagnosticOutcome::Failed,
+                        DiagnosticDirection::Send,kind,r.NextDiagnosticSequence(),error});
+                    ticket.Complete(Result<TransferId>::Failure(error));
                     return;
                 }
                 auto random=s.NewId();
                 if (!random) {
                     if (source.content.stream) source.content.stream->Close();
-                    ticket.Complete(Result<TransferId>::Failure(
-                        ServiceError(ErrorCode::ResourceLimit, "random transfer ID unavailable")));
+                    auto error=ServiceError(ErrorCode::ResourceLimit, "random transfer ID unavailable");
+                    r.ReportDiagnostic({DiagnosticStage::Transfer,DiagnosticOutcome::Failed,
+                        DiagnosticDirection::Send,kind,r.NextDiagnosticSequence(),error});
+                    ticket.Complete(Result<TransferId>::Failure(error));
                     return;
                 }
                 auto id = *random;
@@ -169,6 +174,8 @@ class TransferService final : public ITransferService,
                 if (validation) {
                     if (source.content.stream) source.content.stream->Close();
                     s.offering_.reset();
+                    r.ReportDiagnostic({DiagnosticStage::Transfer,DiagnosticOutcome::Failed,
+                        DiagnosticDirection::Send,kind,r.NextDiagnosticSequence(),*validation});
                     s.Finish(r, key, Result<void>::Failure(*validation));
                     return;
                 }
@@ -213,8 +220,11 @@ class TransferService final : public ITransferService,
         if (!r)
             return;
         std::weak_ptr<TransferService> weak = shared_from_this();
+        std::weak_ptr<SdkRuntime> weak_runtime=r;
         auto engine =
-            TransferEngine::Create(session, *queue, r->admission, r->config, {}, {}, {}, queue);
+            TransferEngine::Create(session, *queue, r->admission, r->config, {}, {}, {}, queue,
+                [weak_runtime](DiagnosticEvent event){if(auto owner=weak_runtime.lock())owner->ReportDiagnostic(std::move(event));},
+                [weak_runtime]{if(auto owner=weak_runtime.lock())return owner->NextDiagnosticSequence();return std::uint64_t{0};});
         engine->SetCoreObservers(
             [weak, c](auto e) {
                 if (auto s = weak.lock())

@@ -1,6 +1,7 @@
 #pragma once
 #include "session.hpp"
 #include "unishare/transfer.hpp"
+#include "unishare/diagnostics.hpp"
 #include <openssl/evp.h>
 namespace unishare::core {
 // Call on Session's serial queue. Dependencies outlive adapter callbacks.
@@ -10,7 +11,7 @@ public:
  using OfferHandler=std::function<void(IncomingOffer)>;
  using ProgressHandler=std::function<void(TransferProgress)>;
  using ResultHandler=std::function<void(TransferResult)>;
- static std::shared_ptr<TransferEngine> Create(std::shared_ptr<Session>,ISessionScheduler&,SessionAdmission&,SdkConfig,OfferHandler,ProgressHandler,ResultHandler,std::shared_ptr<ISessionScheduler> scheduler_owner = {});
+ static std::shared_ptr<TransferEngine> Create(std::shared_ptr<Session>,ISessionScheduler&,SessionAdmission&,SdkConfig,OfferHandler,ProgressHandler,ResultHandler,std::shared_ptr<ISessionScheduler> scheduler_owner = {},std::function<void(DiagnosticEvent)> diagnostic = {},std::function<std::uint64_t()> next_diagnostic_sequence = {});
  ~TransferEngine();
  TransferId Offer(ContentSource, std::optional<TransferId> = {});
  void Accept(TransferId,ContentSink);void Reject(TransferId);void Cancel(TransferId);
@@ -20,11 +21,14 @@ public:
  void SetCoreObservers(OfferHandler o,ProgressHandler p,ResultHandler r){core_offer_=std::move(o);core_progress_=std::move(p);core_result_=std::move(r);}
 private:
  struct Transfer;struct Send;
- TransferEngine(std::shared_ptr<Session>,ISessionScheduler&,SessionAdmission&,SdkConfig,OfferHandler,ProgressHandler,ResultHandler,std::shared_ptr<ISessionScheduler> scheduler_owner = {});
+ TransferEngine(std::shared_ptr<Session>,ISessionScheduler&,SessionAdmission&,SdkConfig,OfferHandler,ProgressHandler,ResultHandler,std::shared_ptr<ISessionScheduler> scheduler_owner = {},std::function<void(DiagnosticEvent)> diagnostic = {},std::function<std::uint64_t()> next_diagnostic_sequence = {});
  std::shared_ptr<ISessionScheduler> scheduler_owner_;
  std::shared_ptr<Session> session_;ISessionScheduler& queue_;ByteBudget& budget_;SessionAdmission& admission_;
  SdkConfig config_;std::shared_ptr<IExecutor> executor_;OfferHandler offer_;ProgressHandler progress_;ResultHandler result_;
  OfferHandler core_offer_;ProgressHandler core_progress_;ResultHandler core_result_;
+ std::function<void(DiagnosticEvent)> diagnostic_;
+ std::function<std::uint64_t()> next_diagnostic_sequence_;
+ std::uint64_t local_diagnostic_sequence_=1;
  std::shared_ptr<Transfer> active_;std::deque<std::shared_ptr<Send>> sends_;bool sending_=false,closed_=false;RequestId next_request_=1;
  bool Current(const std::shared_ptr<Transfer>&)const;
  std::optional<ShareError> Validate(const protocol::Offer&)const;
@@ -35,5 +39,8 @@ private:
  void Fail(const std::shared_ptr<Transfer>&,ShareError,bool notify=true);
  void Progress(const std::shared_ptr<Transfer>&);void Deadline(const std::shared_ptr<Transfer>&);
  void Closed(ShareError);void Emit(TransferId,Result<void>);
+ std::uint64_t NextDiagnosticSequence();
+ void Diagnostic(std::uint64_t,DiagnosticDirection,DiagnosticContentKind,DiagnosticStage,DiagnosticOutcome,std::optional<ShareError> = {}) noexcept;
+ void Diagnostic(const std::shared_ptr<Transfer>&,DiagnosticStage,DiagnosticOutcome,std::optional<ShareError> = {}) noexcept;
 };
 }

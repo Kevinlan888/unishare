@@ -20,6 +20,7 @@ struct TransferEngine::Transfer {
  std::shared_ptr<ByteBudget::Reservation> metadata_charge;
  enum class Phase { Offered,Receiving,Sending,AwaitComplete,Completing } phase=Phase::Offered;
  protocol::Offer offer;bool outgoing=false,terminal=false,finish_written=false,complete_received=false,offer_slot=false;std::shared_ptr<IStream> stream;
+ std::uint64_t diagnostic_sequence=0;
  std::uint64_t bytes=0,sequence=0,deadline_generation=0;OperationId deadline=0;Utf8 utf8;
  EVP_MD_CTX* digest=EVP_MD_CTX_new();
  Transfer(){if(digest&&EVP_DigestInit_ex(digest,EVP_sha256(),nullptr)!=1){EVP_MD_CTX_free(digest);digest=nullptr;}}
@@ -30,16 +31,24 @@ struct TransferEngine::Send {
  protocol::Message message;std::function<void(Result<void>)> done;
 };
 TransferEngine::TransferEngine(std::shared_ptr<Session> s,ISessionScheduler& q,SessionAdmission& a,SdkConfig c,
- OfferHandler o,ProgressHandler p,ResultHandler r,std::shared_ptr<ISessionScheduler> owner):scheduler_owner_(std::move(owner)),session_(std::move(s)),queue_(q),budget_(a.Buffers()),admission_(a),config_(std::move(c)),
+ OfferHandler o,ProgressHandler p,ResultHandler r,std::shared_ptr<ISessionScheduler> owner,std::function<void(DiagnosticEvent)> diagnostic,std::function<std::uint64_t()> next_diagnostic_sequence):scheduler_owner_(std::move(owner)),session_(std::move(s)),queue_(q),budget_(a.Buffers()),admission_(a),config_(std::move(c)),
  executor_(config_.callback_executor?config_.callback_executor:std::shared_ptr<IExecutor>(&q,[](IExecutor*){})),
- offer_(std::move(o)),progress_(std::move(p)),result_(std::move(r)){}
+ offer_(std::move(o)),progress_(std::move(p)),result_(std::move(r)),diagnostic_(std::move(diagnostic)),next_diagnostic_sequence_(std::move(next_diagnostic_sequence)){}
 std::shared_ptr<TransferEngine> TransferEngine::Create(std::shared_ptr<Session> s,ISessionScheduler& q,SessionAdmission& a,
- SdkConfig c,OfferHandler o,ProgressHandler p,ResultHandler r,std::shared_ptr<ISessionScheduler> owner){
- auto e=std::shared_ptr<TransferEngine>(new TransferEngine(std::move(s),q,a,std::move(c),std::move(o),std::move(p),std::move(r),std::move(owner)));
+ SdkConfig c,OfferHandler o,ProgressHandler p,ResultHandler r,std::shared_ptr<ISessionScheduler> owner,std::function<void(DiagnosticEvent)> diagnostic,std::function<std::uint64_t()> next_diagnostic_sequence){
+ auto e=std::shared_ptr<TransferEngine>(new TransferEngine(std::move(s),q,a,std::move(c),std::move(o),std::move(p),std::move(r),std::move(owner),std::move(diagnostic),std::move(next_diagnostic_sequence)));
  std::weak_ptr<TransferEngine> w=e;e->session_->SetContentHandler([w](auto m,auto ack){if(auto e=w.lock())e->Receive(std::move(m),std::move(ack));else ack(Result<void>::Failure(Error(ErrorCode::Cancelled,"transfer engine destroyed")));},
  [w](auto error){if(auto e=w.lock())e->Closed(error);});return e;
 }
 TransferEngine::~TransferEngine(){auto error=Error(ErrorCode::Cancelled,"transfer engine destroyed");if(active_)Finish(active_,Result<void>::Failure(error));session_->Close(error);}
+std::uint64_t TransferEngine::NextDiagnosticSequence(){return next_diagnostic_sequence_?next_diagnostic_sequence_():local_diagnostic_sequence_++;}
+void TransferEngine::Diagnostic(std::uint64_t sequence,DiagnosticDirection direction,DiagnosticContentKind kind,DiagnosticStage stage,DiagnosticOutcome outcome,std::optional<ShareError> error) noexcept {
+ try{if(diagnostic_)diagnostic_({stage,outcome,direction,kind,sequence,std::move(error)});}catch(...){}
+}
+void TransferEngine::Diagnostic(const std::shared_ptr<Transfer>& t,DiagnosticStage stage,DiagnosticOutcome outcome,std::optional<ShareError> error) noexcept {
+ Diagnostic(t->diagnostic_sequence,t->outgoing?DiagnosticDirection::Send:DiagnosticDirection::Receive,
+  static_cast<DiagnosticContentKind>(t->offer.content_type),stage,outcome,std::move(error));
+}
 bool TransferEngine::Current(const std::shared_ptr<Transfer>& t)const{return active_==t&&!t->terminal;}
 std::optional<ShareError> TransferEngine::Validate(const protocol::Offer& o)const{
  std::uint64_t limit=0;switch(o.content_type){case ContentType::Text:limit=std::min<std::uint64_t>(config_.max_text_bytes,8ULL*1024*1024);break;
@@ -63,33 +72,60 @@ void TransferEngine::Deadline(const std::shared_ptr<Transfer>& t){
  }});
 }
 TransferId TransferEngine::Offer(ContentSource source,std::optional<TransferId> supplied){
- TransferId id;if(supplied)id=*supplied;else if(RAND_bytes(id.bytes.data(),static_cast<int>(id.bytes.size()))!=1){Emit(id,Result<void>::Failure(Error(ErrorCode::ResourceLimit,"random ID unavailable")));return id;}
- if(active_||sending_||!sends_.empty()){Emit(id,Result<void>::Failure(Error(ErrorCode::ResourceLimit,"one active transfer per session")));return id;}
- if(closed_||!session_->Connected()){Emit(id,Result<void>::Failure(Error(ErrorCode::AuthenticationFailed,"session is not authenticated")));return id;}
+ const auto diagnostic_sequence=NextDiagnosticSequence();
+ const auto diagnostic_kind=static_cast<DiagnosticContentKind>(source.type);
+ Diagnostic(diagnostic_sequence,DiagnosticDirection::Send,diagnostic_kind,DiagnosticStage::Offer,DiagnosticOutcome::Began);
+ TransferId id;
+ auto fail_early=[&](ShareError error){
+  Diagnostic(diagnostic_sequence,DiagnosticDirection::Send,diagnostic_kind,DiagnosticStage::Offer,DiagnosticOutcome::Failed,error);
+  Diagnostic(diagnostic_sequence,DiagnosticDirection::Send,diagnostic_kind,DiagnosticStage::Transfer,DiagnosticOutcome::Failed,error);
+  Emit(id,Result<void>::Failure(error));
+ };
+ if(supplied)id=*supplied;else if(RAND_bytes(id.bytes.data(),static_cast<int>(id.bytes.size()))!=1){fail_early(Error(ErrorCode::ResourceLimit,"random ID unavailable"));return id;}
+ if(active_||sending_||!sends_.empty()){fail_early(Error(ErrorCode::ResourceLimit,"one active transfer per session"));return id;}
+ if(closed_||!session_->Connected()){fail_early(Error(ErrorCode::AuthenticationFailed,"session is not authenticated"));return id;}
  protocol::Offer offer{id,source.type,std::move(source.content.display_name),std::move(source.content.mime_type),source.content.byte_count};
  auto error=Validate(offer);if(!source.content.stream)error=Error(ErrorCode::InvalidInput,"missing source");
- if(error){Emit(id,Result<void>::Failure(*error));return id;}
- auto metadata=budget_.Reserve(16384);if(!metadata){Emit(id,Result<void>::Failure(Error(ErrorCode::ResourceLimit,"metadata buffer limit")));return id;}
- auto t=std::make_shared<Transfer>();t->metadata_charge=std::move(metadata);t->offer=offer;t->outgoing=true;t->stream=std::move(source.content.stream);active_=t;
- if(!t->digest){Fail(t,Error(ErrorCode::ResourceLimit,"digest unavailable"),false);return id;}
- Deadline(t);SendMessage(t->offer);return id;
+ if(error){fail_early(*error);return id;}
+ auto metadata=budget_.Reserve(16384);if(!metadata){fail_early(Error(ErrorCode::ResourceLimit,"metadata buffer limit"));return id;}
+ auto t=std::make_shared<Transfer>();t->metadata_charge=std::move(metadata);t->offer=offer;t->outgoing=true;t->diagnostic_sequence=diagnostic_sequence;t->stream=std::move(source.content.stream);active_=t;
+ if(!t->digest){Diagnostic(t,DiagnosticStage::Offer,DiagnosticOutcome::Failed,Error(ErrorCode::ResourceLimit,"digest unavailable"));Fail(t,Error(ErrorCode::ResourceLimit,"digest unavailable"),false);return id;}
+ Deadline(t);SendMessage(t->offer);Diagnostic(t,DiagnosticStage::Offer,DiagnosticOutcome::Succeeded);return id;
 }
 void TransferEngine::Accept(TransferId id,ContentSink sink){
  auto t=active_;if(!t||t->offer.transfer_id!=id||t->outgoing||t->phase!=Transfer::Phase::Offered)return;
+ Diagnostic(t,DiagnosticStage::Accept,DiagnosticOutcome::Began);
  if(!sink){Fail(t,Error(ErrorCode::InvalidInput,"missing destination"));return;}
  if(t->offer_slot){admission_.ReleaseOffer();t->offer_slot=false;}
  t->stream=std::move(sink);t->phase=Transfer::Phase::Receiving;Deadline(t);Progress(t);
+ Diagnostic(t,DiagnosticStage::Accept,DiagnosticOutcome::Succeeded);
+ Diagnostic(t,DiagnosticStage::TransferStream,DiagnosticOutcome::Began);
  SendMessage(protocol::Status{protocol::MessageType::Accept,id,{}});
 }
 void TransferEngine::Reject(TransferId id){auto t=active_;if(!t||t->offer.transfer_id!=id||t->outgoing||t->phase!=Transfer::Phase::Offered)return;
+ Diagnostic(t,DiagnosticStage::Accept,DiagnosticOutcome::Failed,Error(ErrorCode::TransferRejected,"rejected"));
  SendMessage(protocol::Status{protocol::MessageType::Reject,id,"rejected"});Finish(t,Result<void>::Failure(Error(ErrorCode::TransferRejected,"rejected")));}
 void TransferEngine::Cancel(TransferId id){auto t=active_;if(!t||t->offer.transfer_id!=id)return;
+ Diagnostic(t,DiagnosticStage::Cancel,DiagnosticOutcome::Began);
  auto error=Error(ErrorCode::Cancelled,"cancelled");Finish(t,Result<void>::Failure(error));
+ Diagnostic(t,DiagnosticStage::Cancel,DiagnosticOutcome::Succeeded);
  // Close interrupts stalled writes/paused reads immediately.
  session_->Close(error);
 }
 void TransferEngine::Finish(const std::shared_ptr<Transfer>& input,Result<void> result){
  auto t=input;if(!Current(t))return;t->terminal=true;queue_.Cancel(t->deadline);
+ if(!result.ok()){
+  const auto outcome=result.error().code==ErrorCode::Cancelled?DiagnosticOutcome::Cancelled:DiagnosticOutcome::Failed;
+  if(t->phase==Transfer::Phase::Sending||t->phase==Transfer::Phase::Receiving)
+   Diagnostic(t,DiagnosticStage::TransferStream,outcome,result.error());
+  if(result.error().code==ErrorCode::IntegrityFailed)
+   Diagnostic(t,DiagnosticStage::IntegrityVerify,DiagnosticOutcome::Failed,result.error());
+  if(t->phase==Transfer::Phase::AwaitComplete||t->phase==Transfer::Phase::Completing)
+   Diagnostic(t,DiagnosticStage::PeerComplete,outcome,result.error());
+ }
+ Diagnostic(t,DiagnosticStage::Transfer,result.ok()?DiagnosticOutcome::Succeeded:
+  result.error().code==ErrorCode::Cancelled?DiagnosticOutcome::Cancelled:DiagnosticOutcome::Failed,
+  result.ok()?std::optional<ShareError>{}:std::optional<ShareError>{result.error()});
  if(t->offer_slot){admission_.ReleaseOffer();t->offer_slot=false;}
  if(t->stream){if(t->outgoing||result.ok())t->stream->Close();else t->stream->AbortAndCleanup();t->stream.reset();}
  active_.reset();Emit(t->offer.transfer_id,result);
@@ -129,6 +165,9 @@ void TransferEngine::Read(const std::shared_ptr<Transfer>& t){
     if(t->bytes!=t->offer.byte_count||t->utf8.remaining){e->Fail(t,Error(ErrorCode::IntegrityFailed,"source truncated or invalid UTF-8"));return;}
     protocol::Finish f;f.transfer_id=t->offer.transfer_id;f.byte_count=t->bytes;unsigned length=0;
     if(EVP_DigestFinal_ex(t->digest,f.sha256.data(),&length)!=1||length!=32){e->Fail(t,Error(ErrorCode::IntegrityFailed,"digest failure"));return;}
+    e->Diagnostic(t,DiagnosticStage::IntegrityVerify,DiagnosticOutcome::Began);
+    e->Diagnostic(t,DiagnosticStage::IntegrityVerify,DiagnosticOutcome::Succeeded);
+    e->Diagnostic(t,DiagnosticStage::TransferStream,DiagnosticOutcome::Succeeded);
     t->phase=Transfer::Phase::AwaitComplete;e->Progress(t);e->Deadline(t);
     e->SendMessage(f,[w,t](auto){if(auto e=w.lock())if(e->Current(t)){t->finish_written=true;if(t->complete_received)e->Finish(t,Result<void>::Success());}});return;
    }
@@ -141,11 +180,16 @@ void TransferEngine::Read(const std::shared_ptr<Transfer>& t){
 void TransferEngine::Receive(std::shared_ptr<const protocol::Message> message,Session::ContentAck ack){
  auto ok=[&]{message.reset();ack(Result<void>::Success());};
  if(auto offer=std::get_if<protocol::Offer>(message.get())){
-  if(active_){SendMessage(protocol::Status{protocol::MessageType::Reject,offer->transfer_id,"busy"});ok();return;}
-  auto error=Validate(*offer);if(error){auto id=offer->transfer_id;SendMessage(protocol::Status{protocol::MessageType::Reject,id,"invalid offer"});Emit(id,Result<void>::Failure(*error));ok();return;}
+  const auto sequence=NextDiagnosticSequence();
+  const auto kind=static_cast<DiagnosticContentKind>(offer->content_type);
+  Diagnostic(sequence,DiagnosticDirection::Receive,kind,DiagnosticStage::Offer,DiagnosticOutcome::Began);
+  if(active_){Diagnostic(sequence,DiagnosticDirection::Receive,kind,DiagnosticStage::Offer,DiagnosticOutcome::Failed,Error(ErrorCode::ResourceLimit,"busy"));SendMessage(protocol::Status{protocol::MessageType::Reject,offer->transfer_id,"busy"});ok();return;}
+  auto error=Validate(*offer);if(error){auto id=offer->transfer_id;Diagnostic(sequence,DiagnosticDirection::Receive,kind,DiagnosticStage::Offer,DiagnosticOutcome::Failed,*error);Diagnostic(sequence,DiagnosticDirection::Receive,kind,DiagnosticStage::Transfer,DiagnosticOutcome::Failed,*error);SendMessage(protocol::Status{protocol::MessageType::Reject,id,"invalid offer"});Emit(id,Result<void>::Failure(*error));ok();return;}
   auto metadata=budget_.Reserve(16384);
-  if(!metadata||!admission_.AcquireOffer(config_.max_pending_requests)){auto id=offer->transfer_id;SendMessage(protocol::Status{protocol::MessageType::Reject,id,"request limit"});Emit(id,Result<void>::Failure(Error(ErrorCode::ResourceLimit,"pending offer limit")));ok();return;}
-  auto t=std::make_shared<Transfer>();t->metadata_charge=std::move(metadata);t->offer_slot=true;t->offer=*offer;active_=t;if(!t->digest){Fail(t,Error(ErrorCode::ResourceLimit,"digest unavailable"));ok();return;}
+  if(!metadata||!admission_.AcquireOffer(config_.max_pending_requests)){auto id=offer->transfer_id;auto failure=Error(ErrorCode::ResourceLimit,"pending offer limit");Diagnostic(sequence,DiagnosticDirection::Receive,kind,DiagnosticStage::Offer,DiagnosticOutcome::Failed,failure);Diagnostic(sequence,DiagnosticDirection::Receive,kind,DiagnosticStage::Transfer,DiagnosticOutcome::Failed,failure);SendMessage(protocol::Status{protocol::MessageType::Reject,id,"request limit"});Emit(id,Result<void>::Failure(failure));ok();return;}
+  auto t=std::make_shared<Transfer>();t->metadata_charge=std::move(metadata);t->offer_slot=true;t->offer=*offer;t->diagnostic_sequence=sequence;active_=t;
+  if(!t->digest){Fail(t,Error(ErrorCode::ResourceLimit,"digest unavailable"));ok();return;}
+  Diagnostic(t,DiagnosticStage::Offer,DiagnosticOutcome::Succeeded);
   Deadline(t);IncomingOffer event{next_request_++,offer->transfer_id,session_->PeerDevice().value(),offer->content_type,offer->display_name,offer->mime_type,offer->byte_count};
   // Destroy posted strings before dropping the metadata lease, including when
   // the executor discards its queue after engine destruction.
@@ -159,12 +203,12 @@ void TransferEngine::Receive(std::shared_ptr<const protocol::Message> message,Se
  if(auto status=std::get_if<protocol::Status>(message.get())){
   switch(status->type){
   case protocol::MessageType::Accept:
-   if(t->outgoing&&t->phase==Transfer::Phase::Offered){t->phase=Transfer::Phase::Sending;Deadline(t);Progress(t);Read(t);}else Fail(t,Error(ErrorCode::InvalidInput,"unexpected acceptance"));break;
+   if(t->outgoing&&t->phase==Transfer::Phase::Offered){Diagnostic(t,DiagnosticStage::Accept,DiagnosticOutcome::Succeeded);Diagnostic(t,DiagnosticStage::TransferStream,DiagnosticOutcome::Began);t->phase=Transfer::Phase::Sending;Deadline(t);Progress(t);Read(t);}else Fail(t,Error(ErrorCode::InvalidInput,"unexpected acceptance"));break;
   case protocol::MessageType::Reject:Finish(t,Result<void>::Failure(Error(ErrorCode::TransferRejected,"peer rejected")));break;
   case protocol::MessageType::Cancel:Finish(t,Result<void>::Failure(Error(ErrorCode::Cancelled,"peer cancelled")));break;
   case protocol::MessageType::Failed:Finish(t,Result<void>::Failure(Error(ErrorCode::IntegrityFailed,"peer failed transfer")));break;
   case protocol::MessageType::Complete:
-   if(t->outgoing&&t->phase==Transfer::Phase::AwaitComplete){t->complete_received=true;if(t->finish_written)Finish(t,Result<void>::Success());}else Fail(t,Error(ErrorCode::InvalidInput,"premature completion"));break;
+   if(t->outgoing&&t->phase==Transfer::Phase::AwaitComplete){Diagnostic(t,DiagnosticStage::PeerComplete,DiagnosticOutcome::Succeeded);t->complete_received=true;if(t->finish_written)Finish(t,Result<void>::Success());}else Fail(t,Error(ErrorCode::InvalidInput,"premature completion"));break;
   default:Fail(t,Error(ErrorCode::InvalidInput,"unexpected status"));break;
   }ok();return;
  }
@@ -184,9 +228,12 @@ void TransferEngine::Receive(std::shared_ptr<const protocol::Message> message,Se
   std::array<std::uint8_t,32> hash{};unsigned length=0;
   if(t->outgoing||t->phase!=Transfer::Phase::Receiving||t->bytes!=t->offer.byte_count||finish->byte_count!=t->bytes||t->utf8.remaining||
    EVP_DigestFinal_ex(t->digest,hash.data(),&length)!=1||length!=32||hash!=finish->sha256){Fail(t,Error(ErrorCode::IntegrityFailed,"checksum or size mismatch"));ok();return;}
+  Diagnostic(t,DiagnosticStage::IntegrityVerify,DiagnosticOutcome::Began);
+  Diagnostic(t,DiagnosticStage::IntegrityVerify,DiagnosticOutcome::Succeeded);
+  Diagnostic(t,DiagnosticStage::TransferStream,DiagnosticOutcome::Succeeded);
   t->phase=Transfer::Phase::Completing;Progress(t);
   std::weak_ptr<TransferEngine> w=weak_from_this();
-  SendMessage(protocol::Status{protocol::MessageType::Complete,id,{}},[w,t](auto){if(auto e=w.lock())e->Finish(t,Result<void>::Success());});ok();return;
+  SendMessage(protocol::Status{protocol::MessageType::Complete,id,{}},[w,t](auto){if(auto e=w.lock()){e->Diagnostic(t,DiagnosticStage::PeerComplete,DiagnosticOutcome::Succeeded);e->Finish(t,Result<void>::Success());}});ok();return;
  }
  Fail(t,Error(ErrorCode::InvalidInput,"unexpected transfer message"));ok();
 }
