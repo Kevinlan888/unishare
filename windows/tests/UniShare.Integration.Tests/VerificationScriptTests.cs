@@ -110,11 +110,13 @@ public sealed class VerificationScriptTests
                 File.Copy(Path.Combine(native, name), Path.Combine(package, name));
             }
             File.WriteAllText(Path.Combine(package, "UniShare.App.exe"), "fixture");
+            File.WriteAllText(Path.Combine(package, "NLog.dll"), "fixture");
             File.WriteAllText(Path.Combine(package, "resources.pri"), "fixture");
             Directory.CreateDirectory(Path.Combine(package, "Assets"));
             File.WriteAllText(Path.Combine(package, "Assets", "StoreLogo.png"), "fixture");
             Directory.CreateDirectory(Path.Combine(package, "licenses"));
             File.WriteAllText(Path.Combine(package, "licenses", "OpenSSL-NOTICES.txt"), "notice fixture");
+            File.WriteAllText(Path.Combine(package, "licenses", "NLog-LICENSE.txt"), "license fixture");
             File.WriteAllText(Path.Combine(package, "AppxManifest.xml"), """
                 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10">
                 <Identity Publisher="CN=UniShare" ProcessorArchitecture="x64"/><Dependencies><TargetDeviceFamily MinVersion="10.0.17763.0"/></Dependencies>
@@ -132,6 +134,16 @@ public sealed class VerificationScriptTests
             string[] arguments = ["-PackageRoot", package, "-NativeRoot", native, "-ResourceDump", dump];
             var valid = Run("inspect-package.ps1", arguments);
             Assert.AreEqual(0, valid.Exit, valid.Text);
+            File.Delete(Path.Combine(package, "licenses", "NLog-LICENSE.txt"));
+            var noNlogLicense = Run("inspect-package.ps1", arguments);
+            Assert.AreNotEqual(0, noNlogLicense.Exit);
+            StringAssert.Contains(noNlogLicense.Text, "Missing package payload");
+            File.WriteAllText(Path.Combine(package, "licenses", "NLog-LICENSE.txt"), "license fixture");
+            File.Delete(Path.Combine(package, "NLog.dll"));
+            var noNlog = Run("inspect-package.ps1", arguments);
+            Assert.AreNotEqual(0, noNlog.Exit);
+            StringAssert.Contains(noNlog.Text, "Missing package payload");
+            File.WriteAllText(Path.Combine(package, "NLog.dll"), "fixture");
             var unsignedWithoutMarker = Run("inspect-package.ps1", arguments.Concat(["-Unsigned"]).ToArray());
             Assert.AreNotEqual(0, unsignedWithoutMarker.Exit);
             StringAssert.Contains(unsignedWithoutMarker.Text, "unsigned namespace marker");

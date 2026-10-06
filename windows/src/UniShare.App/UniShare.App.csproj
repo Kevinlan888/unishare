@@ -21,6 +21,7 @@
     <ProjectReference Include="../UniShare.Native/UniShare.Native.csproj" />
     <ProjectReference Include="../UniShare.Infrastructure/UniShare.Infrastructure.csproj" />
     <Content Include="Assets\*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="licenses\NLog-LICENSE.txt" Link="licenses\NLog-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Remove="Assets\**" />
     <Content Include="$(NativeStageRoot)\bin\unishare.dll;$(NativeStageRoot)\bin\libcrypto-3*.dll;$(NativeStageRoot)\bin\libssl-3*.dll"
              Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

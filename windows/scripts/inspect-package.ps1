@@ -15,7 +15,7 @@ foreach ($file in $files) {
     }
     Write-Output $relative
 }
-foreach ($required in @('UniShare.App.exe','unishare.dll','resources.pri','Assets\StoreLogo.png','AppxManifest.xml','licenses\OpenSSL-NOTICES.txt')) {
+foreach ($required in @('UniShare.App.exe','unishare.dll','NLog.dll','resources.pri','Assets\StoreLogo.png','AppxManifest.xml','licenses\OpenSSL-NOTICES.txt','licenses\NLog-LICENSE.txt')) {
     if (!(Test-Path -LiteralPath (Join-Path $PackageRoot $required))) { throw "Missing package payload: $required" }
 }
 foreach ($pattern in @('unishare.dll','libcrypto-3*.dll','libssl-3*.dll')) {

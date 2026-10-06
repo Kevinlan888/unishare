@@ -10,10 +10,10 @@ public sealed class PrivacyDiagnosticSinkTests
     [TestMethod]
     public void FailureLogsFixedCategoryAndPlatformCodeWithoutSensitiveMessage()
     {
-        using var writer = new StringWriter();
-        var sink = new PrivacyDiagnosticSink(writer);
+        using var directory = new TemporaryDirectory();
+        var sink = new PrivacyDiagnosticSink(directory.Path);
         sink.WriteFailure(new(ShareErrorKind.StorageFailed, "clipboard body image payload C:\\private\\source.txt\r\nINJECTED", -2147024891));
-        var log = writer.ToString();
+        var log = File.ReadAllText(System.IO.Path.Combine(directory.Path, "diagnostics.log"));
         StringAssert.Contains(log, "StorageFailed");
         StringAssert.Contains(log, "-2147024891");
         foreach (var sensitive in new[] { "clipboard", "body", "payload", "C:\\private", "source.txt", "INJECTED" })
@@ -23,15 +23,16 @@ public sealed class PrivacyDiagnosticSinkTests
     [TestMethod]
     public void ExceptionLoggingDropsMessageDataAndStackPaths()
     {
-        using var writer = new StringWriter();
-        var sink = new PrivacyDiagnosticSink(writer);
+        using var directory = new TemporaryDirectory();
+        var sink = new PrivacyDiagnosticSink(directory.Path);
         var exception = new IOException("clipboard secret C:\\private\\payload.txt");
         exception.Data["body"] = "SECRET";
         sink.WriteException(ShareErrorKind.StorageFailed, exception);
-        StringAssert.Contains(writer.ToString(), "StorageFailed");
-        StringAssert.Contains(writer.ToString(), exception.HResult.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        Assert.IsFalse(writer.ToString().Contains("private", StringComparison.Ordinal));
-        Assert.IsFalse(writer.ToString().Contains("SECRET", StringComparison.Ordinal));
+        var log = File.ReadAllText(System.IO.Path.Combine(directory.Path, "diagnostics.log"));
+        StringAssert.Contains(log, "StorageFailed");
+        StringAssert.Contains(log, exception.HResult.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.IsFalse(log.Contains("private", StringComparison.Ordinal));
+        Assert.IsFalse(log.Contains("SECRET", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -42,22 +43,35 @@ public sealed class PrivacyDiagnosticSinkTests
         Parallel.ForEach(sinks, sink => sink.WriteFailure(new((ShareErrorKind)99999, "secret", null)));
         var lines = File.ReadAllLines(System.IO.Path.Combine(directory.Path, "diagnostics.log"));
         Assert.AreEqual(20, lines.Length);
-        Assert.IsTrue(lines.All(line => line == "category=Unknown platform_code=none"));
+        Assert.IsTrue(lines.All(line => line.Contains("category=Unknown platform_code=none", StringComparison.Ordinal)));
     }
 
     [TestMethod]
     public void StartupEventRecordsPhaseAndCodeWithoutExceptionMessage()
     {
-        using var writer = new StringWriter();
-        var sink = new PrivacyDiagnosticSink(writer);
+        using var directory = new TemporaryDirectory();
+        var sink = new PrivacyDiagnosticSink(directory.Path);
         var error = new IOException("secret C:\\private\\file.txt");
         sink.WriteEvent(DiagnosticComponent.App, DiagnosticStage.SdkStart, DiagnosticOutcome.Failed, exception: error);
-        var line = writer.ToString();
+        var line = File.ReadAllText(System.IO.Path.Combine(directory.Path, "diagnostics.log"));
         StringAssert.Contains(line, "component=App stage=SdkStart outcome=Failed");
         StringAssert.Contains(line, "exception=IOException");
         StringAssert.Contains(line, $"platform_code={error.HResult}");
         Assert.IsFalse(line.Contains("private", StringComparison.Ordinal));
         Assert.IsFalse(line.Contains("secret", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void EventsHaveSeverityMatchingOutcome()
+    {
+        using var directory = new TemporaryDirectory();
+        var sink = new PrivacyDiagnosticSink(directory.Path);
+        sink.WriteEvent(DiagnosticComponent.Sdk, DiagnosticStage.SdkInitialize, DiagnosticOutcome.Succeeded);
+        sink.WriteEvent(DiagnosticComponent.Sdk, DiagnosticStage.SdkStart, DiagnosticOutcome.Failed);
+        var lines = File.ReadAllLines(System.IO.Path.Combine(directory.Path, "diagnostics.log"));
+        Assert.AreEqual(2, lines.Length);
+        StringAssert.Contains(lines[0], "level=Info");
+        StringAssert.Contains(lines[1], "level=Error");
     }
 
     [TestMethod]
@@ -68,9 +82,9 @@ public sealed class PrivacyDiagnosticSinkTests
         for (var i = 0; i < 10; i++)
             sink.WriteEvent(DiagnosticComponent.Sdk, DiagnosticStage.SdkStart, DiagnosticOutcome.Succeeded);
         var current = System.IO.Path.Combine(directory.Path, "diagnostics.log");
-        var previous = current + ".1";
-        Assert.IsTrue(File.Exists(previous));
-        Assert.IsTrue(new FileInfo(current).Length <= 180);
-        Assert.IsTrue(new FileInfo(previous).Length <= 180);
+        var files = Directory.GetFiles(directory.Path, "diagnostics*");
+        Assert.IsTrue(files.Length is >= 1 and <= 2);
+        Assert.IsTrue(files.Any(path => path != current));
+        Assert.IsTrue(files.All(path => new FileInfo(path).Length <= 320));
     }
 }
