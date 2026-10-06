@@ -147,12 +147,16 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         // FIFO order and notification actions never reenter a native callback.
         if (!dispatcher.TryEnqueue(() => { action(); model.NotifyRuntimeState(); })) throw new InvalidOperationException("Application dispatcher is unavailable.");
     }
-    private void OnSdkEvent(object? sender, ShareSdkEvent value) => Dispatch(() =>
+    private void OnSdkEvent(object? sender, ShareSdkEvent value)
     {
-        projection.Refresh();
-        if (value is ShareSdkEvent.PairingCompleted { Failure: null } completed) SelectDevice(completed.Device);
-        if (value is ShareSdkEvent.PairingCompleted { Failure: not null }) model.Notice = Strings.Get("Pairing.ConfirmFailed");
-    });
+        if (!RuntimeProjectionAdapter.RequiresSdkRefresh(value)) return;
+        Dispatch(() =>
+        {
+            projection.Refresh();
+            if (value is ShareSdkEvent.PairingCompleted { Failure: null } completed) SelectDevice(completed.Device);
+            if (value is ShareSdkEvent.PairingCompleted { Failure: not null }) model.Notice = Strings.Get("Pairing.ConfirmFailed");
+        });
+    }
     DeviceId? IRuntimeProjection.SelectedDeviceId => model.SelectedDevice?.Id;
     void IRuntimeProjection.RefreshDevices() => RefreshDevices();
     void IRuntimeProjection.RenderActivities(DeviceId device) => RenderActivities(device);

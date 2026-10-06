@@ -62,4 +62,18 @@ public sealed class RuntimeProjectionAdapterTests
         tracker.BeginOutgoing(Device, new(2), ContentKind.Text, "Text", "text/plain", 1, ShareOrigin.Direct);
         Assert.AreEqual(0, projection.Renders); Assert.AreEqual(0, queue.Count);
     }
+
+    [TestMethod]
+    public void TransferEventsUseTrackerProjectionInsteadOfRequestingDuplicateSdkRefresh()
+    {
+        var transfer = new TransferId(Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
+        var offer = new IncomingOffer(new(1), transfer, Device, ContentKind.File, "large.bin", "application/octet-stream", 10);
+
+        Assert.IsFalse(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.OfferReceived(offer)));
+        Assert.IsFalse(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.OutgoingTransferRegistered(new(2), transfer)));
+        Assert.IsFalse(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.ProgressReceived(new(transfer, 5, 10))));
+        Assert.IsFalse(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.TransferCompleted(new(transfer, null))));
+        Assert.IsTrue(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.DiscoveryStateChanged(DiscoveryState.Browsing)));
+        Assert.IsTrue(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.PairingCompleted(new(3), Device, null)));
+    }
 }

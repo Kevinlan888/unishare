@@ -5,6 +5,7 @@ namespace UniShare.Application.Services;
 
 public sealed class ActivityTracker : ITransferDrain
 {
+    private static readonly TimeSpan ProgressPublishInterval = TimeSpan.FromMilliseconds(200);
     private readonly IActivityRepository repository;
     private readonly IClock clock;
     private readonly object gate = new();
@@ -13,6 +14,7 @@ public sealed class ActivityTracker : ITransferDrain
     private readonly Dictionary<OperationId, ActivityId> operations = [];
     private readonly Dictionary<OperationId, TransferId> earlyRegistrations = [];
     private readonly Dictionary<TransferId, ulong> earlyProgress = [];
+    private readonly Dictionary<TransferId, DateTimeOffset> progressPublications = [];
     private readonly Dictionary<ActivityId, ActivityId> aliases = [];
     private readonly HashSet<DeviceId> loadingDevices = [];
     private readonly Dictionary<DeviceId, Task> historyLoads = [];
@@ -243,6 +245,7 @@ public sealed class ActivityTracker : ITransferDrain
     public bool ApplyProgress(TransferProgress progress)
     {
         ArgumentNullException.ThrowIfNull(progress);
+        var publish = false;
         lock (gate)
         {
             if (!transfers.TryGetValue(progress.TransferId, out var id))
@@ -256,9 +259,18 @@ public sealed class ActivityTracker : ITransferDrain
             var bytes = Math.Max(record.TransferredBytes, Math.Min(progress.TransferredBytes, record.ByteCount));
             if (record.Status == ActivityStatus.Transferring && bytes == record.TransferredBytes) return false;
             if (record.Status != ActivityStatus.Transferring && !ActivityTransition.CanTransition(record.Status, ActivityStatus.Transferring)) return false;
-            Save(record with { Status = ActivityStatus.Transferring, TransferredBytes = bytes, UpdatedAt = UpdateTime(record) });
+            var updated = record with { Status = ActivityStatus.Transferring, TransferredBytes = bytes, UpdatedAt = UpdateTime(record) };
+            publish = record.Status != ActivityStatus.Transferring || bytes == record.ByteCount ||
+                !progressPublications.TryGetValue(progress.TransferId, out var previous) ||
+                updated.UpdatedAt - previous >= ProgressPublishInterval;
+            activities[id] = updated;
+            if (publish)
+            {
+                progressPublications[progress.TransferId] = updated.UpdatedAt;
+                Save(updated);
+            }
         }
-        NotifyChanged();
+        if (publish) NotifyChanged();
         return true;
     }
 
@@ -293,7 +305,9 @@ public sealed class ActivityTracker : ITransferDrain
         {
             ValidateBinding(record, transfer);
             transfers[transfer] = activity;
+            progressPublications.Remove(transfer);
         }
+        if (record.TransferId is { } registered) progressPublications.Remove(registered);
         var now = UpdateTime(record);
         Save(record with
         {

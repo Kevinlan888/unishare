@@ -13,7 +13,7 @@ public sealed class ActivityTrackerTests
     private static readonly DeviceId Device = new(Guid.Parse("10000000-0000-0000-0000-000000000001"));
     private static readonly TransferId Transfer = new(Guid.Parse("20000000-0000-0000-0000-000000000001"));
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-10-05T00:00:00Z");
-    private static ActivityTracker Create(Repository? repository = null) => new(repository ?? new(), new Clock());
+    private static ActivityTracker Create(Repository? repository = null, Clock? clock = null) => new(repository ?? new(), clock ?? new Clock());
     private static ActivityRecord Begin(ActivityTracker tracker, ulong operation = 1, ShareContent? preview = null) =>
         tracker.BeginOutgoing(Device, new OperationId(operation), preview?.Kind ?? ContentKind.File,
             "report.txt", preview?.MimeType ?? "text/plain", 100, preview is null ? ShareOrigin.Direct : ShareOrigin.Clipboard, preview);
@@ -177,6 +177,57 @@ public sealed class ActivityTrackerTests
         tracker.ApplyProgress(new(Transfer, ulong.MaxValue, 100));
         Assert.AreEqual(100UL, tracker.GetDeviceSnapshot(Device).Single().TransferredBytes);
         Assert.AreEqual(1, tracker.ActiveCount);
+    }
+
+    [TestMethod]
+    public async Task RapidProgressUpdatesLiveSnapshotButCoalescesNotificationsAndPersistence()
+    {
+        var repository = new Repository();
+        var clock = new Clock();
+        var tracker = Create(repository, clock);
+        var started = Begin(tracker);
+        tracker.BindTransfer(started.Id, Transfer);
+        await tracker.SavePendingAsync();
+        repository.Writes.Clear();
+        var changes = 0;
+        tracker.Changed += (_, _) => changes++;
+
+        for (ulong bytes = 1; bytes <= 99; bytes++)
+            Assert.IsTrue(tracker.ApplyProgress(new(Transfer, bytes, 100)));
+
+        Assert.AreEqual(99UL, tracker.GetDeviceSnapshot(Device).Single().TransferredBytes);
+        Assert.AreEqual(1, changes);
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(1, repository.Writes.Count(record => record.Status == ActivityStatus.Transferring));
+
+        clock.UtcNow += TimeSpan.FromMilliseconds(200);
+        Assert.IsTrue(tracker.ApplyProgress(new(Transfer, 100, 100)));
+        Assert.AreEqual(2, changes);
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(2, repository.Writes.Count(record => record.Status == ActivityStatus.Transferring));
+    }
+
+    [TestMethod]
+    public async Task TerminalChangePublishesImmediatelyAfterCoalescedProgress()
+    {
+        var repository = new Repository();
+        var tracker = Create(repository, new Clock());
+        var started = Begin(tracker);
+        tracker.BindTransfer(started.Id, Transfer);
+        await tracker.SavePendingAsync();
+        repository.Writes.Clear();
+        var changes = 0;
+        tracker.Changed += (_, _) => changes++;
+
+        tracker.ApplyProgress(new(Transfer, 10, 100));
+        tracker.ApplyProgress(new(Transfer, 20, 100));
+        tracker.Complete(new(Transfer, null));
+
+        Assert.AreEqual(2, changes);
+        await tracker.SavePendingAsync();
+        Assert.AreEqual(ActivityStatus.Completed, repository.Records[started.Id].Status);
+        Assert.AreEqual(1, repository.Writes.Count(record => record.Status == ActivityStatus.Transferring));
+        Assert.AreEqual(1, repository.Writes.Count(record => record.Status == ActivityStatus.Completed));
     }
 
     [TestMethod]
@@ -717,7 +768,7 @@ public sealed class ActivityTrackerTests
         Assert.AreEqual(3, changes);
     }
 
-    private sealed class Clock : IClock { public DateTimeOffset UtcNow => Now; }
+    private sealed class Clock : IClock { public DateTimeOffset UtcNow { get; set; } = Now; }
 
     // The real repository boundary is external storage; this in-memory double
     // preserves upsert/load semantics and exposes write ordering and payloads.
