@@ -41,6 +41,9 @@ struct DelayedSubmission final : windows::OverlappedFileIo {
 int main(){try {
  auto root=fs::current_path()/ ("windows-port-test-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));
  CHECK(!fs::exists(root)); fs::create_directory(root);
+ windows::IdentityStore nested(root/"missing-parent"/"identity");
+ auto nestedLoad=nested.LoadIdentity();CHECK(nestedLoad.ok());CHECK(!nestedLoad.value());
+ CHECK(fs::is_directory(root/"missing-parent"));CHECK(fs::is_directory(root/"missing-parent"/"identity"));
  windows::IdentityStore store(root/"identity");
  CHECK(store.LoadIdentity().ok()); CHECK(!store.LoadIdentity().value());
  IdentityMaterial m; m.id.bytes[0]=42; m.private_key={1,2,3};m.certificate={4,5};

@@ -27,6 +27,9 @@ struct LockedRoot {
  Security security;Handle directory;Handle lock;
  explicit LockedRoot(const std::filesystem::path& root):directory(),lock(){
   if(!root.is_absolute())Fail("absolute identity root required",ERROR_INVALID_PARAMETER);
+  std::error_code parentError;
+  std::filesystem::create_directories(root.parent_path(),parentError);
+  if(parentError)Fail("create identity parent directories",static_cast<DWORD>(parentError.value()));
   if(!CreateDirectoryW(root.c_str(),&security.attributes)&&GetLastError()!=ERROR_ALREADY_EXISTS)Fail("create identity directory");
   directory.value=CreateFileW(root.c_str(),READ_CONTROL|WRITE_DAC,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
   if(directory.value==INVALID_HANDLE_VALUE)Fail("open identity directory");
