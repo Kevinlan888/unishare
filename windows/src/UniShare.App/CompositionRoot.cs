@@ -63,42 +63,6 @@ public sealed record DeviceProjection(string Name, string Glyph, string Summary,
     public string StatusText => Strings.Get(PresentationState.StatusResourceKey(Online));
     public string AccessibleName => $"{Name}, {StatusText}";
 }
-public sealed class ActivityProjection : ObservableObject
-{
-    public ActivityId? Id
-    {
-        get; init;
-    }
-    private ActivityStatus status;
-    public ActivityProjection(ContentKind kind, ShareDirection direction, string name, string text, string size, string time, ActivityStatus status, ShareOrigin origin = ShareOrigin.Direct)
-    {
-        Kind = kind;
-        Direction = direction;
-        Name = name;
-        Text = text;
-        Size = size;
-        Time = time;
-        this.status = status;
-        Origin = origin;
-    }
-    public ContentKind Kind { get; }
-    public ShareDirection Direction { get; }
-    public ShareOrigin Origin { get; }
-    public string Name { get; }
-    public string Text { get; }
-    public string Size { get; }
-    public string Time { get; }
-    public ActivityStatus Status
-    {
-        get => status; set
-        {
-            if (SetProperty(ref status, value))
-                OnPropertyChanged(nameof(StatusText));
-        }
-    }
-    public string StatusText => Strings.Get("Activity." + Status);
-    public double Progress => 72;
-}
 public sealed class ShellProjection : ObservableObject
 {
     private DeviceProjection? selected;

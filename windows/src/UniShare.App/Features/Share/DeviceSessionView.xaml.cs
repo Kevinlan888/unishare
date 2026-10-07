@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -11,6 +12,8 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
     private readonly ShellProjection model;
     private readonly ViewSubscriptions subscriptions;
     private readonly DeviceDetailsPane details;
+    private readonly ActivityCardReconciler<RenderedCard> cards;
+    private readonly Dictionary<ActivityProjection, PropertyChangedEventHandler> activitySubscriptions = new(ReferenceEqualityComparer.Instance);
     private bool disposed;
     public DeviceSessionView(ShellProjection model)
     {
@@ -18,6 +21,7 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
         this.model = model;
         DataContext = model;
         details = new DeviceDetailsPane(model);
+        cards = new(CreateCard, card => card.Dispose());
         DetailsFlyout.Content = details;
         subscriptions = new(model, property => { if (property is nameof(model.SelectedDevice) or nameof(model.Notice)) Render(); },
             model.Activities, Render, RetireCards);
@@ -32,24 +36,77 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
         StateHint.Visibility = string.IsNullOrEmpty(StateHint.Text) ? Visibility.Collapsed : Visibility.Visible;
         NoticeBar.Message = model.Notice ?? (model.SelectedDevice is { Online: false } ? Strings.Get("Offline") : "");
         NoticeBar.IsOpen = !string.IsNullOrEmpty(NoticeBar.Message);
-        RetireCards();
-        foreach (var item in model.Activities.Where(a => string.IsNullOrWhiteSpace(SearchBox.Text) || (a.Name + " " + a.Text).Contains(SearchBox.Text, StringComparison.CurrentCultureIgnoreCase)))
+        ReconcileActivities();
+    }
+    private void ReconcileActivities()
+    {
+        if (disposed)
+            return;
+        SynchronizeActivitySubscriptions();
+        var desired = cards.Reconcile(model.Activities, item => string.IsNullOrWhiteSpace(SearchBox.Text) ||
+            (item.Name + " " + item.Text).Contains(SearchBox.Text, StringComparison.CurrentCultureIgnoreCase))
+            .Select(card => card.View).ToArray();
+        for (var index = ActivityHost.Children.Count - 1; index >= 0; index--)
         {
-            UserControl card = item.Status == ActivityStatus.AwaitingDecision ? new IncomingOfferCard(model, item) : item.Kind switch
+            var child = ActivityHost.Children[index];
+            if (!desired.Any(card => ReferenceEquals(card, child)))
+                ActivityHost.Children.RemoveAt(index);
+        }
+        for (var index = 0; index < desired.Length; index++)
+        {
+            var card = desired[index];
+            if (index < ActivityHost.Children.Count && ReferenceEquals(ActivityHost.Children[index], card))
+                continue;
+            var existingIndex = -1;
+            for (var childIndex = 0; childIndex < ActivityHost.Children.Count; childIndex++)
+                if (ReferenceEquals(ActivityHost.Children[childIndex], card))
+                {
+                    existingIndex = childIndex;
+                    break;
+                }
+            if (existingIndex >= 0)
+                ActivityHost.Children.RemoveAt(existingIndex);
+            ActivityHost.Children.Insert(index, card);
+        }
+    }
+    private RenderedCard CreateCard(ActivityProjection item, ActivityCardKind kind)
+    {
+        UserControl card = kind switch
+        {
+            ActivityCardKind.Offer => new IncomingOfferCard(model, item),
+            ActivityCardKind.Image => new ImageActivityCard(model, item),
+            ActivityCardKind.File => new FileActivityCard(model, item),
+            _ => new TextActivityCard(model, item)
+        };
+        card.HorizontalAlignment = item.Direction == ShareDirection.Outgoing ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        card.MaxWidth = item.Kind == ContentKind.Image ? 400 : 380;
+        return new(card);
+    }
+    private void SynchronizeActivitySubscriptions()
+    {
+        var active = new HashSet<ActivityProjection>(model.Activities, ReferenceEqualityComparer.Instance);
+        foreach (var obsolete in activitySubscriptions.Keys.Where(item => !active.Contains(item)).ToArray())
+        {
+            obsolete.PropertyChanged -= activitySubscriptions[obsolete];
+            activitySubscriptions.Remove(obsolete);
+        }
+        foreach (var item in active.Where(item => !activitySubscriptions.ContainsKey(item)))
+        {
+            PropertyChangedEventHandler handler = (_, args) =>
             {
-                ContentKind.Image => new ImageActivityCard(model, item),
-                ContentKind.File => new FileActivityCard(model, item),
-                _ => new TextActivityCard(model, item)
+                if (args.PropertyName is nameof(ActivityProjection.Status) or nameof(ActivityProjection.Name) or nameof(ActivityProjection.Text))
+                    ReconcileActivities();
             };
-            card.HorizontalAlignment = item.Direction == ShareDirection.Outgoing ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-            card.MaxWidth = item.Kind == ContentKind.Image ? 400 : 380;
-            ActivityHost.Children.Add(card);
+            activitySubscriptions.Add(item, handler);
+            item.PropertyChanged += handler;
         }
     }
     private void RetireCards()
     {
-        foreach (var card in ActivityHost.Children.OfType<IDisposable>())
-            card.Dispose();
+        foreach (var (item, handler) in activitySubscriptions)
+            item.PropertyChanged -= handler;
+        activitySubscriptions.Clear();
+        cards.Dispose();
         ActivityHost.Children.Clear();
     }
     public void Dispose()
@@ -71,7 +128,7 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
     private void SearchChanged(object sender, TextChangedEventArgs e)
     {
         if (model is not null)
-            Render();
+            ReconcileActivities();
     }
     private void SendAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
@@ -88,5 +145,11 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
     {
         await model.DropOneFileAsync(e.DataView);
         e.Handled = true;
+    }
+
+    private sealed class RenderedCard(UserControl view) : IDisposable
+    {
+        public UserControl View { get; } = view;
+        public void Dispose() => ((IDisposable)View).Dispose();
     }
 }

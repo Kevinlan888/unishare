@@ -238,22 +238,20 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     }
     private void RenderActivities(DeviceId device)
     {
-        model.Activities.Clear();
-        model.SharedFiles.Clear();
         var records = tracker.GetDeviceSnapshot(device);
-        foreach (var record in records)
-            model.Activities.Add(new(record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
-                tracker.GetPreview(record.Id)?.Text ?? "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin)
-            {
-                Id = record.Id
-            });
-        foreach (var record in RecentFileActivities.Select(records))
-            model.SharedFiles.Add(new(record.Kind, record.Direction, record.DisplayName,
-                "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin)
-            {
-                Id = record.Id
-            });
+        ActivityProjectionCollection.Synchronize(model.Activities,
+            records.Select(record => ProjectActivity(record, includePreview: true)).ToArray());
+        ActivityProjectionCollection.Synchronize(model.SharedFiles,
+            RecentFileActivities.Select(records).Select(record => ProjectActivity(record, includePreview: false)).ToArray());
     }
+    private ActivityProjection ProjectActivity(ActivityRecord record, bool includePreview) => new(
+        record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
+        includePreview ? tracker.GetPreview(record.Id)?.Text ?? "" : "", record.ByteCount.ToString(),
+        record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin,
+        ActivityProjection.ProgressPercentage(record.TransferredBytes, record.ByteCount))
+    {
+        Id = record.Id
+    };
     private DeviceSessionViewModel? CurrentSession()
     {
         if (model.SelectedDevice?.Id is not { } id)
