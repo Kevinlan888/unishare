@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UniShare</string>
+    <string name="nav_share">分享</string>
+    <string name="nav_devices">设备</string>
+    <string name="nav_history">历史</string>
+    <string name="nav_settings">设置</string>
+</resources>
