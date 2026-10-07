@@ -93,9 +93,25 @@ class RuntimeControllerTest {
         assertEquals(listOf(
             "session:start:Pixel",
             "service:start:ACTIVE_TRANSFER",
-            "session:stop",
             "service:stop",
+            "session:stop",
         ), fixture.events)
+    }
+
+    @Test
+    fun `visibility loss observes active transfer before flow collector is dispatched`() = runTest {
+        val fixture = fixture()
+        runCurrent()
+        fixture.runtime.setAppVisible(true)
+
+        fixture.active.value = 1
+        fixture.runtime.setAppVisible(false)
+        runCurrent()
+
+        assertEquals(0, fixture.session.stopCount)
+        assertEquals(listOf(ServiceReason.ACTIVE_TRANSFER), fixture.service.starts)
+        assertEquals(RuntimePhase.ACTIVE_TRANSFER, fixture.runtime.state.value.phase)
+        assertNull(fixture.runtime.state.value.failure)
     }
 
     @Test
@@ -109,6 +125,43 @@ class RuntimeControllerTest {
         assertFalse(fixture.settings.value.value.backgroundReceiveEnabled)
         assertTrue(fixture.service.starts.isEmpty())
         assertEquals(RuntimeFailure.NOTIFICATION_PERMISSION_DENIED, fixture.runtime.state.value.failure)
+    }
+
+    @Test
+    fun `persisted background receive is rolled off when notification permission is denied`() = runTest {
+        val fixture = fixture(
+            notificationGranted = false,
+            initialSettings = AppSettings(
+                deviceName = "Pixel",
+                backgroundReceiveEnabled = true,
+            ),
+        )
+        runCurrent()
+
+        fixture.runtime.setAppVisible(true)
+
+        assertFalse(fixture.settings.value.value.backgroundReceiveEnabled)
+        assertTrue(fixture.service.starts.isEmpty())
+        assertEquals(RuntimeFailure.NOTIFICATION_PERMISSION_DENIED, fixture.runtime.state.value.failure)
+        assertEquals(RuntimePhase.FOREGROUND, fixture.runtime.state.value.phase)
+    }
+
+    @Test
+    fun `revoked notification permission tears down persistent receive without cancelling visibility`() = runTest {
+        val fixture = fixture()
+        runCurrent()
+        fixture.runtime.setAppVisible(true)
+        assertTrue(fixture.runtime.setBackgroundReceive(true))
+        fixture.runtime.setAppVisible(false)
+
+        fixture.permission.granted = false
+        fixture.runtime.setAppVisible(false)
+
+        assertFalse(fixture.settings.value.value.backgroundReceiveEnabled)
+        assertEquals(1, fixture.session.stopCount)
+        assertEquals(1, fixture.service.stopCount)
+        assertEquals(RuntimeFailure.NOTIFICATION_PERMISSION_DENIED, fixture.runtime.state.value.failure)
+        assertEquals(RuntimePhase.STOPPED, fixture.runtime.state.value.phase)
     }
 
     @Test
@@ -175,6 +228,29 @@ class RuntimeControllerTest {
     }
 
     @Test
+    fun `service stop failure leaves session running for an explicit retry`() = runTest {
+        val fixture = fixture()
+        runCurrent()
+        fixture.runtime.setAppVisible(true)
+        fixture.runtime.setBackgroundReceive(true)
+        fixture.runtime.setAppVisible(false)
+        fixture.service.stopFailure = IllegalStateException("stop rejected")
+
+        fixture.runtime.setBackgroundReceive(false)
+
+        assertEquals(1, fixture.service.stopAttempts)
+        assertEquals(0, fixture.session.stopCount)
+        assertEquals(RuntimeFailure.SERVICE_STOP_FAILED, fixture.runtime.state.value.failure)
+        assertTrue(fixture.runtime.state.value.foregroundServiceRunning)
+
+        fixture.service.stopFailure = null
+        fixture.runtime.setBackgroundReceive(false)
+        assertEquals(1, fixture.service.stopCount)
+        assertEquals(1, fixture.session.stopCount)
+        assertEquals(RuntimePhase.STOPPED, fixture.runtime.state.value.phase)
+    }
+
+    @Test
     fun `repeated lifecycle transitions reuse the single session owner`() = runTest {
         val fixture = fixture()
         runCurrent()
@@ -214,21 +290,23 @@ class RuntimeControllerTest {
 
     private fun kotlinx.coroutines.test.TestScope.fixture(
         notificationGranted: Boolean = true,
+        initialSettings: AppSettings = AppSettings(deviceName = "Pixel"),
     ): Fixture {
         val events = mutableListOf<String>()
-        val settings = FakeSettingsRepository()
+        val settings = FakeSettingsRepository(initialSettings)
         val session = FakeRuntimeSession(events)
         val service = FakeForegroundService(events)
         val active = MutableStateFlow(0)
+        val permission = MutableNotificationPermissionChecker(notificationGranted)
         val runtime = RuntimeController(
             settingsRepository = settings,
             session = session,
             foregroundService = service,
             activeTransferCount = active,
-            notificationPermission = NotificationPermissionChecker { notificationGranted },
+            notificationPermission = permission,
             scope = backgroundScope,
         )
-        return Fixture(runtime, settings, session, service, active, events)
+        return Fixture(runtime, settings, session, service, active, permission, events)
     }
 
     private data class Fixture(
@@ -237,6 +315,7 @@ class RuntimeControllerTest {
         val session: FakeRuntimeSession,
         val service: FakeForegroundService,
         val active: MutableStateFlow<Int>,
+        val permission: MutableNotificationPermissionChecker,
         val events: MutableList<String>,
     )
 
@@ -260,7 +339,9 @@ class RuntimeControllerTest {
     private class FakeForegroundService(private val events: MutableList<String>) : ForegroundServiceGateway {
         val starts = mutableListOf<ServiceReason>()
         var stopCount = 0
+        var stopAttempts = 0
         var startFailure: RuntimeException? = null
+        var stopFailure: RuntimeException? = null
 
         override fun start(reason: ServiceReason) {
             startFailure?.let { throw it }
@@ -269,13 +350,15 @@ class RuntimeControllerTest {
         }
 
         override suspend fun stopWhenIdle() {
+            stopAttempts++
+            stopFailure?.let { throw it }
             stopCount++
             events += "service:stop"
         }
     }
 
-    private class FakeSettingsRepository : SettingsRepository {
-        val value = MutableStateFlow(AppSettings(deviceName = "Pixel"))
+    private class FakeSettingsRepository(initial: AppSettings = AppSettings(deviceName = "Pixel")) : SettingsRepository {
+        val value = MutableStateFlow(initial)
         override val settings: Flow<AppSettings> = value
         override suspend fun setDeviceName(name: String) { value.value = value.value.copy(deviceName = name) }
         override suspend fun setReceiveDirectory(treeUri: String?, displayName: String?) {
@@ -289,6 +372,10 @@ class RuntimeControllerTest {
         }
         override suspend fun setLanguage(language: AppLanguage) { value.value = value.value.copy(language = language) }
         override suspend fun setTheme(theme: AppTheme) { value.value = value.value.copy(theme = theme) }
+    }
+
+    private class MutableNotificationPermissionChecker(var granted: Boolean) : NotificationPermissionChecker {
+        override fun isGranted(): Boolean = granted
     }
 
     private class DelayedSettingsRepository : SettingsRepository {

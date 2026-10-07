@@ -24,6 +24,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
+/** Injectable, factory-countable process owner used by UniShareApplication. */
+internal class ProcessGraphOwner<T>(factory: () -> T) {
+    val value: T by lazy(LazyThreadSafetyMode.SYNCHRONIZED, factory)
+    fun initialize(): T = value
+}
+
 /** Process-wide ownership graph. Every SDK consumer shares sessionManager's single gateway. */
 class AppGraph(application: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

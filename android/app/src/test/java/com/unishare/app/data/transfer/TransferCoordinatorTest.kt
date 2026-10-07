@@ -211,6 +211,25 @@ class TransferCoordinatorTest {
     }
 
     @Test
+    fun cancel_oldest_active_transfer_targets_the_first_cancellable_activity() = runTest {
+        val fixture = fixture()
+        fixture.coordinator.sendText(device, "first")
+        fixture.coordinator.sendText(device, "second")
+        fixture.gateway.emit(GatewayEvent.OutgoingTransferRegistered(
+            OutgoingBinding(OperationKey("operation-1"), TransferKey("first-transfer")),
+        ))
+        fixture.gateway.emit(GatewayEvent.OutgoingTransferRegistered(
+            OutgoingBinding(OperationKey("operation-2"), TransferKey("second-transfer")),
+        ))
+        runCurrent()
+
+        assertTrue(fixture.coordinator.cancelOldestActive())
+
+        assertTrue("cancel:first-transfer" in fixture.gateway.calls)
+        assertFalse("cancel:second-transfer" in fixture.gateway.calls)
+    }
+
+    @Test
     fun incoming_file_completes_only_after_successful_publication() = runTest {
         val fixture = fixture(trusted = false)
         fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "report.pdf", "file-transfer"))

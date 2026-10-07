@@ -21,6 +21,7 @@ enum class RuntimeFailure {
     NOTIFICATION_PERMISSION_DENIED,
     SERVICE_START_NOT_ALLOWED,
     SERVICE_START_REJECTED,
+    SERVICE_STOP_FAILED,
     SESSION_START_FAILED,
     SESSION_STOP_FAILED,
 }
@@ -55,7 +56,7 @@ class RuntimeController(
     private val settingsRepository: SettingsRepository,
     private val session: RuntimeSession,
     private val foregroundService: ForegroundServiceGateway,
-    activeTransferCount: StateFlow<Int>,
+    private val activeTransferCount: StateFlow<Int>,
     private val notificationPermission: NotificationPermissionChecker,
     scope: CoroutineScope,
 ) {
@@ -96,8 +97,17 @@ class RuntimeController(
     suspend fun setAppVisible(visible: Boolean) {
         settingsReady.await()
         lifecycle.withLock {
+            val wasVisible = appVisible
+            activeTransfers = activeTransferCount.value.coerceAtLeast(0)
             appVisible = visible
-            reconcileLocked(if (visible) StartAuthority.VISIBLE_ACTIVITY else StartAuthority.NONE)
+            // An activity that started work before this lifecycle edge remains the authority for
+            // promoting that work, even if the asynchronous StateFlow collector has not run yet.
+            val authority = if (visible || (wasVisible && activeTransfers > 0)) {
+                StartAuthority.VISIBLE_ACTIVITY
+            } else {
+                StartAuthority.NONE
+            }
+            reconcileLocked(authority)
         }
     }
 
@@ -105,6 +115,7 @@ class RuntimeController(
     suspend fun setBackgroundReceive(enabled: Boolean): Boolean {
         settingsReady.await()
         return lifecycle.withLock {
+            activeTransfers = activeTransferCount.value.coerceAtLeast(0)
             if (!enabled) {
                 settingsRepository.setBackgroundReceiveEnabled(false)
                 settings = settings.copy(backgroundReceiveEnabled = false)
@@ -144,6 +155,16 @@ class RuntimeController(
     }
 
     private suspend fun reconcileLocked(authority: StartAuthority) {
+        activeTransfers = activeTransferCount.value.coerceAtLeast(0)
+        if (settings.backgroundReceiveEnabled &&
+            (!settings.notificationsEnabled || !notificationPermission.isGranted())
+        ) {
+            // Persist the denial before evaluating desired runtime state, so neither a restored
+            // setting nor a later lifecycle edge can briefly start background receive.
+            settingsRepository.setBackgroundReceiveEnabled(false)
+            settings = settings.copy(backgroundReceiveEnabled = false)
+            failure = RuntimeFailure.NOTIFICATION_PERMISSION_DENIED
+        }
         var wantsService = settings.backgroundReceiveEnabled || activeTransfers > 0
         var wantsSession = appVisible || wantsService
         if (wantsService && !serviceRunning && authority == StartAuthority.NONE) {
@@ -189,6 +210,17 @@ class RuntimeController(
             }
         }
 
+        if (!wantsService && serviceRunning) {
+            try {
+                foregroundService.stopWhenIdle()
+                serviceRunning = false
+                if (failure == RuntimeFailure.SERVICE_STOP_FAILED) failure = null
+            } catch (_: Exception) {
+                failure = RuntimeFailure.SERVICE_STOP_FAILED
+                publishLocked()
+                return
+            }
+        }
         if (!wantsSession && sessionRunning) {
             try {
                 session.stop()
@@ -198,10 +230,6 @@ class RuntimeController(
                 publishLocked()
                 return
             }
-        }
-        if (!wantsService && serviceRunning) {
-            foregroundService.stopWhenIdle()
-            serviceRunning = false
         }
         publishLocked()
     }

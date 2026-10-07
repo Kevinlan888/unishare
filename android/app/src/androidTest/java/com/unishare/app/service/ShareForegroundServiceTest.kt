@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.test.platform.app.InstrumentationRegistry
-import com.unishare.app.domain.ActivityKey
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,7 +73,7 @@ class ShareForegroundServiceTest {
         assertEquals(1, ongoing.actions.size)
         assertEquals(ShareNotificationFactory.RECEIVE_CHANNEL_ID, ongoing.channelId)
 
-        val transfer = factory.transferProgress(progress = 42, activityId = ActivityKey("activity"))
+        val transfer = factory.transferProgress(progress = 42)
         assertEquals(android.app.Notification.VISIBILITY_SECRET, transfer.visibility)
         assertEquals(1, transfer.actions.size)
         assertEquals(ShareNotificationFactory.TRANSFER_CHANNEL_ID, transfer.channelId)
@@ -83,16 +82,29 @@ class ShareForegroundServiceTest {
     @Test
     fun serviceIsStickyAndStopBackgroundActionNeverCancelsTransfer() = runTest {
         var backgroundEnabled: Boolean? = null
-        var cancelled: ActivityKey? = null
+        var cancelCount = 0
         val handler = ShareServiceActionHandler(
             setBackgroundReceive = { backgroundEnabled = it },
-            cancelTransfer = { cancelled = it },
+            cancelCurrentTransfer = { cancelCount++ },
         )
 
         handler.handle(Intent(ShareForegroundService.ACTION_STOP_BACKGROUND_RECEIVE))
 
         assertEquals(Service.START_STICKY, ShareForegroundService.RESTART_MODE)
         assertEquals(false, backgroundEnabled)
-        assertEquals(null, cancelled)
+        assertEquals(0, cancelCount)
+    }
+
+    @Test
+    fun cancelActionDelegatesToTheDeterministicCurrentTransfer() = runTest {
+        var cancelCount = 0
+        val handler = ShareServiceActionHandler(
+            setBackgroundReceive = { },
+            cancelCurrentTransfer = { cancelCount++ },
+        )
+
+        handler.handle(Intent(ShareForegroundService.ACTION_CANCEL_TRANSFER))
+
+        assertEquals(1, cancelCount)
     }
 }

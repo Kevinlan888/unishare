@@ -7,12 +7,12 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.launch
 
 class UniShareApplication : Application(), DefaultLifecycleObserver {
-    lateinit var graph: AppGraph
-        private set
+    private val graphOwner = ProcessGraphOwner { AppGraph(this) }
+    val graph: AppGraph get() = graphOwner.value
 
     override fun onCreate() {
         super<Application>.onCreate()
-        graph = AppGraph(this)
+        graphOwner.initialize()
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
     }
 

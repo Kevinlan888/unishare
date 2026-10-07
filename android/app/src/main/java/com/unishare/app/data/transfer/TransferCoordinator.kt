@@ -264,6 +264,16 @@ class TransferCoordinator internal constructor(
         }
     }
 
+    /** Notification semantics: cancel the oldest still-active activity that has an SDK ID. */
+    suspend fun cancelOldestActive(): Boolean {
+        val activityId = synchronized(gate) {
+            active.firstOrNull { candidate ->
+                tracker.find(candidate)?.let { !it.status.isTerminal && it.transferId != null } == true
+            }
+        } ?: return false
+        return cancel(activityId)
+    }
+
     suspend fun retry(activityId: ActivityKey): ActivityKey {
         return runOwned {
             ensureAccepting()

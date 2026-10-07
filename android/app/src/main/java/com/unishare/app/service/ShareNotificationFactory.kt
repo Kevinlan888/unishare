@@ -9,7 +9,6 @@ import android.content.Intent
 import android.graphics.drawable.Icon
 import com.unishare.app.MainActivity
 import com.unishare.app.R
-import com.unishare.app.domain.ActivityKey
 
 /** Notification copy is intentionally generic: payload, peer and path data never enter it. */
 class ShareNotificationFactory(context: Context) {
@@ -54,7 +53,7 @@ class ShareNotificationFactory(context: Context) {
             ).build())
             .build()
 
-    fun transferProgress(progress: Int, activityId: ActivityKey): Notification =
+    fun transferProgress(progress: Int): Notification =
         baseBuilder(TRANSFER_CHANNEL_ID)
             .setContentTitle(application.getString(R.string.notification_transfer_title))
             .setContentText(application.getString(R.string.notification_transfer_content))
@@ -66,10 +65,9 @@ class ShareNotificationFactory(context: Context) {
                 application.getString(R.string.notification_cancel_transfer),
                 PendingIntent.getForegroundService(
                     application,
-                    CANCEL_REQUEST_CODE xor activityId.value.hashCode(),
+                    CANCEL_REQUEST_CODE,
                     Intent(application, ShareForegroundService::class.java)
-                        .setAction(ShareForegroundService.ACTION_CANCEL_TRANSFER)
-                        .putExtra(ShareForegroundService.EXTRA_ACTIVITY_ID, activityId.value),
+                        .setAction(ShareForegroundService.ACTION_CANCEL_TRANSFER),
                     immutableUpdateCurrent,
                 ),
             ).build())
