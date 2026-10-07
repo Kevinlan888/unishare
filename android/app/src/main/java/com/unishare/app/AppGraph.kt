@@ -30,6 +30,26 @@ internal class ProcessGraphOwner<T>(factory: () -> T) {
     fun initialize(): T = value
 }
 
+/**
+ * Owns the SDK boundary for one process graph: one gateway feeds one session manager.
+ *
+ * Keeping both factories behind this seam makes the production composition countable in
+ * local tests without constructing the native SDK or an Android database.
+ */
+internal class AppSessionComposition<G, S>(
+    gatewayFactory: () -> G,
+    sessionFactory: (G) -> S,
+) {
+    private val gatewayOwner = ProcessGraphOwner(gatewayFactory)
+    private val sessionOwner = ProcessGraphOwner { sessionFactory(gatewayOwner.value) }
+
+    val gateway: G
+        get() = gatewayOwner.value
+
+    val session: S
+        get() = sessionOwner.value
+}
+
 /** Process-wide ownership graph. Every SDK consumer shares sessionManager's single gateway. */
 class AppGraph(application: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -46,8 +66,11 @@ class AppGraph(application: Application) {
     ).build()
     val activityRepository = RoomActivityRepository(activityDatabase)
 
-    private val gateway = AndroidShareSdkGateway(application, scope)
-    val sessionManager = ShareSessionManager(gateway, scope)
+    private val sessionComposition = AppSessionComposition(
+        gatewayFactory = { AndroidShareSdkGateway(application, scope) },
+        sessionFactory = { gateway -> ShareSessionManager(gateway, scope) },
+    )
+    val sessionManager = sessionComposition.session
     val deviceRepository = DefaultDeviceRepository(sessionManager, scope)
     val activityTracker = ActivityTracker(activityRepository, scope)
     val stagingStore = StagingStore(application)
