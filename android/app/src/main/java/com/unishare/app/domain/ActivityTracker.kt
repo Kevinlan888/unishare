@@ -77,19 +77,20 @@ class ActivityTracker(
         state.values[sanitized.id] = sanitized
         state.liveIds += sanitized.id
         byId[sanitized.id] = sanitized
-        sanitized.operationId?.let { operationToActivity.putIfAbsent(it, sanitized.id) }
+        sanitized.operationId?.let { claimOperation(sanitized.id, it) }
         preview?.let { previews[sanitized.id] = it }
         publish(state)
         enqueue(sanitized)
         sanitized.transferId?.let { transferId ->
-            transferToActivity.putIfAbsent(transferId, sanitized.id)
-            pendingEvents.remove(transferId).orEmpty().forEach { update(sanitized.id, it) }
+            if (claimTransfer(sanitized.id, transferId)) {
+                pendingEvents.remove(transferId).orEmpty().forEach { update(sanitized.id, it) }
+            }
         }
         sanitized.id
     }
 
     fun registerIncoming(offer: IncomingOffer, atMillis: Long): ActivityKey = synchronized(gate) {
-        transferToActivity[offer.transferId]?.let { return@synchronized it }
+        transferToActivity[offer.transferId]?.takeIf(::isLiveLocked)?.let { return@synchronized it }
         val activity = ShareActivity(
             id = idFactory(),
             deviceId = offer.deviceId,
@@ -127,8 +128,10 @@ class ActivityTracker(
     }
 
     fun bindOperation(activityId: ActivityKey, operationId: OperationKey, atMillis: Long) = synchronized(gate) {
+        val existing = operationToActivity[operationId]
+        if (existing != null && existing != activityId && isLiveLocked(existing)) return@synchronized
         update(activityId, ActivityEvent.OperationBound(operationId, atMillis))
-        operationToActivity.putIfAbsent(operationId, activityId)
+        operationToActivity[operationId] = activityId
         pendingTransferByOperation.remove(operationId)?.let { (transferId, boundAt) ->
             bindTransferNow(activityId, transferId, boundAt)
         }
@@ -169,9 +172,9 @@ class ActivityTracker(
 
     private fun bindTransferNow(activityId: ActivityKey, transferId: TransferKey, atMillis: Long) {
         val existing = transferToActivity[transferId]
-        if (existing != null && existing != activityId) return
+        if (existing != null && existing != activityId && isLiveLocked(existing)) return
         update(activityId, ActivityEvent.TransferBound(transferId, atMillis))
-        transferToActivity.putIfAbsent(transferId, activityId)
+        transferToActivity[transferId] = activityId
         pendingEvents.remove(transferId).orEmpty().forEach { update(activityId, it) }
     }
 
@@ -189,10 +192,29 @@ class ActivityTracker(
         state.values[activityId] = updated
         state.liveIds += activityId
         byId[activityId] = updated
-        updated.operationId?.let { operationToActivity.putIfAbsent(it, activityId) }
-        updated.transferId?.let { transferToActivity.putIfAbsent(it, activityId) }
+        updated.operationId?.let { claimOperation(activityId, it) }
+        updated.transferId?.let { claimTransfer(activityId, it) }
         publish(state)
         enqueue(updated)
+    }
+
+    private fun claimOperation(activityId: ActivityKey, operationId: OperationKey): Boolean {
+        val existing = operationToActivity[operationId]
+        if (existing != null && existing != activityId && isLiveLocked(existing)) return false
+        operationToActivity[operationId] = activityId
+        return true
+    }
+
+    private fun claimTransfer(activityId: ActivityKey, transferId: TransferKey): Boolean {
+        val existing = transferToActivity[transferId]
+        if (existing != null && existing != activityId && isLiveLocked(existing)) return false
+        transferToActivity[transferId] = activityId
+        return true
+    }
+
+    private fun isLiveLocked(activityId: ActivityKey): Boolean {
+        val activity = byId[activityId] ?: return false
+        return devices[activity.deviceId]?.liveIds?.contains(activityId) == true
     }
 
     private fun stateFor(device: DeviceKey): DeviceState = synchronized(gate) {

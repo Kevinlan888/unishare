@@ -100,6 +100,71 @@ class ActivityTrackerTest {
     }
 
     @Test
+    fun live_operation_binding_reclaims_a_runtime_id_from_hydrated_history() = runTest {
+        val repository = FakeActivityRepository()
+        val tracker = tracker(repository)
+        val historical = activity(id = "historical").copy(
+            operationId = OperationKey("operation-1"),
+            status = ActivityStatus.COMPLETED,
+            completedAtMillis = 90,
+        )
+        tracker.activities(historical.deviceId)
+        repository.emitHistory(historical.deviceId, listOf(historical))
+        runCurrent()
+        val live = activity(id = "live")
+        tracker.reserve(live)
+
+        tracker.bindOperation(live.id, OperationKey("operation-1"), 120)
+        runCurrent()
+
+        assertEquals(live.id, tracker.findByOperation(OperationKey("operation-1"))?.id)
+        assertEquals(OperationKey("operation-1"), tracker.find(live.id)?.operationId)
+    }
+
+    @Test
+    fun live_transfer_binding_reclaims_an_id_from_hydrated_history() = runTest {
+        val repository = FakeActivityRepository()
+        val tracker = tracker(repository)
+        val historical = activity(id = "historical").copy(
+            transferId = TransferKey("transfer-1"),
+            status = ActivityStatus.COMPLETED,
+            completedAtMillis = 90,
+        )
+        tracker.activities(historical.deviceId)
+        repository.emitHistory(historical.deviceId, listOf(historical))
+        runCurrent()
+        val live = activity(id = "live")
+        tracker.reserve(live)
+        tracker.bindOperation(live.id, OperationKey("operation-2"), 120)
+
+        tracker.bindTransfer(OperationKey("operation-2"), TransferKey("transfer-1"), 130)
+        runCurrent()
+
+        assertEquals(live.id, tracker.findByTransfer(TransferKey("transfer-1"))?.id)
+        assertEquals(TransferKey("transfer-1"), tracker.find(live.id)?.transferId)
+    }
+
+    @Test
+    fun incoming_offer_reclaims_a_transfer_id_from_hydrated_history() = runTest {
+        val repository = FakeActivityRepository()
+        val tracker = tracker(repository)
+        val historical = activity(id = "historical").copy(
+            transferId = TransferKey("transfer-in"),
+            status = ActivityStatus.COMPLETED,
+            completedAtMillis = 90,
+        )
+        tracker.activities(historical.deviceId)
+        repository.emitHistory(historical.deviceId, listOf(historical))
+        runCurrent()
+
+        val incoming = tracker.registerIncoming(offer(), 120)
+        runCurrent()
+
+        assertEquals(ActivityKey("generated-1"), incoming)
+        assertEquals(incoming, tracker.findByTransfer(TransferKey("transfer-in"))?.id)
+    }
+
+    @Test
     fun history_removal_clears_transfer_index_before_a_new_offer_reuses_the_id() = runTest {
         val repository = FakeActivityRepository()
         val tracker = tracker(repository)

@@ -12,6 +12,7 @@ import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -31,6 +33,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TransferCoordinatorTest {
@@ -80,6 +83,8 @@ class TransferCoordinatorTest {
 
         assertEquals(1, fixture.gateway.accepted.size)
         assertEquals(2, fixture.coordinator.pendingOffers().size)
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("text-transfer"))))
+        runCurrent()
         val textActivity = fixture.tracker.activities(device).value.single { it.kind == ContentKind.TEXT }
         assertEquals("received text", (fixture.tracker.preview(textActivity.id) as ActivityPreview.Text).text)
     }
@@ -180,6 +185,32 @@ class TransferCoordinatorTest {
     }
 
     @Test
+    fun successful_cancel_ack_waits_for_the_sdk_terminal_result() = runTest {
+        val fixture = fixture()
+        val activityId = fixture.coordinator.sendText(device, "hello")
+        val transferId = TransferKey("cancel-transfer")
+        fixture.gateway.emit(GatewayEvent.OutgoingTransferRegistered(
+            OutgoingBinding(OperationKey("operation-1"), transferId),
+        ))
+        fixture.gateway.emit(GatewayEvent.ProgressReceived(TransferProgress(transferId, 2, 5)))
+        runCurrent()
+
+        assertTrue(fixture.coordinator.cancel(activityId))
+        runCurrent()
+
+        assertEquals(ActivityStatus.TRANSFERRING, fixture.tracker.find(activityId)?.status)
+        assertEquals(1, fixture.coordinator.activeTransferCount.value)
+
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(
+            TransferTerminal(transferId, ShareFailure(ShareErrorKind.CANCELLED)),
+        ))
+        runCurrent()
+
+        assertEquals(ActivityStatus.CANCELLED, fixture.tracker.find(activityId)?.status)
+        assertEquals(0, fixture.coordinator.activeTransferCount.value)
+    }
+
+    @Test
     fun incoming_file_completes_only_after_successful_publication() = runTest {
         val fixture = fixture(trusted = false)
         fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "report.pdf", "file-transfer"))
@@ -190,6 +221,14 @@ class TransferCoordinatorTest {
         }
 
         assertTrue(fixture.coordinator.accept(activityId))
+        runCurrent()
+
+        assertEquals(ActivityStatus.AWAITING_PEER, fixture.tracker.find(activityId)?.status)
+        assertEquals(1, fixture.coordinator.activeTransferCount.value)
+        assertFalse(fixture.publication.beforePublishCalled)
+        assertFalse(TransferKey("file-transfer") in fixture.staging.deleted)
+
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("file-transfer"))))
         runCurrent()
 
         val activity = fixture.tracker.find(activityId)!!
@@ -208,6 +247,7 @@ class TransferCoordinatorTest {
         fixture.publication.failure = IllegalStateException("private path")
 
         fixture.coordinator.accept(original)
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("file-transfer"))))
         runCurrent()
         assertEquals(ShareErrorKind.STORAGE_FAILED, fixture.tracker.find(original)?.errorKind)
         assertFalse(fixture.staging.deleted.contains(TransferKey("file-transfer")))
@@ -231,6 +271,8 @@ class TransferCoordinatorTest {
         val original = fixture.coordinator.pendingOffers().single().first
         fixture.publication.failure = IllegalStateException("failure")
         fixture.coordinator.accept(original)
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("file-transfer"))))
+        runCurrent()
 
         now += 599_999
         val failedRetry = fixture.coordinator.retry(original)
@@ -245,6 +287,39 @@ class TransferCoordinatorTest {
     }
 
     @Test
+    fun blocking_receive_and_republication_paths_use_the_injected_io_dispatcher() = runTest {
+        val io = GuardedDispatcher(StandardTestDispatcher(testScheduler))
+        val fixture = fixture(trusted = false, ioDispatcher = io)
+        fixture.staging.beforeDelete = { check(io.isActive()) }
+
+        fixture.staging.textToWrite = "received text"
+        fixture.gateway.emit(offer(ContentKind.TEXT, "text/plain", "Text", "text-transfer"))
+        runCurrent()
+        val textActivity = fixture.coordinator.pendingOffers().single().first
+        fixture.coordinator.accept(textActivity)
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("text-transfer"))))
+        runCurrent()
+        assertEquals(ActivityStatus.COMPLETED, fixture.tracker.find(textActivity)?.status)
+
+        fixture.publication.beforePublish = { check(io.isActive()) }
+        fixture.publication.failure = IllegalStateException("first publication fails")
+        fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "report.pdf", "file-transfer"))
+        runCurrent()
+        val fileActivity = fixture.coordinator.pendingOffers().single().first
+        fixture.coordinator.accept(fileActivity)
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("file-transfer"))))
+        runCurrent()
+        assertEquals(ActivityStatus.FAILED, fixture.tracker.find(fileActivity)?.status)
+
+        fixture.publication.failure = null
+        val retry = fixture.coordinator.retry(fileActivity)
+        runCurrent()
+
+        assertEquals(ActivityStatus.COMPLETED, fixture.tracker.find(retry)?.status)
+        assertEquals(2, fixture.publication.publishCalls)
+    }
+
+    @Test
     fun expired_publication_recovery_deletes_staging_and_refuses_retry() = runTest {
         var now = 1_000L
         val fixture = fixture(clock = { now })
@@ -253,6 +328,7 @@ class TransferCoordinatorTest {
         val original = fixture.coordinator.pendingOffers().single().first
         fixture.publication.failure = IllegalStateException("failure")
         fixture.coordinator.accept(original)
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("file-transfer"))))
         runCurrent()
 
         now += 600_000
@@ -269,12 +345,14 @@ class TransferCoordinatorTest {
     @Test
     fun failed_incoming_transfer_cleans_private_staging() = runTest {
         val fixture = fixture(trusted = false)
-        fixture.gateway.acceptResult = TransferTerminal(TransferKey("file-transfer"), ShareFailure(ShareErrorKind.NETWORK_LOST))
         fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "report.pdf", "file-transfer"))
         runCurrent()
         val activityId = fixture.coordinator.pendingOffers().single().first
 
         fixture.coordinator.accept(activityId)
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(
+            TransferTerminal(TransferKey("file-transfer"), ShareFailure(ShareErrorKind.NETWORK_LOST)),
+        ))
         runCurrent()
 
         assertTrue(TransferKey("file-transfer") in fixture.staging.deleted)
@@ -378,6 +456,10 @@ class TransferCoordinatorTest {
         fixture.gateway.acceptCompletion!!.complete(TransferTerminal(TransferKey("file-transfer")))
         acceptance.await()
         runCurrent()
+        assertFalse(retirement.isCompleted)
+
+        fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("file-transfer"))))
+        runCurrent()
         assertTrue(retirement.isCompleted)
     }
 
@@ -404,6 +486,7 @@ class TransferCoordinatorTest {
         trusted: Boolean = true,
         clock: () -> Long = { 1_000L },
         workerScope: CoroutineScope = backgroundScope,
+        ioDispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
     ): Fixture {
         val repository = CoordinatorActivityRepository()
         val tracker = ActivityTracker(repository, workerScope, idFactory = sequentialIds())
@@ -422,6 +505,7 @@ class TransferCoordinatorTest {
             staging = staging,
             publication = publication,
             scope = workerScope,
+            ioDispatcher = ioDispatcher,
             clock = clock,
             idFactory = sequentialIds("coordinator"),
         )
@@ -550,22 +634,45 @@ private class FakeSettingsRepository : SettingsRepository {
 private class FakeStagingAccess : StagingAccess {
     val deleted = CopyOnWriteArrayList<TransferKey>()
     var textToWrite: String? = null
+    var beforeDelete: (() -> Unit)? = null
     override fun create(transferId: TransferKey): PreparedStaging {
         val file = kotlin.io.path.createTempFile("unishare-test", ".data").toFile()
         textToWrite?.let(file::writeText)
         return PreparedStaging(transferId, fakeUri(), file, 1_000)
     }
-    override fun delete(transferId: TransferKey) { deleted += transferId }
+    override fun delete(transferId: TransferKey) {
+        beforeDelete?.invoke()
+        deleted += transferId
+    }
 }
 
 private class FakePublication : ContentPublication {
     var failure: Exception? = null
     var beforePublish: (() -> Unit)? = null
     var beforePublishCalled = false
+    var publishCalls = 0
     override fun publish(staging: PreparedStaging, displayName: String, mimeType: String, destination: com.unishare.app.data.content.ReceiveDestination): String {
         beforePublish?.invoke()
         beforePublishCalled = true
+        publishCalls++
         failure?.let { throw it }
         return "content://downloads/final"
     }
+}
+
+private class GuardedDispatcher(private val delegate: CoroutineDispatcher) : CoroutineDispatcher() {
+    private val depth = ThreadLocal.withInitial { 0 }
+
+    override fun dispatch(context: CoroutineContext, block: Runnable) {
+        delegate.dispatch(context) {
+            depth.set((depth.get() ?: 0) + 1)
+            try {
+                block.run()
+            } finally {
+                depth.set((depth.get() ?: 1) - 1)
+            }
+        }
+    }
+
+    fun isActive(): Boolean = (depth.get() ?: 0) > 0
 }

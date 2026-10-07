@@ -11,8 +11,10 @@ import com.unishare.app.data.settings.SettingsRepository
 import com.unishare.app.domain.*
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal interface StagingAccess {
     fun create(transferId: TransferKey): PreparedStaging
@@ -51,6 +54,7 @@ class TransferCoordinator internal constructor(
     private val staging: StagingAccess,
     private val publication: ContentPublication,
     private val scope: CoroutineScope,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idFactory: () -> ActivityKey = { ActivityKey(UUID.randomUUID().toString()) },
 ) {
@@ -62,6 +66,7 @@ class TransferCoordinator internal constructor(
         stagingStore: StagingStore,
         receivePublisher: ReceivePublisher,
         scope: CoroutineScope,
+        ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
         clock: () -> Long = System::currentTimeMillis,
         idFactory: () -> ActivityKey = { ActivityKey(UUID.randomUUID().toString()) },
     ) : this(
@@ -73,7 +78,7 @@ class TransferCoordinator internal constructor(
         ContentPublication { prepared, name, mime, destination ->
             receivePublisher.publish(prepared, name, mime, destination).toString()
         },
-        scope, clock, idFactory,
+        scope, ioDispatcher, clock, idFactory,
     )
 
     private enum class OfferDecision { PENDING, ACCEPTING, REJECTING, DONE }
@@ -82,6 +87,7 @@ class TransferCoordinator internal constructor(
         val offer: IncomingOffer,
         var decision: OfferDecision = OfferDecision.PENDING,
         var prepared: PreparedStaging? = null,
+        val terminal: CompletableDeferred<TransferTerminal> = CompletableDeferred(),
     )
     private sealed interface RetryPayload {
         data class Text(val text: String, val origin: ShareOrigin) : RetryPayload
@@ -204,28 +210,18 @@ class TransferCoordinator internal constructor(
             return true
         }
         addActive(activityId)
-        val terminal = try {
+        val acknowledgement = try {
             session.accept(state.offer.requestId, prepared.uri)
         } catch (failure: Exception) {
             TransferTerminal(state.offer.transferId, ShareFailure(failure.stableKind()))
         }
-        if (terminal.failure != null) {
-            staging.delete(state.offer.transferId)
-            finishOfferFailure(state, terminal.failure.kind)
+        if (acknowledgement.failure != null && synchronized(gate) { offers[activityId] === state }) {
+            withContext(ioDispatcher) { staging.delete(state.offer.transferId) }
+            finishOfferFailure(state, acknowledgement.failure.kind)
             removeActive(activityId)
-            return true
+        } else if (synchronized(gate) { offers[activityId] === state }) {
+            launchOwned { completeAcceptedIncoming(state, state.terminal.await()) }
         }
-        if (tracker.find(activityId)?.status?.isTerminal == true) {
-            staging.delete(state.offer.transferId)
-            finishOfferState(state)
-            removeActive(activityId)
-            return true
-        }
-        when (state.offer.kind) {
-            ContentKind.TEXT -> completeIncomingText(state, prepared)
-            ContentKind.IMAGE, ContentKind.FILE -> completeIncomingContent(state, prepared)
-        }
-        removeActive(activityId)
         return true
     }
 
@@ -261,9 +257,6 @@ class TransferCoordinator internal constructor(
             val transferId = activity.transferId ?: return@runOwned false
             try {
                 session.cancel(transferId)
-                tracker.fail(activityId, ShareErrorKind.CANCELLED, clock())
-                synchronized(gate) { offers[activityId]?.prepared?.let { staging.delete(it.transferId) } }
-                removeActive(activityId)
                 true
             } catch (failure: Exception) {
                 throw CoordinatorException(failure.stableKind())
@@ -413,7 +406,7 @@ class TransferCoordinator internal constructor(
         }
     }
 
-    private fun handleTerminalEvent(terminal: TransferTerminal) {
+    private suspend fun handleTerminalEvent(terminal: TransferTerminal) {
         val transferId = terminal.transferId ?: return
         val incoming = synchronized(gate) { offerByTransfer[transferId]?.let(offers::get) }
         if (incoming == null) {
@@ -421,23 +414,47 @@ class TransferCoordinator internal constructor(
             tracker.findByTransfer(transferId)?.takeIf {
                 it.direction == ShareDirection.OUTGOING && it.status.isTerminal
             }?.let { finishOutgoingTerminal(it.id) }
-        } else if (terminal.failure != null) {
-            incoming.prepared?.let { staging.delete(it.transferId) }
-            finishOfferFailure(incoming, terminal.failure.kind)
-            removeActive(incoming.activityId)
+        } else {
+            val accepted = synchronized(gate) {
+                incoming.decision == OfferDecision.ACCEPTING && incoming.prepared != null
+            }
+            if (accepted) {
+                incoming.terminal.complete(terminal)
+            } else if (terminal.failure != null) {
+                incoming.prepared?.let { withContext(ioDispatcher) { staging.delete(it.transferId) } }
+                finishOfferFailure(incoming, terminal.failure.kind)
+                removeActive(incoming.activityId)
+            }
         }
-        // Incoming success is deliberately completed only by accept() after read/publication.
     }
 
-    private fun completeIncomingText(state: OfferState, prepared: PreparedStaging) {
+    private suspend fun completeAcceptedIncoming(state: OfferState, terminal: TransferTerminal) {
+        if (synchronized(gate) { offers[state.activityId] !== state }) return
+        val prepared = state.prepared ?: return
+        if (terminal.failure != null) {
+            withContext(ioDispatcher) { staging.delete(state.offer.transferId) }
+            finishOfferFailure(state, terminal.failure.kind)
+            removeActive(state.activityId)
+            return
+        }
+        when (state.offer.kind) {
+            ContentKind.TEXT -> completeIncomingText(state, prepared)
+            ContentKind.IMAGE, ContentKind.FILE -> completeIncomingContent(state, prepared)
+        }
+        removeActive(state.activityId)
+    }
+
+    private suspend fun completeIncomingText(state: OfferState, prepared: PreparedStaging) {
         try {
-            val text = prepared.file.inputStream().bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val text = withContext(ioDispatcher) {
+                prepared.file.inputStream().bufferedReader(Charsets.UTF_8).use { it.readText() }
+            }
             tracker.setPreview(state.activityId, ActivityPreview.Text(text))
-            staging.delete(state.offer.transferId)
+            withContext(ioDispatcher) { staging.delete(state.offer.transferId) }
             tracker.completeIncoming(state.activityId, clock())
             finishOfferState(state)
         } catch (_: Exception) {
-            staging.delete(state.offer.transferId)
+            withContext(ioDispatcher) { staging.delete(state.offer.transferId) }
             finishOfferFailure(state, ShareErrorKind.STORAGE_FAILED)
         }
     }
@@ -451,8 +468,11 @@ class TransferCoordinator internal constructor(
             return
         }
         try {
-            val finalUri = publication.publish(prepared, state.offer.displayName, state.offer.mimeType, destination)
-            staging.delete(state.offer.transferId)
+            val finalUri = withContext(ioDispatcher) {
+                publication.publish(prepared, state.offer.displayName, state.offer.mimeType, destination).also {
+                    staging.delete(state.offer.transferId)
+                }
+            }
             tracker.completeIncoming(state.activityId, clock(), finalUri)
             finishOfferState(state)
         } catch (_: Exception) {
@@ -483,14 +503,17 @@ class TransferCoordinator internal constructor(
     private suspend fun retryPublication(originalId: ActivityKey, recovery: Recovery): ActivityKey {
         recovery.cleanup.cancel()
         if (clock() >= recovery.expiresAt) {
-            staging.delete(recovery.staging.transferId)
+            withContext(ioDispatcher) { staging.delete(recovery.staging.transferId) }
             throw CoordinatorException(ShareErrorKind.STORAGE_FAILED)
         }
         val retryId = tracker.reserveRetry(originalId, clock())
         try {
             val destination = currentDestination()
-            val finalUri = publication.publish(recovery.staging, recovery.displayName, recovery.mimeType, destination)
-            staging.delete(recovery.staging.transferId)
+            val finalUri = withContext(ioDispatcher) {
+                publication.publish(recovery.staging, recovery.displayName, recovery.mimeType, destination).also {
+                    staging.delete(recovery.staging.transferId)
+                }
+            }
             tracker.completeIncoming(retryId, clock(), finalUri)
         } catch (_: Exception) {
             tracker.fail(retryId, ShareErrorKind.STORAGE_FAILED, clock())
