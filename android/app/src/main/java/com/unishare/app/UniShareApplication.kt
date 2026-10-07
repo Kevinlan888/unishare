@@ -1,6 +1,7 @@
 package com.unishare.app
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -22,5 +23,10 @@ class UniShareApplication : Application(), DefaultLifecycleObserver {
 
     override fun onStop(owner: LifecycleOwner) {
         graph.scope.launch { graph.runtimeController.setAppVisible(false) }
+    }
+
+    companion object {
+        fun graph(context: Context): AppGraph =
+            (context.applicationContext as UniShareApplication).graph
     }
 }
