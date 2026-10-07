@@ -84,7 +84,6 @@
 <data name="ClipboardOrigin.Text" xml:space="preserve"><value>剪贴板</value></data>
 <data name="MountainImage.AutomationProperties.Name" xml:space="preserve"><value>山湖照片，IMG_3281.jpg</value></data>
 <data name="TransferProgress.AutomationProperties.Name" xml:space="preserve"><value>project.zip 传输进度</value></data>
-<data name="DemoProgress.Text" xml:space="preserve"><value>72% · 42 MB/s · 剩余 14 秒</value></data>
 <data name="AcceptButton.Content" xml:space="preserve"><value>接受</value></data>
 <data name="RejectButton.Content" xml:space="preserve"><value>拒绝</value></data>
 <data name="CancelButton.Content" xml:space="preserve"><value>取消</value></data>

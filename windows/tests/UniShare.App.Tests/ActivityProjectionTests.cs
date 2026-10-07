@@ -40,6 +40,27 @@ public sealed class ActivityProjectionTests
     }
 
     [TestMethod]
+    public void ProgressTextUsesTheLivePercentageAndNotifiesWhenItChanges()
+    {
+        var property = typeof(ActivityProjection).GetProperty("ProgressText");
+        Assert.IsNotNull(property, "The progress label has no live projection property.");
+        var current = Projection(25);
+        var activities = new ObservableCollection<ActivityProjection> { current };
+        var textChanges = 0;
+        current.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == "ProgressText")
+                textChanges++;
+        };
+
+        Assert.AreEqual("25%", property.GetValue(current));
+        ActivityProjectionCollection.Synchronize(activities, [Projection(60)]);
+
+        Assert.AreEqual("60%", property.GetValue(current));
+        Assert.AreEqual(1, textChanges);
+    }
+
+    [TestMethod]
     public void SynchronizingUpdatesLateContentWithoutReplacingTheProjection()
     {
         var current = Projection(0, text: "", status: ActivityStatus.AwaitingDecision);

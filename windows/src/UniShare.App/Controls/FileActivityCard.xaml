@@ -65,7 +65,7 @@
           Maximum="100"
           MinWidth="200" />
         <TextBlock
-          x:Uid="DemoProgress"
+          Text="{Binding ProgressText}"
           Style="{StaticResource SecondaryText}" />
       </StackPanel>
       <StackPanel

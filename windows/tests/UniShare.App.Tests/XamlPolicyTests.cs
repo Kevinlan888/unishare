@@ -157,6 +157,18 @@ public sealed partial class XamlPolicyTests
     }
 
     [TestMethod]
+    public void FileProgressLabelBindsToTheLiveProjection()
+    {
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var card = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Controls", "FileActivityCard.xaml"));
+        var label = card.Descendants().SingleOrDefault(element =>
+            element.Name.LocalName == "TextBlock" && element.Attribute("Text")?.Value == "{Binding ProgressText}");
+
+        Assert.IsNotNull(label, "The file progress label must bind to the live ProgressText value.");
+        Assert.IsNull(label.Attribute(x + "Uid"), "A localized x:Uid could replace the live progress text with demo content.");
+    }
+
+    [TestMethod]
     public void DeviceRowsBindTheirVisualAndAccessiblePresence()
     {
         var page = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceListPane.xaml"));

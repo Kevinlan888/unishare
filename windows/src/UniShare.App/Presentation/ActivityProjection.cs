@@ -64,8 +64,13 @@ public sealed class ActivityProjection : ObservableObject
     public double Progress
     {
         get => progress;
-        private set => SetProperty(ref progress, value);
+        private set
+        {
+            if (SetProperty(ref progress, value))
+                OnPropertyChanged(nameof(ProgressText));
+        }
     }
+    public string ProgressText => $"{Progress:0}%";
     public static double ProgressPercentage(ulong transferredBytes, ulong byteCount) =>
         byteCount == 0 ? 0 : Math.Clamp((double)transferredBytes / byteCount * 100, 0, 100);
     internal void UpdateFrom(ActivityProjection value)

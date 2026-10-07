@@ -84,7 +84,6 @@
 <data name="ClipboardOrigin.Text" xml:space="preserve"><value>Clipboard</value></data>
 <data name="MountainImage.AutomationProperties.Name" xml:space="preserve"><value>Mountain lake photo, IMG_3281.jpg</value></data>
 <data name="TransferProgress.AutomationProperties.Name" xml:space="preserve"><value>project.zip transfer progress</value></data>
-<data name="DemoProgress.Text" xml:space="preserve"><value>72% · 42 MB/s · 14 sec left</value></data>
 <data name="AcceptButton.Content" xml:space="preserve"><value>Accept</value></data>
 <data name="RejectButton.Content" xml:space="preserve"><value>Reject</value></data>
 <data name="CancelButton.Content" xml:space="preserve"><value>Cancel</value></data>
