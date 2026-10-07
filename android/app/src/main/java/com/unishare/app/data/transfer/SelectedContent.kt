@@ -10,4 +10,5 @@ data class SelectedContent(
     val displayName: String,
     val mimeType: String,
     val byteCount: Long,
+    val readPermission: ContentReadPermissionLease? = null,
 )

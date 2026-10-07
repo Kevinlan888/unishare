@@ -55,6 +55,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.unishare.app.R
+import com.unishare.app.data.transfer.ContentUriPermissionRetainer
 import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.ContentKind
 import com.unishare.app.platform.rememberContentPickerLauncher
@@ -66,6 +67,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 @Composable
 fun SessionRoute(
     viewModel: SessionViewModel,
+    contentUriPermissionRetainer: ContentUriPermissionRetainer,
     onBack: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -73,8 +75,10 @@ fun SessionRoute(
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbar = remember { SnackbarHostState() }
     val picker = rememberContentPickerLauncher(
+        retainer = contentUriPermissionRetainer,
         onPhotoSelected = { viewModel.sendPickedContent(it, ContentKind.IMAGE) },
         onFileSelected = { viewModel.sendPickedContent(it, ContentKind.FILE) },
+        onPermissionFailure = viewModel::onContentPermissionFailure,
     )
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -92,12 +96,12 @@ fun SessionRoute(
         onPickPhoto = picker.launchPhoto,
         onPickFile = picker.launchFile,
         onClipboard = {
-            viewModel.sendClipboard(
-                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED),
-            )
+            viewModel.sendClipboard {
+                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            }
         },
-        onText = viewModel::dismissShareSheet,
-        onLink = viewModel::dismissShareSheet,
+        onText = viewModel::selectTextComposer,
+        onLink = viewModel::selectLinkComposer,
         onCancel = viewModel::cancel,
         onRetry = viewModel::retry,
         snackbarHostState = snackbar,
@@ -151,6 +155,7 @@ fun SessionScreen(
         bottomBar = {
             SessionComposer(
                 value = state.composerText,
+                mode = state.composerMode,
                 onValueChange = onComposerChanged,
                 onAdd = onAddAttachment,
                 onSend = onSend,
@@ -265,6 +270,7 @@ private fun SessionHeader(state: SessionUiState, onBack: () -> Unit, onMore: () 
 @Composable
 private fun SessionComposer(
     value: String,
+    mode: ComposerMode,
     onValueChange: (String) -> Unit,
     onAdd: () -> Unit,
     onSend: () -> Unit,
@@ -298,11 +304,19 @@ private fun SessionComposer(
                     .weight(1f)
                     .focusRequester(focusRequester)
                     .heightIn(min = 52.dp),
-                placeholder = { Text(stringResource(R.string.session_composer_hint), maxLines = 2) },
+                placeholder = {
+                    Text(
+                        stringResource(
+                            if (mode == ComposerMode.LINK) R.string.session_link_composer_hint
+                            else R.string.session_composer_hint,
+                        ),
+                        maxLines = 2,
+                    )
+                },
                 trailingIcon = {
                     Icon(
                         Icons.Outlined.SentimentSatisfiedAlt,
-                        contentDescription = stringResource(R.string.session_emoji),
+                        contentDescription = null,
                     )
                 },
                 maxLines = 4,
@@ -324,7 +338,10 @@ private fun SessionComposer(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.AutoMirrored.Outlined.Send,
-                        contentDescription = stringResource(R.string.session_send_text),
+                        contentDescription = stringResource(
+                            if (mode == ComposerMode.LINK) R.string.session_send_link
+                            else R.string.session_send_text,
+                        ),
                         modifier = Modifier.size(27.dp),
                     )
                 }
@@ -342,4 +359,6 @@ private fun SessionUserMessage.stringResource(): Int = when (this) {
     SessionUserMessage.RETRY_FAILED -> R.string.session_error_retry_failed
     SessionUserMessage.CLIPBOARD_EMPTY -> R.string.session_error_clipboard_empty
     SessionUserMessage.CLIPBOARD_REQUIRES_FOREGROUND -> R.string.session_error_clipboard_foreground
+    SessionUserMessage.CONTENT_PERMISSION_DENIED -> R.string.session_error_content_permission
+    SessionUserMessage.INVALID_LINK -> R.string.session_error_invalid_link
 }

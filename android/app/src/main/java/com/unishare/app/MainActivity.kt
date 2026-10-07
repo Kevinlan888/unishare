@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
                                 key = "session-${deviceId.value}",
                                 factory = SessionViewModel.Factory(graph, deviceId),
                             )
-                            SessionRoute(sessionViewModel, onBack)
+                            SessionRoute(sessionViewModel, graph.contentUriPermissionRetainer, onBack)
                         },
                     )
                 }

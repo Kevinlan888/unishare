@@ -60,8 +60,10 @@
     <string name="session_today">今天</string>
     <string name="session_add_attachment">添加附件</string>
     <string name="session_send_text">发送文本</string>
+    <string name="session_send_link">发送链接</string>
     <string name="session_emoji">选择表情</string>
     <string name="session_composer_hint">输入消息…</string>
+    <string name="session_link_composer_hint">粘贴链接…</string>
     <string name="session_share_to">分享到 %1$s</string>
     <string name="session_photo">照片</string>
     <string name="session_photo_detail">从图库选择</string>
@@ -97,4 +99,6 @@
     <string name="session_error_retry_failed">无法重试传输。</string>
     <string name="session_error_clipboard_empty">剪贴板中没有受支持的内容。</string>
     <string name="session_error_clipboard_foreground">请打开 UniShare 后再读取剪贴板。</string>
+    <string name="session_error_content_permission">请允许持续访问所选内容后再发送。</string>
+    <string name="session_error_invalid_link">请输入有效的 http 或 https 链接。</string>
 </resources>

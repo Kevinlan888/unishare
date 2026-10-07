@@ -1,6 +1,6 @@
 package com.unishare.app.presentation.session
 
-import androidx.annotation.DrawableRes
+import androidx.compose.ui.graphics.ImageBitmap
 import com.unishare.app.data.sdk.DevicePlatform
 import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.ActivityStatus
@@ -23,7 +23,7 @@ data class SessionActivityUi(
     val timestampMillis: Long,
     val text: String? = null,
     val previewReference: String? = null,
-    @param:DrawableRes val previewDrawableRes: Int? = null,
+    val previewBitmap: ImageBitmap? = null,
     val rateBytesPerSecond: Long? = null,
     val etaSeconds: Long? = null,
     val errorKind: ShareErrorKind? = null,
@@ -41,9 +41,12 @@ data class SessionUiState(
     val trusted: Boolean = false,
     val identityChanged: Boolean = false,
     val composerText: String = "",
+    val composerMode: ComposerMode = ComposerMode.TEXT,
     val activities: List<SessionActivityUi> = emptyList(),
     val shareSheetVisible: Boolean = false,
 )
+
+enum class ComposerMode { TEXT, LINK }
 
 enum class SessionUserMessage {
     DEVICE_OFFLINE,
@@ -54,6 +57,8 @@ enum class SessionUserMessage {
     RETRY_FAILED,
     CLIPBOARD_EMPTY,
     CLIPBOARD_REQUIRES_FOREGROUND,
+    CONTENT_PERMISSION_DENIED,
+    INVALID_LINK,
 }
 
 data class SessionEvent(val message: SessionUserMessage)

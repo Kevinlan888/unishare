@@ -1,6 +1,5 @@
 package com.unishare.app.presentation.session
 
-import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -8,13 +7,16 @@ import com.unishare.app.AppGraph
 import com.unishare.app.data.device.DeviceRepository
 import com.unishare.app.data.device.DeviceSummary
 import com.unishare.app.data.transfer.SelectedContentResolver
+import com.unishare.app.data.transfer.CoordinatorException
 import com.unishare.app.data.transfer.TransferCoordinator
+import com.unishare.app.data.transfer.RetainedContentUri
 import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.ActivityPreview
 import com.unishare.app.domain.ActivityStatus
 import com.unishare.app.domain.ContentKind
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareActivity
+import com.unishare.app.domain.ShareErrorKind
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -27,11 +29,16 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.URI
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineStart
 
 interface SessionOperations {
     suspend fun sendText(deviceId: DeviceKey, text: String): ActivityKey
-    suspend fun sendPickedContent(deviceId: DeviceKey, uri: Uri, kind: ContentKind): ActivityKey
-    suspend fun sendClipboard(deviceId: DeviceKey): ActivityKey?
+    suspend fun sendLink(deviceId: DeviceKey, link: String): ActivityKey
+    /** Takes ownership of selection and its read-permission lease. */
+    suspend fun sendPickedContent(deviceId: DeviceKey, selection: RetainedContentUri, kind: ContentKind): ActivityKey
+    suspend fun sendClipboard(deviceId: DeviceKey, isForeground: () -> Boolean): ActivityKey?
     suspend fun cancel(activityId: ActivityKey): Boolean
     suspend fun retry(activityId: ActivityKey): ActivityKey
 }
@@ -42,13 +49,21 @@ private class CoordinatorSessionOperations(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : SessionOperations {
     override suspend fun sendText(deviceId: DeviceKey, text: String) = coordinator.sendText(deviceId, text)
+    override suspend fun sendLink(deviceId: DeviceKey, link: String) = coordinator.sendText(deviceId, link)
 
-    override suspend fun sendPickedContent(deviceId: DeviceKey, uri: Uri, kind: ContentKind): ActivityKey {
-        val selected = withContext(ioDispatcher) { resolver.resolve(uri, kind) }
+    override suspend fun sendPickedContent(deviceId: DeviceKey, selection: RetainedContentUri, kind: ContentKind): ActivityKey {
+        val selected = try {
+            withContext(ioDispatcher) { resolver.resolve(selection.uri, kind) }
+                .copy(readPermission = selection.lease)
+        } catch (failure: Exception) {
+            selection.lease.close()
+            throw failure
+        }
         return coordinator.sendContent(deviceId, selected)
     }
 
-    override suspend fun sendClipboard(deviceId: DeviceKey) = coordinator.sendClipboard(deviceId)
+    override suspend fun sendClipboard(deviceId: DeviceKey, isForeground: () -> Boolean) =
+        coordinator.sendClipboard(deviceId, isForeground)
     override suspend fun cancel(activityId: ActivityKey) = coordinator.cancel(activityId)
     override suspend fun retry(activityId: ActivityKey) = coordinator.retry(activityId)
 }
@@ -67,6 +82,7 @@ class SessionViewModel(
     )
 
     private val composer = MutableStateFlow("")
+    private val composerMode = MutableStateFlow(ComposerMode.TEXT)
     private val shareSheetVisible = MutableStateFlow(false)
     private val eventChannel = Channel<SessionEvent>(Channel.UNLIMITED)
     private val rateSamples = HashMap<ActivityKey, RateSample>()
@@ -79,7 +95,8 @@ class SessionViewModel(
         activities,
         composer,
         shareSheetVisible,
-    ) { allDevices, allActivities, composerText, sheetVisible ->
+        composerMode,
+    ) { allDevices, allActivities, composerText, sheetVisible, mode ->
         val current = allDevices.firstOrNull { it.id == deviceId }
         if (current != null) lastDevice = current
         val visibleDevice = current ?: lastDevice
@@ -91,6 +108,7 @@ class SessionViewModel(
             trusted = current?.trusted == true,
             identityChanged = current?.identityChanged == true,
             composerText = composerText,
+            composerMode = mode,
             activities = allActivities.map(::toUiActivity),
             shareSheetVisible = sheetVisible,
         )
@@ -119,47 +137,87 @@ class SessionViewModel(
         shareSheetVisible.value = false
     }
 
+    fun selectTextComposer() {
+        composerMode.value = ComposerMode.TEXT
+        shareSheetVisible.value = false
+    }
+
+    fun selectLinkComposer() {
+        composerMode.value = ComposerMode.LINK
+        shareSheetVisible.value = false
+    }
+
     fun sendComposer() {
         val submitted = composer.value
-        if (submitted.isBlank()) {
-            emit(SessionUserMessage.TEXT_REQUIRED)
-            return
-        }
-        sendText(submitted) {
+        val accepted = {
             if (composer.value == submitted) composer.value = ""
+            composerMode.value = ComposerMode.TEXT
+        }
+        when (composerMode.value) {
+            ComposerMode.TEXT -> {
+                if (submitted.isBlank()) {
+                    emit(SessionUserMessage.TEXT_REQUIRED)
+                    return
+                }
+                sendText(submitted, accepted)
+            }
+            ComposerMode.LINK -> sendLink(submitted, accepted)
         }
     }
 
-    fun sendLink(link: String) {
-        if (link.isBlank()) {
-            emit(SessionUserMessage.TEXT_REQUIRED)
+    private fun sendLink(link: String, accepted: () -> Unit) {
+        val normalized = link.trim()
+        if (!isHttpLink(normalized)) {
+            emit(SessionUserMessage.INVALID_LINK)
             return
         }
-        sendText(link.trim())
-    }
-
-    fun sendPickedContent(uri: Uri?, kind: ContentKind) {
-        if (uri == null) return
         val blocked = sendBlock()
         if (blocked != null) {
             emit(blocked)
             return
         }
-        shareSheetVisible.value = false
         viewModelScope.launch {
             try {
-                operations.sendPickedContent(deviceId, uri, kind)
+                operations.sendLink(deviceId, normalized)
+                accepted()
             } catch (_: Exception) {
                 emit(SessionUserMessage.SEND_FAILED)
             }
         }
     }
 
-    fun sendClipboard(activityResumed: Boolean) {
-        if (!activityResumed) {
-            emit(SessionUserMessage.CLIPBOARD_REQUIRES_FOREGROUND)
+    fun sendPickedContent(selection: RetainedContentUri?, kind: ContentKind) {
+        if (selection == null) return
+        val blocked = sendBlock()
+        if (blocked != null) {
+            selection.lease.close()
+            emit(blocked)
             return
         }
+        shareSheetVisible.value = false
+        val viewModelOwnsLease = AtomicBoolean(true)
+        val submission = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            if (!viewModelOwnsLease.compareAndSet(true, false)) return@launch
+            try {
+                operations.sendPickedContent(deviceId, selection, kind)
+            } catch (_: Exception) {
+                emit(SessionUserMessage.SEND_FAILED)
+            }
+        }
+        submission.invokeOnCompletion {
+            if (viewModelOwnsLease.compareAndSet(true, false)) selection.lease.close()
+        }
+        submission.start()
+    }
+
+    fun onContentPermissionFailure(errorKind: ShareErrorKind) {
+        emit(
+            if (errorKind == ShareErrorKind.PERMISSION_DENIED) SessionUserMessage.CONTENT_PERMISSION_DENIED
+            else SessionUserMessage.SEND_FAILED,
+        )
+    }
+
+    fun sendClipboard(isForeground: () -> Boolean) {
         val blocked = sendBlock()
         if (blocked != null) {
             emit(blocked)
@@ -168,9 +226,15 @@ class SessionViewModel(
         shareSheetVisible.value = false
         viewModelScope.launch {
             try {
-                if (operations.sendClipboard(deviceId) == null) emit(SessionUserMessage.CLIPBOARD_EMPTY)
-            } catch (_: Exception) {
-                emit(SessionUserMessage.SEND_FAILED)
+                if (operations.sendClipboard(deviceId, isForeground) == null) emit(SessionUserMessage.CLIPBOARD_EMPTY)
+            } catch (failure: Exception) {
+                emit(
+                    if ((failure as? CoordinatorException)?.errorKind == ShareErrorKind.PERMISSION_DENIED) {
+                        SessionUserMessage.CLIPBOARD_REQUIRES_FOREGROUND
+                    } else {
+                        SessionUserMessage.SEND_FAILED
+                    },
+                )
             }
         }
     }
@@ -220,6 +284,13 @@ class SessionViewModel(
 
     private fun emit(message: SessionUserMessage) {
         eventChannel.trySend(SessionEvent(message))
+    }
+
+    private fun isHttpLink(value: String): Boolean = try {
+        val parsed = URI(value)
+        parsed.scheme?.lowercase() in setOf("http", "https") && !parsed.host.isNullOrBlank()
+    } catch (_: Exception) {
+        false
     }
 
     private fun toUiActivity(activity: ShareActivity): SessionActivityUi {

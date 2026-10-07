@@ -1,6 +1,7 @@
 package com.unishare.app.presentation.session
 
 import android.net.Uri
+import androidx.lifecycle.ViewModelStore
 import com.unishare.app.data.device.DeviceRepository
 import com.unishare.app.data.device.DeviceSummary
 import com.unishare.app.data.sdk.DevicePlatform
@@ -14,6 +15,8 @@ import com.unishare.app.domain.ShareDirection
 import com.unishare.app.domain.ShareErrorKind
 import com.unishare.app.domain.ShareOrigin
 import com.unishare.app.data.transfer.fakeUri
+import com.unishare.app.data.transfer.RetainedContentUri
+import com.unishare.app.data.transfer.ContentReadPermissionLease
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -118,6 +121,21 @@ class SessionViewModelTest {
     }
 
     @Test
+    fun clearing_view_model_before_picker_work_starts_releases_unclaimed_uri_lease() = runTest(dispatcher) {
+        val operations = FakeSessionOperations()
+        val viewModel = viewModel(operations)
+        val lease = RecordingSessionContentLease()
+        val store = ViewModelStore().apply { put("session", viewModel) }
+
+        viewModel.sendPickedContent(RetainedContentUri(fakeUri(), lease), ContentKind.IMAGE)
+        store.clear()
+        advanceUntilIdle()
+
+        assertEquals(1, lease.closeCalls)
+        assertTrue(operations.pickedContent.isEmpty())
+    }
+
+    @Test
     fun one_failed_submission_emits_one_non_replaying_user_event() = runTest(dispatcher) {
         val operations = FakeSessionOperations().apply { failure = IllegalStateException("provider secret") }
         val viewModel = viewModel(operations)
@@ -173,7 +191,7 @@ class SessionViewModelTest {
         val viewModel = viewModel(operations)
         val event = async { viewModel.events.first() }
 
-        viewModel.sendClipboard(activityResumed = false)
+        viewModel.sendClipboard { false }
         advanceUntilIdle()
 
         assertEquals(0, operations.clipboardReads)
@@ -181,14 +199,51 @@ class SessionViewModelTest {
     }
 
     @Test
-    fun link_uses_the_same_text_transfer_boundary() = runTest(dispatcher) {
+    fun link_composer_mode_routes_to_link_boundary_and_resets_after_acceptance() = runTest(dispatcher) {
         val operations = FakeSessionOperations()
         val viewModel = viewModel(operations)
+        viewModel.showShareSheet()
+        viewModel.selectLinkComposer()
+        viewModel.onComposerChanged("https://github.com")
 
-        viewModel.sendLink("https://github.com")
+        viewModel.sendComposer()
         advanceUntilIdle()
 
-        assertEquals(listOf("https://github.com"), operations.sentTexts)
+        assertEquals(listOf("https://github.com"), operations.sentLinks)
+        assertTrue(operations.sentTexts.isEmpty())
+        assertEquals("", viewModel.uiState.value.composerText)
+        assertEquals(ComposerMode.TEXT, viewModel.uiState.value.composerMode)
+        assertFalse(viewModel.uiState.value.shareSheetVisible)
+    }
+
+    @Test
+    fun text_composer_mode_routes_to_normal_text_boundary() = runTest(dispatcher) {
+        val operations = FakeSessionOperations()
+        val viewModel = viewModel(operations)
+        viewModel.showShareSheet()
+        viewModel.selectTextComposer()
+        viewModel.onComposerChanged("hello")
+
+        viewModel.sendComposer()
+        advanceUntilIdle()
+
+        assertEquals(listOf("hello"), operations.sentTexts)
+        assertTrue(operations.sentLinks.isEmpty())
+    }
+
+    @Test
+    fun link_mode_rejects_non_http_links_without_submission() = runTest(dispatcher) {
+        val operations = FakeSessionOperations()
+        val viewModel = viewModel(operations)
+        viewModel.selectLinkComposer()
+        viewModel.onComposerChanged("github.com")
+        val event = async { viewModel.events.first() }
+
+        viewModel.sendComposer()
+        advanceUntilIdle()
+
+        assertTrue(operations.sentLinks.isEmpty())
+        assertEquals(SessionUserMessage.INVALID_LINK, event.await().message)
     }
 
     private fun viewModel(
@@ -232,6 +287,7 @@ class SessionViewModelTest {
 
 private class FakeSessionOperations : SessionOperations {
     val sentTexts = mutableListOf<String>()
+    val sentLinks = mutableListOf<String>()
     val pickedContent = mutableListOf<Pair<Uri, ContentKind>>()
     val cancelled = mutableListOf<ActivityKey>()
     val retried = mutableListOf<ActivityKey>()
@@ -246,13 +302,21 @@ private class FakeSessionOperations : SessionOperations {
         return ActivityKey("sent-${sentTexts.size}")
     }
 
-    override suspend fun sendPickedContent(deviceId: DeviceKey, uri: Uri, kind: ContentKind): ActivityKey {
+    override suspend fun sendLink(deviceId: DeviceKey, link: String): ActivityKey {
         failure?.let { throw it }
-        pickedContent += uri to kind
+        sentLinks += link
+        sendGate?.await()
+        return ActivityKey("link-${sentLinks.size}")
+    }
+
+    override suspend fun sendPickedContent(deviceId: DeviceKey, selection: RetainedContentUri, kind: ContentKind): ActivityKey {
+        failure?.let { throw it }
+        pickedContent += selection.uri to kind
         return ActivityKey("picked-${pickedContent.size}")
     }
 
-    override suspend fun sendClipboard(deviceId: DeviceKey): ActivityKey? {
+    override suspend fun sendClipboard(deviceId: DeviceKey, isForeground: () -> Boolean): ActivityKey? {
+        if (!isForeground()) throw com.unishare.app.data.transfer.CoordinatorException(ShareErrorKind.PERMISSION_DENIED)
         clipboardReads++
         failure?.let { throw it }
         return ActivityKey("clipboard")
@@ -266,6 +330,15 @@ private class FakeSessionOperations : SessionOperations {
     override suspend fun retry(activityId: ActivityKey): ActivityKey {
         retried += activityId
         return ActivityKey("retry")
+    }
+}
+
+private class RecordingSessionContentLease : ContentReadPermissionLease {
+    var closeCalls = 0
+        private set
+
+    override fun close() {
+        closeCalls++
     }
 }
 

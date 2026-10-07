@@ -61,8 +61,10 @@
     <string name="session_today">Today</string>
     <string name="session_add_attachment">Add attachment</string>
     <string name="session_send_text">Send text</string>
+    <string name="session_send_link">Send link</string>
     <string name="session_emoji">Choose emoji</string>
     <string name="session_composer_hint">Type a message…</string>
+    <string name="session_link_composer_hint">Paste a link…</string>
     <string name="session_share_to">Share to %1$s</string>
     <string name="session_photo">Photo</string>
     <string name="session_photo_detail">Choose from gallery</string>
@@ -98,4 +100,6 @@
     <string name="session_error_retry_failed">Couldn’t retry the transfer.</string>
     <string name="session_error_clipboard_empty">The clipboard has no supported content.</string>
     <string name="session_error_clipboard_foreground">Open UniShare before reading the clipboard.</string>
+    <string name="session_error_content_permission">Keep access to the selected item before sending.</string>
+    <string name="session_error_invalid_link">Enter a valid http or https link.</string>
 </resources>

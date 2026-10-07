@@ -16,6 +16,7 @@ import com.unishare.app.data.transfer.SelectedContentResolver
 import com.unishare.app.data.transfer.TransferCoordinator
 import com.unishare.app.domain.ActivityTracker
 import com.unishare.app.platform.AndroidNotificationPermissionChecker
+import com.unishare.app.platform.AndroidContentUriPermissionRetainer
 import com.unishare.app.service.ForegroundServiceController
 import com.unishare.app.service.RuntimeController
 import com.unishare.app.service.ShareSessionRuntime
@@ -76,6 +77,7 @@ class AppGraph(application: Application) {
     val stagingStore = StagingStore(application)
     val receivePublisher = AndroidReceivePublisher(application)
     val selectedContentResolver = SelectedContentResolver(application.contentResolver)
+    val contentUriPermissionRetainer = AndroidContentUriPermissionRetainer(application.contentResolver)
     val transferCoordinator = TransferCoordinator(
         session = sessionManager,
         tracker = activityTracker,

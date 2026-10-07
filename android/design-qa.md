@@ -61,11 +61,11 @@ final result: passed
 ## Evidence
 
 - Source visual truth: `C:\Users\kevin\AppData\Local\Temp\codex-clipboard-PsXme7.png` (`1536 × 1024` px). The device-session target is the second-phone crop at `(394, 12)`, `414 × 1000` px; the share-sheet target is the third-phone crop at `(817, 12)`, `368 × 1000` px.
-- Rendered implementation: `app/build/reports/design-qa/task9-session.png` and `app/build/reports/design-qa/task9-share-sheet.png`, captured from the Compose test activity on `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp).
+- Rendered implementation: `app/build/reports/design-qa/task9-session-round1.png` and `app/build/reports/design-qa/task9-share-sheet-round1.png`, captured from the Compose test activity on `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp).
 - Normalized comparisons: `app/build/reports/design-qa/task9-session-comparison.png` and `app/build/reports/design-qa/task9-share-sheet-comparison.png`. Each implementation capture was proportionally downsampled to its source crop width and placed beside the source: session `414 × 920` beside `414 × 1000`; sheet `368 × 818` beside `368 × 1000`.
 - State: English, light theme, trusted online Windows peer, compact outgoing/incoming text, representative generated landscape image, and an outgoing file at 72% with `42 MB/s` and `14 sec left`; the second capture opens the attachment sheet over that exact session state.
-- Asset evidence: `app/src/main/res/drawable-nodpi/sample_mountain_lake.png` is a purpose-generated `1672 × 941` photo used only by the test/QA fixture as representative preview imagery. Production activity records do not substitute it for transferred content.
-- Interaction evidence: six `SessionScreenTest` cases passed on the API 37 emulator, covering left/right alignment, text/image/file cards, waiting/transferring/completed/failed semantics, 100% progress clamping, cancel/retry actions, the five-entry no-folder sheet, 200% font scale, and both QA captures. The sheet Add action was exercised to reach the captured modal state.
+- Asset evidence: `app/src/androidTest/res/drawable-nodpi/sample_mountain_lake.png` is a purpose-generated `1672 × 941` photo used only by the instrumentation fixture as representative preview imagery. It is absent from both debug and release production APKs, and production activity records never substitute it for transferred content.
+- Interaction evidence: eight `SessionScreenTest` cases passed on the API 37 emulator, covering left/right alignment, text/image/file cards, waiting/transferring/completed/failed semantics, 100% progress clamping, cancel/retry actions, truthful non-action semantics, Text/Link composer modes, the five-entry no-folder sheet, 200% font scale, and both QA captures. The sheet Add action was exercised to reach the captured modal state.
 - Browser console checks: not applicable to this native Android implementation. Instrumentation completed without a process crash or failed test.
 
 ## Full-view comparison
@@ -84,7 +84,7 @@ Separate focused crops were not required: the normalized session comparison rema
 - Spacing and layout rhythm: final text bubbles are content-sized; image preview is approximately `1.95:1`; file controls share the existing 48 dp header row rather than adding excess card height. Horizontal margins, 18–20 dp radii, section gaps, sheet start position, two-column tile grid, and composer placement match the reference direction.
 - Colors and tokens: the existing Material theme supplies the low-contrast blue-gray background, white/neutral incoming surfaces, pale-blue outgoing surfaces, blue primary actions, muted slate metadata, green online state, modal scrim, and distinct low-saturation tile colors.
 - Image quality and asset fidelity: the test/QA photo is a sharp generated alpine-lake raster with the same wide crop, snow range, evergreen shore, and reflection art direction as the source. Production code never treats it as hidden transfer payload. Real current-process image URIs use a two-pass, power-of-two sampled thumbnail decoder bounded near the visible preview size rather than full-file byte buffering; inaccessible historical URIs fall back to the official Material image icon. All device, action, content, and state icons come from the official Material icon library; there are no emoji UI icons, handcrafted SVGs, gradients, or placeholder boxes.
-- Copy and content: complete English and Simplified Chinese resources cover the session, sheet, statuses, progress, actions, and stable errors. Folder is intentionally absent per the approved product contract. Link follows the text-send path; clipboard is read only after an explicit foreground click.
+- Copy and content: complete English and Simplified Chinese resources cover the session, sheet, statuses, progress, actions, and stable errors. Folder is intentionally absent per the approved product contract. Text and Link select distinct composer modes, with Link-specific hint/validation before using the shared text transport; clipboard is read only after an explicit foreground click.
 - Accessibility and responsiveness: status is expressed in text as well as color, state cards expose content descriptions, progress clamps to `0..100`, icon actions have labels, core tap targets are at least 48 dp, and the connected test confirms Add/Send remain visible at 200% font scale.
 
 ## Comparison history
@@ -92,7 +92,10 @@ Separate focused crops were not required: the normalized session comparison rema
 1. Initial comparison found a P2 density mismatch: every text activity occupied the full card width and the photo preview was taller than the approximately `2:1` source slot. Text surfaces now use intrinsic content width with a bounded minimum/maximum, and the photo uses a `1.95:1` crop. The second capture confirmed compact left/right bubbles and the corrected image proportion.
 2. The second comparison found a P2 vertical-density mismatch: image/file timestamps and transfer actions were placed in a separate bottom row, making the file card roughly 35–40 px taller at normalized width. Image metadata/time now share one row; file actions occupy the existing 48 dp header row and rate/time/percent share the progress-detail row. The final capture shows file-card height and image metadata rhythm aligned with the source while preserving 48 dp cancel/retry targets.
 3. The generic test host initially rendered light status icons on a light surface. The capture host now requests the light-status-bar appearance, matching the real `MainActivity` edge-to-edge behavior already verified in Task 8. The final evidence has readable dark Android-owned status icons.
-4. Final comparison found no remaining actionable P0, P1, or P2 mismatch.
+4. Review found two P2 accessibility mismatches: the decorative emoji affordance and the completed-file download glyph announced actions they did not implement. Both are now excluded from semantics while adjacent filename, completion state, and input hint remain truthful and readable.
+5. Review found the visible Link tile selected the generic text path. Link now opens a distinct composer mode with link-specific hint and send semantics; Text continues to select the normal message mode.
+6. Moving the generated fixture into the instrumentation APK initially exposed a P1 Android resource-ID collision when its test-package ID was consumed by app-package `painterResource`, producing an incorrect black/blue preview. The capture fixture now decodes the test resource into a process-only `ImageBitmap`; the round-one captures show the intended sharp mountain-lake preview while production APKs remain fixture-free.
+7. Final round-one comparison found no remaining actionable P0, P1, or P2 mismatch.
 
 ## Findings
 
@@ -107,6 +110,9 @@ Separate focused crops were not required: the normalized session comparison rema
 - [x] Match the landscape preview crop and compact file-card rhythm.
 - [x] Preserve 48 dp cancel/retry/Add/Send targets.
 - [x] Use the five approved sheet actions and omit Folder.
+- [x] Keep decorative glyphs out of actionable accessibility semantics.
+- [x] Give Text and Link distinct, truthful composer modes.
+- [x] Keep generated screenshot imagery isolated to the instrumentation APK.
 - [x] Keep Android system chrome platform-owned and readable.
 - [x] Verify normal and 200% text states on the emulator.
 - [x] Compare the same session and modal states side by side after each visual fix.

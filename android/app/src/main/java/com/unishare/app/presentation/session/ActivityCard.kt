@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -161,9 +160,10 @@ private fun ImageActivityContent(
         .aspectRatio(1.95f)
         .clip(RoundedCornerShape(12.dp))
     val previewDescription = stringResource(R.string.session_image_preview, activity.displayName)
-    if (activity.previewDrawableRes != null) {
+    val previewBitmap = activity.previewBitmap
+    if (previewBitmap != null) {
         Image(
-            painter = painterResource(activity.previewDrawableRes),
+            bitmap = previewBitmap,
             contentDescription = previewDescription,
             contentScale = ContentScale.Crop,
             modifier = previewModifier,
@@ -358,7 +358,7 @@ private fun ActivityAction(
         } else if (activity.kind != ContentKind.TEXT) {
             Icon(
                 Icons.Outlined.Download,
-                contentDescription = stringResource(R.string.session_open_received_file),
+                contentDescription = null,
                 modifier = Modifier
                     .padding(start = 7.dp)
                     .size(22.dp),

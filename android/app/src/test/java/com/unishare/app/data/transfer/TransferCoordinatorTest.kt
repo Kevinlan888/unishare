@@ -14,6 +14,7 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -63,12 +65,84 @@ class TransferCoordinatorTest {
     }
 
     @Test
+    fun picked_uri_lease_survives_async_open_and_failure_then_transfers_to_retry_until_success() = runTest {
+        val fixture = fixture()
+        val lease = RecordingContentReadPermissionLease()
+        val original = fixture.coordinator.sendContent(
+            device,
+            selected(ContentKind.IMAGE, "image/jpeg", "photo.jpg").copy(readPermission = lease),
+        )
+
+        assertFalse("SDK stream acquisition is asynchronous, so submission must keep the grant", lease.closed)
+
+        fixture.gateway.completeNext(
+            TransferTerminal(TransferKey("failed-transfer"), ShareFailure(ShareErrorKind.NETWORK_LOST)),
+        )
+        runCurrent()
+        assertFalse("a retryable failure must keep the grant", lease.closed)
+
+        val retry = fixture.coordinator.retry(original)
+        assertEquals(original, fixture.tracker.find(retry)?.retryOf)
+        assertFalse("ownership moves to the retry", lease.closed)
+
+        fixture.gateway.completeNext(TransferTerminal(TransferKey("successful-retry")))
+        runCurrent()
+
+        assertTrue("the successful terminal result releases the grant", lease.closed)
+        assertEquals(1, lease.closeCalls)
+    }
+
+    @Test
+    fun coordinator_retirement_releases_a_retryable_uri_lease_exactly_once() = runTest {
+        val fixture = fixture()
+        val lease = RecordingContentReadPermissionLease()
+        fixture.coordinator.sendContent(
+            device,
+            selected(ContentKind.FILE, "application/pdf", "report.pdf").copy(readPermission = lease),
+        )
+        fixture.gateway.completeNext(
+            TransferTerminal(TransferKey("failed-transfer"), ShareFailure(ShareErrorKind.NETWORK_LOST)),
+        )
+        runCurrent()
+
+        fixture.coordinator.retire()
+
+        assertTrue(lease.closed)
+        assertEquals(1, lease.closeCalls)
+    }
+
+    @Test
+    fun caller_cancellation_cannot_revoke_uri_before_app_owned_async_submission() = runTest {
+        val workerScheduler = TestCoroutineScheduler()
+        val workerScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(workerScheduler))
+        val fixture = fixture(workerScope = workerScope)
+        val lease = RecordingContentReadPermissionLease()
+
+        val caller = async(start = CoroutineStart.UNDISPATCHED) {
+            fixture.coordinator.sendContent(
+                device,
+                selected(ContentKind.IMAGE, "image/jpeg", "photo.jpg").copy(readPermission = lease),
+            )
+        }
+        caller.cancel()
+        runCurrent()
+
+        assertFalse("ownership was transferred before the app-owned job was scheduled", lease.closed)
+        workerScheduler.runCurrent()
+        fixture.gateway.completeNext(TransferTerminal(TransferKey("completed-after-caller-cancel")))
+        workerScheduler.runCurrent()
+        assertTrue(lease.closed)
+        assertEquals(1, lease.closeCalls)
+        workerScope.cancel()
+    }
+
+    @Test
     fun clipboard_text_and_image_submit_only_after_explicit_read() = runTest {
         val fixture = fixture()
         fixture.gateway.clipboard = ClipboardContent.Text("clip text")
-        assertNotNull(fixture.coordinator.sendClipboard(device))
+        assertNotNull(fixture.coordinator.sendClipboard(device) { true })
         fixture.gateway.clipboard = ClipboardContent.Image("image/png", byteArrayOf(1, 2, 3))
-        assertNotNull(fixture.coordinator.sendClipboard(device))
+        assertNotNull(fixture.coordinator.sendClipboard(device) { true })
 
         assertEquals(listOf("clipboard", "text:clip text", "clipboard", "image:clipboard.png:image/png:3"), fixture.gateway.calls.filter {
             it == "clipboard" || it.startsWith("text:") || it.startsWith("image:")
@@ -80,8 +154,25 @@ class TransferCoordinatorTest {
         val fixture = fixture()
         fixture.gateway.clipboard = null
 
-        assertNull(fixture.coordinator.sendClipboard(device))
+        assertNull(fixture.coordinator.sendClipboard(device) { true })
         assertTrue(fixture.tracker.activities(device).value.isEmpty())
+    }
+
+    @Test
+    fun pause_after_click_but_before_coordinator_read_prevents_clipboard_access() = runTest {
+        val fixture = fixture()
+        var resumed = true
+
+        val submission = async {
+            runCatching { fixture.coordinator.sendClipboard(device) { resumed } }
+        }
+        resumed = false
+        runCurrent()
+
+        val failure = submission.await().exceptionOrNull() as? CoordinatorException
+            ?: throw AssertionError("Expected foreground denial")
+        assertEquals(ShareErrorKind.PERMISSION_DENIED, failure.errorKind)
+        assertFalse("clipboard must not be read after pause", "clipboard" in fixture.gateway.calls)
     }
 
     @Test
@@ -689,6 +780,16 @@ private class FakePublication : ContentPublication {
         publishCalls++
         failure?.let { throw it }
         return "content://downloads/final"
+    }
+}
+
+private class RecordingContentReadPermissionLease : ContentReadPermissionLease {
+    var closeCalls = 0
+        private set
+    val closed: Boolean get() = closeCalls > 0
+
+    override fun close() {
+        closeCalls++
     }
 }
 

@@ -134,21 +134,32 @@ class TransferCoordinator internal constructor(
         content: SelectedContent,
         origin: ShareOrigin = ShareOrigin.DIRECT,
     ): ActivityKey {
-        return runOwned {
-            ensureCanSubmit(deviceId)
-            if (content.kind == ContentKind.TEXT || content.byteCount < 0) {
-                throw CoordinatorException(ShareErrorKind.INVALID_INPUT)
+        var ownershipAccepted = false
+        try {
+            return runOwned(onAccepted = { ownershipAccepted = true }) {
+                try {
+                    ensureCanSubmit(deviceId)
+                    if (content.kind == ContentKind.TEXT || content.byteCount < 0) {
+                        throw CoordinatorException(ShareErrorKind.INVALID_INPUT)
+                    }
+                } catch (failure: Exception) {
+                    content.readPermission?.close()
+                    throw failure
+                }
+                submitContent(deviceId, content, origin, retryOf = null, ownedStaging = null)
             }
-            submitContent(deviceId, content, origin, retryOf = null, ownedStaging = null)
+        } finally {
+            if (!ownershipAccepted) content.readPermission?.close()
         }
     }
 
-    suspend fun sendClipboard(deviceId: DeviceKey): ActivityKey? {
-        return runOwned { sendClipboardOwned(deviceId) }
+    suspend fun sendClipboard(deviceId: DeviceKey, isForeground: () -> Boolean): ActivityKey? {
+        return runOwned { sendClipboardOwned(deviceId, isForeground) }
     }
 
-    private suspend fun sendClipboardOwned(deviceId: DeviceKey): ActivityKey? {
+    private suspend fun sendClipboardOwned(deviceId: DeviceKey, isForeground: () -> Boolean): ActivityKey? {
         ensureCanSubmit(deviceId)
+        if (!isForeground()) throw CoordinatorException(ShareErrorKind.PERMISSION_DENIED)
         val clipboard = try { session.readClipboard() } catch (failure: Exception) {
             throw CoordinatorException(failure.stableKind())
         } ?: return null
@@ -286,7 +297,10 @@ class TransferCoordinator internal constructor(
             ensureCanSubmit(original.deviceId)
             when (payload) {
                 is RetryPayload.Text -> submitText(original.deviceId, payload.text, payload.origin, original.id)
-                is RetryPayload.Content -> submitContent(original.deviceId, payload.content, payload.origin, original.id, null)
+                is RetryPayload.Content -> {
+                    synchronized(gate) { retryPayloads.remove(activityId, payload) }
+                    submitContent(original.deviceId, payload.content, payload.origin, original.id, null)
+                }
             }
         }
     }
@@ -312,6 +326,12 @@ class TransferCoordinator internal constructor(
         abandoned.forEach { recovery ->
             recovery.cleanup.cancel()
             staging.delete(recovery.staging.transferId)
+        }
+        val retiredPayloads = synchronized(gate) {
+            retryPayloads.values.toList().also { retryPayloads.clear() }
+        }
+        retiredPayloads.forEach { payload ->
+            (payload as? RetryPayload.Content)?.content?.readPermission?.close()
         }
     }
 
@@ -342,15 +362,24 @@ class TransferCoordinator internal constructor(
         ownedStaging: TransferKey?,
     ): ActivityKey {
         val activity = outgoingActivity(deviceId, content.kind, origin, content.displayName, content.mimeType, content.byteCount, retryOf)
-        tracker.reserve(
-            activity,
-            preview = if (content.kind == ContentKind.IMAGE) {
-                ActivityPreview.Image(content.uri.toString())
-            } else null,
-        )
         synchronized(gate) {
             retryPayloads[activity.id] = RetryPayload.Content(content, origin)
             ownedStaging?.let { outgoingStaging[activity.id] = it }
+        }
+        try {
+            tracker.reserve(
+                activity,
+                preview = if (content.kind == ContentKind.IMAGE) {
+                    ActivityPreview.Image(content.uri.toString())
+                } else null,
+            )
+        } catch (failure: Exception) {
+            synchronized(gate) {
+                retryPayloads.remove(activity.id)
+                outgoingStaging.remove(activity.id)
+            }
+            content.readPermission?.close()
+            throw failure
         }
         addActive(activity.id)
         val pending = try {
@@ -586,13 +615,15 @@ class TransferCoordinator internal constructor(
     private fun finishOutgoingTerminal(activityId: ActivityKey) {
         val activity = tracker.find(activityId) ?: return
         if (activity.direction != ShareDirection.OUTGOING || !activity.status.isTerminal) return
+        var retiredPayload: RetryPayload? = null
         val staged = synchronized(gate) {
             val ownedStaging = outgoingStaging.remove(activityId)
             if (activity.status == ActivityStatus.COMPLETED || ownedStaging != null) {
-                retryPayloads.remove(activityId)
+                retiredPayload = retryPayloads.remove(activityId)
             }
             ownedStaging
         }
+        (retiredPayload as? RetryPayload.Content)?.content?.readPermission?.close()
         staged?.let(staging::delete)
         removeActive(activityId)
     }
@@ -607,7 +638,10 @@ class TransferCoordinator internal constructor(
         return job
     }
 
-    private suspend fun <T> runOwned(block: suspend () -> T): T {
+    private suspend fun <T> runOwned(
+        onAccepted: () -> Unit = {},
+        block: suspend () -> T,
+    ): T {
         val outcome = CompletableDeferred<Result<T>>()
         val task = scope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -620,6 +654,7 @@ class TransferCoordinator internal constructor(
             synchronized(gate) {
                 ensureAcceptingLocked()
                 owned += task
+                onAccepted()
             }
         } catch (failure: Exception) {
             task.cancel()

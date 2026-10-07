@@ -1,6 +1,7 @@
 package com.unishare.app.presentation.session
 
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
@@ -10,6 +11,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -27,6 +30,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.view.WindowCompat
 import com.unishare.app.R
+import com.unishare.app.test.R as TestR
 import com.unishare.app.data.sdk.DevicePlatform
 import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.ActivityStatus
@@ -35,6 +39,7 @@ import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareDirection
 import com.unishare.app.presentation.theme.UniShareTheme
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -64,7 +69,7 @@ class SessionScreenTest {
         setSessionContent(
             activities = listOf(
                 activity("text", ShareDirection.INCOMING, text = "Hi!"),
-                activity("image", ShareDirection.INCOMING, kind = ContentKind.IMAGE, name = "IMG_3281.jpg", imageRes = R.drawable.sample_mountain_lake),
+                activity("image", ShareDirection.INCOMING, kind = ContentKind.IMAGE, name = "IMG_3281.jpg", imageBitmap = sampleMountainLake()),
                 activity(
                     "file",
                     ShareDirection.OUTGOING,
@@ -107,6 +112,27 @@ class SessionScreenTest {
     }
 
     @Test
+    fun decorative_download_and_emoji_icons_do_not_announce_false_actions() {
+        setSessionContent(
+            activities = listOf(
+                activity(
+                    "received",
+                    ShareDirection.INCOMING,
+                    kind = ContentKind.FILE,
+                    name = "received.pdf",
+                    status = ActivityStatus.COMPLETED,
+                ),
+            ),
+        )
+
+        composeRule.onNodeWithContentDescription("Open received file").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Choose emoji").assertDoesNotExist()
+        composeRule.onNodeWithText("received.pdf").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Transfer completed").assertExists()
+        composeRule.onNodeWithText("Type a message…").assertIsDisplayed()
+    }
+
+    @Test
     fun attachment_sheet_has_five_supported_entries_and_never_offers_folder() {
         var state by mutableStateOf(baseState())
         setSessionContent(stateProvider = { state }, onAdd = { state = state.copy(shareSheetVisible = true) })
@@ -117,6 +143,31 @@ class SessionScreenTest {
             composeRule.onNodeWithText(it).assertIsDisplayed()
         }
         composeRule.onNodeWithText("Folder").assertDoesNotExist()
+    }
+
+    @Test
+    fun link_and_text_tiles_select_distinct_composer_send_modes() {
+        var state by mutableStateOf(baseState())
+        val submittedModes = mutableListOf<ComposerMode>()
+        setSessionContent(
+            stateProvider = { state },
+            onAdd = { state = state.copy(shareSheetVisible = true) },
+            onText = { state = state.copy(shareSheetVisible = false, composerMode = ComposerMode.TEXT) },
+            onLink = { state = state.copy(shareSheetVisible = false, composerMode = ComposerMode.LINK) },
+            onSend = { submittedModes += state.composerMode },
+        )
+
+        composeRule.onNodeWithContentDescription("Add attachment").performClick()
+        composeRule.onNodeWithText("Link").performClick()
+        composeRule.onNodeWithText("Paste a link…").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Send link").performClick()
+
+        composeRule.onNodeWithContentDescription("Add attachment").performClick()
+        composeRule.onNodeWithText("Text").performClick()
+        composeRule.onNodeWithText("Type a message…").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Send text").performClick()
+
+        assertEquals(listOf(ComposerMode.LINK, ComposerMode.TEXT), submittedModes)
     }
 
     @Test
@@ -144,7 +195,7 @@ class SessionScreenTest {
                         ShareDirection.INCOMING,
                         kind = ContentKind.IMAGE,
                         name = "IMG_3281.jpg",
-                        imageRes = R.drawable.sample_mountain_lake,
+                        imageBitmap = sampleMountainLake(),
                         total = 8_400_000,
                     ),
                     activity(
@@ -184,6 +235,9 @@ class SessionScreenTest {
         activities: List<SessionActivityUi> = emptyList(),
         stateProvider: (() -> SessionUiState)? = null,
         onAdd: () -> Unit = {},
+        onText: () -> Unit = {},
+        onLink: () -> Unit = {},
+        onSend: () -> Unit = {},
         fontScale: Float = 1f,
     ) {
         val context = composeRule.activity
@@ -205,14 +259,14 @@ class SessionScreenTest {
                         onBack = {},
                         onMore = {},
                         onComposerChanged = {},
-                        onSend = {},
+                        onSend = onSend,
                         onAddAttachment = onAdd,
                         onDismissShareSheet = {},
                         onPickPhoto = {},
                         onPickFile = {},
                         onClipboard = {},
-                        onText = {},
-                        onLink = {},
+                        onText = onText,
+                        onLink = onLink,
                         onCancel = {},
                         onRetry = {},
                     )
@@ -236,7 +290,7 @@ class SessionScreenTest {
         name: String = "Text",
         status: ActivityStatus = ActivityStatus.COMPLETED,
         text: String? = null,
-        imageRes: Int? = null,
+        imageBitmap: ImageBitmap? = null,
         transferred: Long = 0,
         total: Long = 100,
         rate: Long? = null,
@@ -252,8 +306,14 @@ class SessionScreenTest {
         status = status,
         timestampMillis = 1_800_000_000_000,
         text = text,
-        previewDrawableRes = imageRes,
+        previewBitmap = imageBitmap,
         rateBytesPerSecond = rate,
         etaSeconds = eta,
     )
+
+    private fun sampleMountainLake(): ImageBitmap {
+        val testResources = InstrumentationRegistry.getInstrumentation().context.resources
+        return requireNotNull(BitmapFactory.decodeResource(testResources, TestR.drawable.sample_mountain_lake))
+            .asImageBitmap()
+    }
 }
