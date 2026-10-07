@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using UniShare.App.Presentation;
@@ -8,6 +9,20 @@ namespace UniShare.App.Tests;
 [TestClass]
 public sealed class ViewSubscriptionsTests
 {
+    [TestMethod]
+    public void CollectionSubscriptionForwardsTheChangeKind()
+    {
+        var model = new Model();
+        var activities = new ObservableCollection<int>();
+        NotifyCollectionChangedAction? observed = null;
+        using var subscription = new ViewSubscriptions(model, _ => { }, activities,
+            change => observed = change.Action, null);
+
+        activities.Add(1);
+
+        Assert.AreEqual(NotifyCollectionChangedAction.Add, observed);
+    }
+
     [TestMethod]
     public void ReplacingShellRetiresOldViewSubscriptionsAndCardsExactlyOnce()
     {

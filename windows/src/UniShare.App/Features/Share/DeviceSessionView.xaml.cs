@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -13,6 +14,7 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
     private readonly ViewSubscriptions subscriptions;
     private readonly DeviceDetailsPane details;
     private readonly ActivityCardReconciler<RenderedCard> cards;
+    private readonly ActivityAutoScrollTracker autoScroll = new();
     private readonly Dictionary<ActivityProjection, PropertyChangedEventHandler> activitySubscriptions = new(ReferenceEqualityComparer.Instance);
     private bool disposed;
     public DeviceSessionView(ShellProjection model)
@@ -24,8 +26,19 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
         cards = new(CreateCard, card => card.Dispose());
         DetailsFlyout.Content = details;
         subscriptions = new(model, property => { if (property is nameof(model.SelectedDevice) or nameof(model.Notice)) Render(); },
-            model.Activities, Render, RetireCards);
+            model.Activities, ActivitiesChanged, RetireCards);
+        ActivityScroll.LayoutUpdated += ActivityScrollLayoutUpdated;
         Render();
+    }
+    private void ActivitiesChanged(NotifyCollectionChangedEventArgs change)
+    {
+        autoScroll.Observe(change);
+        Render();
+    }
+    private void ActivityScrollLayoutUpdated(object? sender, object args)
+    {
+        if (autoScroll.ConsumeAfterLayout())
+            ActivityScroll.ChangeView(null, ActivityScroll.ScrollableHeight, null, disableAnimation: false);
     }
     private void Render()
     {
@@ -116,6 +129,7 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
         if (disposed)
             return;
         disposed = true;
+        ActivityScroll.LayoutUpdated -= ActivityScrollLayoutUpdated;
         subscriptions.Dispose();
         details.Dispose();
         DetailsFlyout.Content = null;

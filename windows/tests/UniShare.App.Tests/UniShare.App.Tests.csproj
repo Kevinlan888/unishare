@@ -5,6 +5,7 @@
     <PackageReference Include="MSTest.TestAdapter" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <ProjectReference Include="../../src/UniShare.Application/UniShare.Application.csproj" />
+    <Compile Include="../../src/UniShare.App/Presentation/ActivityAutoScrollTracker.cs" Link="Production/ActivityAutoScrollTracker.cs" />
     <Compile Include="../../src/UniShare.App/Presentation/ActivityCardReconciler.cs" Link="Production/ActivityCardReconciler.cs" />
     <Compile Include="../../src/UniShare.App/Presentation/ActivityProjection.cs" Link="Production/ActivityProjection.cs" />
     <Compile Include="../../src/UniShare.App/Presentation/PropertyChangedSubscription.cs" Link="Production/PropertyChangedSubscription.cs" />

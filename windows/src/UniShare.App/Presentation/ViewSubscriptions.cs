@@ -8,7 +8,7 @@ internal sealed class ViewSubscriptions : IDisposable
     private readonly INotifyPropertyChanged model;
     private readonly INotifyCollectionChanged? collection;
     private readonly Action<string?> propertyChanged;
-    private readonly Action? collectionChanged;
+    private readonly Action<NotifyCollectionChangedEventArgs>? collectionChanged;
     private readonly Action? cleanup;
     private bool disposed;
     public ViewSubscriptions(INotifyPropertyChanged model, Action<string?> propertyChanged,
@@ -17,11 +17,22 @@ internal sealed class ViewSubscriptions : IDisposable
         this.model = model;
         this.propertyChanged = propertyChanged;
         this.collection = collection;
-        this.collectionChanged = collectionChanged;
+        this.collectionChanged = collectionChanged is null ? null : _ => collectionChanged();
         this.cleanup = cleanup;
         model.PropertyChanged += OnPropertyChanged;
         if (collection is not null)
             collection.CollectionChanged += OnCollectionChanged;
+    }
+    public ViewSubscriptions(INotifyPropertyChanged model, Action<string?> propertyChanged,
+        INotifyCollectionChanged collection, Action<NotifyCollectionChangedEventArgs> collectionChanged, Action? cleanup)
+    {
+        this.model = model;
+        this.propertyChanged = propertyChanged;
+        this.collection = collection;
+        this.collectionChanged = collectionChanged;
+        this.cleanup = cleanup;
+        model.PropertyChanged += OnPropertyChanged;
+        collection.CollectionChanged += OnCollectionChanged;
     }
     private void OnPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -31,7 +42,7 @@ internal sealed class ViewSubscriptions : IDisposable
     private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs args)
     {
         if (!disposed)
-            collectionChanged?.Invoke();
+            collectionChanged?.Invoke(args);
     }
     public void Dispose()
     {
