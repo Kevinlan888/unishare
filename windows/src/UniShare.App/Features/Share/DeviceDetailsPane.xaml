@@ -219,6 +219,9 @@
                       Orientation="Horizontal"
                       Spacing="6">
                       <TextBlock
+                        Text="{Binding Size}"
+                        Style="{StaticResource SecondaryText}" />
+                      <TextBlock
                         Text="{Binding StatusText}"
                         Style="{StaticResource SecondaryText}" />
                       <TextBlock

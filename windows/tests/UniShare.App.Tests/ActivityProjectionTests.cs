@@ -40,6 +40,26 @@ public sealed class ActivityProjectionTests
     }
 
     [TestMethod]
+    public void FileSizesAutomaticallyUseByteKilobyteMegabyteAndGigabyteUnits()
+    {
+        (ulong Bytes, string Text)[] cases =
+        [
+            (0, "0 B"),
+            (1023, "1023 B"),
+            (1024, "1 KB"),
+            (1536, "1.5 KB"),
+            (1024 * 1024, "1 MB"),
+            (1536 * 1024, "1.5 MB"),
+            (1024UL * 1024 * 1024, "1 GB"),
+            (1536UL * 1024 * 1024, "1.5 GB"),
+            (1932735283, "1.8 GB")
+        ];
+
+        foreach (var (bytes, expected) in cases)
+            Assert.AreEqual(expected, ActivityProjection.FormatSize(bytes), $"Unexpected size for {bytes} bytes.");
+    }
+
+    [TestMethod]
     public void ProgressTextUsesTheLivePercentageAndNotifiesWhenItChanges()
     {
         var property = typeof(ActivityProjection).GetProperty("ProgressText");

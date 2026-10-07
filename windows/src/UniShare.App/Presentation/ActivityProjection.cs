@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using UniShare.Application.Models;
 
@@ -73,6 +74,20 @@ public sealed class ActivityProjection : ObservableObject
     public string ProgressText => $"{Progress:0}%";
     public static double ProgressPercentage(ulong transferredBytes, ulong byteCount) =>
         byteCount == 0 ? 0 : Math.Clamp((double)transferredBytes / byteCount * 100, 0, 100);
+    public static string FormatSize(ulong byteCount)
+    {
+        const double kilobyte = 1024;
+        const double megabyte = kilobyte * 1024;
+        const double gigabyte = megabyte * 1024;
+        if (byteCount < kilobyte)
+            return $"{byteCount.ToString(CultureInfo.InvariantCulture)} B";
+        var (value, unit) = byteCount >= gigabyte
+            ? (byteCount / gigabyte, "GB")
+            : byteCount >= megabyte
+                ? (byteCount / megabyte, "MB")
+                : (byteCount / kilobyte, "KB");
+        return $"{value.ToString("0.#", CultureInfo.InvariantCulture)} {unit}";
+    }
     internal void UpdateFrom(ActivityProjection value)
     {
         if (value.Id != Id)

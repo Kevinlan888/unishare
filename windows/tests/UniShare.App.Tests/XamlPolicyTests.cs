@@ -169,6 +169,18 @@ public sealed partial class XamlPolicyTests
     }
 
     [TestMethod]
+    public void SharedFilesDisplayTheirFormattedSize()
+    {
+        var pane = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceDetailsPane.xaml"));
+        var sharedFiles = pane.Descendants().Single(element =>
+            element.Name.LocalName == "ItemsControl" && element.Attribute("ItemsSource")?.Value == "{Binding SharedFiles}");
+
+        Assert.IsTrue(sharedFiles.Descendants().Any(element =>
+            element.Name.LocalName == "TextBlock" && element.Attribute("Text")?.Value == "{Binding Size}"),
+            "Shared file rows do not display the formatted size.");
+    }
+
+    [TestMethod]
     public void DeviceRowsBindTheirVisualAndAccessiblePresence()
     {
         var page = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceListPane.xaml"));

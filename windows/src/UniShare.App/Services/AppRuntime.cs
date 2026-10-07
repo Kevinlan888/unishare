@@ -246,7 +246,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     }
     private ActivityProjection ProjectActivity(ActivityRecord record, bool includePreview) => new(
         record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
-        includePreview ? tracker.GetPreview(record.Id)?.Text ?? "" : "", record.ByteCount.ToString(),
+        includePreview ? tracker.GetPreview(record.Id)?.Text ?? "" : "", ActivityProjection.FormatSize(record.ByteCount),
         record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin,
         ActivityProjection.ProgressPercentage(record.TransferredBytes, record.ByteCount))
     {
