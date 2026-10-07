@@ -48,13 +48,13 @@
     TargetType="Button">
     <Setter
       Property="Width"
-      Value="40" />
+      Value="42" />
     <Setter
       Property="Height"
-      Value="40" />
+      Value="42" />
     <Setter
       Property="CornerRadius"
-      Value="20" />
+      Value="21" />
     <Setter
       Property="Background"
       Value="{ThemeResource SubtleFillColorTransparentBrush}" />

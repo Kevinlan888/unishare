@@ -159,7 +159,7 @@
         <ListView.ItemTemplate>
           <DataTemplate>
             <Grid
-              Padding="6,12"
+              Padding="0,12"
               ColumnSpacing="12"
               AutomationProperties.Name="{Binding AccessibleName}">
               <Grid.ColumnDefinitions>
