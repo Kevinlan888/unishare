@@ -11,8 +11,10 @@ class FakeShareSdkGateway : ShareSdkGateway {
     val calls = mutableListOf<String>()
     var initializeFailure: Exception? = null
     var stopCompletion: CompletableDeferred<Unit>? = null
+    var forgetCompletion: CompletableDeferred<Unit>? = null
     var snapshots = emptyList<DeviceSnapshot>()
     var trusted = emptySet<DeviceKey>()
+    var trustedSnapshotProvider: (() -> Set<DeviceKey>)? = null
     var onSubscribe: (() -> Unit)? = null
     override suspend fun initialize(config: GatewayConfig) { calls += "initialize"; initializeFailure?.let { throw it } }
     override fun subscribe(): AutoCloseable {
@@ -25,9 +27,9 @@ class FakeShareSdkGateway : ShareSdkGateway {
     override fun setForeground(value: Boolean) { calls += "foreground:$value" }
     override fun close() { calls += "close" }
     override fun devices() = snapshots
-    override fun trustedDevices() = trusted
+    override fun trustedDevices() = trustedSnapshotProvider?.invoke() ?: trusted
     override suspend fun connect(deviceId: DeviceKey) { calls += "connect:${deviceId.value}" }
-    override suspend fun forgetDevice(deviceId: DeviceKey) { calls += "forget:${deviceId.value}"; trusted = trusted - deviceId }
+    override suspend fun forgetDevice(deviceId: DeviceKey) { calls += "forget:${deviceId.value}"; forgetCompletion?.await(); trusted = trusted - deviceId }
     override suspend fun confirmPairing(requestId: Long, codeMatches: Boolean) = Unit
     override suspend fun rejectPairing(requestId: Long) = Unit
     override fun beginSendText(deviceId: DeviceKey, text: String): PendingSend = error("unused")

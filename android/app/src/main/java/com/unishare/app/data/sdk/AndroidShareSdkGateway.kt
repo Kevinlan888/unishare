@@ -57,13 +57,15 @@ class AndroidShareSdkGateway internal constructor(private val client: SdkClient,
         val result = synchronized(gate) {
             ensureOpen()
             if (ready) return
-            initialization ?: sdkCall { client.initialize(SdkConfig(config.deviceName)) }.result.also { future ->
-                initialization = future
+            initialization ?: sdkCall { client.initialize(SdkConfig(config.deviceName)) }.result.let { future ->
                 future.whenComplete { value, failure ->
                     synchronized(gate) {
                         if (!closed) ready = failure == null && value?.isSuccess == true
                         initialization = null
                     }
+                }.also { publication ->
+                    // An immediate failure already cleared initialization; keep it retryable.
+                    if (!publication.isDone) initialization = publication
                 }
             }
         }
@@ -110,15 +112,17 @@ class AndroidShareSdkGateway internal constructor(private val client: SdkClient,
     }
     override suspend fun connect(deviceId: DeviceKey) { command(deviceId) { client.connect(deviceId.toSdkId()) }.requireSuccess() }
     override suspend fun forgetDevice(deviceId: DeviceKey) {
-        val operation = synchronized(gate) { ensureReady(); sdkCall { client.forgetDevice(deviceId.toSdkId()) } }
-        operation.result.whenComplete { value, failure ->
-            // Update at the serialized SDK completion boundary. An app continuation can resume
-            // after a newer identity callback, and must never clear that newer block.
-            if (failure == null && value?.isSuccess == true) synchronized(gate) {
-                if (!closed) blockedDevices.remove(deviceId)
+        val completion = synchronized(gate) {
+            ensureReady()
+            sdkCall { client.forgetDevice(deviceId.toSdkId()) }.result.whenComplete { value, failure ->
+                // Install while callbacks are excluded, including an already completed result.
+                if (failure == null && value?.isSuccess == true) synchronized(gate) {
+                    if (!closed) blockedDevices.remove(deviceId)
+                }
             }
         }
-        operation.result.awaitSdkResult().requireSuccess()
+        // Depend on state publication, not a sibling handler on the SDK-owned future.
+        completion.awaitSdkResult().requireSuccess()
     }
     override suspend fun confirmPairing(requestId: Long, codeMatches: Boolean) { command { client.confirmPairing(requestId, codeMatches) }.requireSuccess() }
     override suspend fun rejectPairing(requestId: Long) { command { client.rejectPairing(requestId) }.requireSuccess() }

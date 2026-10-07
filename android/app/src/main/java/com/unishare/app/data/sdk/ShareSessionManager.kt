@@ -22,11 +22,16 @@ import kotlinx.coroutines.withContext
 
 enum class SessionState { UNINITIALIZED, INITIALIZING, READY, RUNNING, STOPPING, STOPPED, FAULTED, CLOSED }
 
+/** A unique token per transition also detects stop/start when StateFlow conflates both states. */
+internal class SessionSnapshotToken(val state: SessionState)
+
 /** Application-scoped owner. UI, repositories and services share this instance. */
 class ShareSessionManager(private val gateway: ShareSdkGateway, scope: CoroutineScope) {
     private val lifecycle = Mutex()
     private val sessionScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
     private val mutableState = MutableStateFlow(SessionState.UNINITIALIZED)
+    @Volatile internal var snapshotToken = SessionSnapshotToken(SessionState.UNINITIALIZED)
+        private set
     val state: StateFlow<SessionState> = mutableState.asStateFlow()
     private val delivered = MutableSharedFlow<GatewayEvent>()
     val events: Flow<GatewayEvent> = delivered.asSharedFlow()
@@ -41,7 +46,7 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
         lifecycle.withLock {
             ensureOpen()
             if (initialized) return@withLock
-            mutableState.value = SessionState.INITIALIZING
+            publishState(SessionState.INITIALIZING)
             try {
                 gateway.initialize(config)
                 // Start collection before opening native observers, so the first callback is kept.
@@ -53,9 +58,9 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
                     throw failure
                 }
                 initialized = true
-                mutableState.value = SessionState.READY
+                publishState(SessionState.READY)
             } catch (failure: Exception) {
-                mutableState.value = SessionState.FAULTED
+                publishState(SessionState.FAULTED)
                 throw failure
             }
         }
@@ -70,10 +75,10 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
                 gateway.setForeground(true)
                 gateway.start()
                 running = true
-                mutableState.value = SessionState.RUNNING
+                publishState(SessionState.RUNNING)
             } catch (failure: Exception) {
                 try { gateway.setForeground(false) } catch (_: Exception) { }
-                mutableState.value = SessionState.FAULTED
+                publishState(SessionState.FAULTED)
                 throw failure
             }
         }
@@ -87,15 +92,15 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
     }
 
     private suspend fun stopCore() {
-        mutableState.value = SessionState.STOPPING
+        publishState(SessionState.STOPPING)
         try {
             gateway.stop()
             running = false
             // The completed stop operation drains SDK work before foreground is withdrawn.
             gateway.setForeground(false)
-            mutableState.value = SessionState.STOPPED
+            publishState(SessionState.STOPPED)
         } catch (failure: Exception) {
-            mutableState.value = SessionState.FAULTED
+            publishState(SessionState.FAULTED)
             throw failure
         }
     }
@@ -111,14 +116,18 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
             try { observations?.close() } catch (error: Exception) { failure = failure ?: error }
             observations = null
             try { gateway.close() } catch (error: Exception) { failure = failure ?: error }
-            mutableState.value = SessionState.CLOSED
+            publishState(SessionState.CLOSED)
             failure?.let { throw it }
         }
     }
 
     fun requireReady() {
         ensureOpen()
-        check(initialized && state.value in setOf(SessionState.READY, SessionState.RUNNING, SessionState.STOPPED)) { "Session is not ready" }
+        check(initialized && snapshotToken.state in setOf(SessionState.READY, SessionState.RUNNING, SessionState.STOPPED)) { "Session is not ready" }
+    }
+    private fun publishState(value: SessionState) {
+        snapshotToken = SessionSnapshotToken(value)
+        mutableState.value = value
     }
     private fun ensureOpen() { check(!closed && !closing) { "Session is closed" } }
 

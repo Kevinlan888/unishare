@@ -8,10 +8,15 @@ import com.unishare.app.domain.TransferKey
 import com.unishare.sdk.*
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.function.BiConsumer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -134,6 +139,76 @@ class AndroidShareSdkGatewayTest {
         gateway.close()
     }
 
+    @Test fun completed_forget_future_cannot_clear_identity_callback_in_handler_installation_window() = runTest {
+        val client = FakeClient()
+        val gateway = AndroidShareSdkGateway(client, backgroundScope)
+        gateway.initialize(GatewayConfig("local")); gateway.subscribe()
+        val identity = ConnectionEvent.IdentityChanged(DeviceId(UUID.fromString(device.value)))
+        client.connection!!(identity)
+        val callbackFinished = AtomicBoolean(false)
+        val newerCallback = Thread {
+            client.connection!!(identity)
+            callbackFinished.set(true)
+        }
+        val future = BeforeFirstHandlerFuture {
+            newerCallback.start()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            // The callback either runs before installation (the defect), or waits at the
+            // gateway submission lock until the successful completion handler is installed.
+            while (!callbackFinished.get() && newerCallback.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield()
+            check(callbackFinished.get() || newerCallback.state == Thread.State.BLOCKED)
+        }
+        future.complete(OperationResult(99))
+        client.forgetResult = future
+        gateway.forgetDevice(device)
+        newerCallback.join(5000)
+        assertFalse("Callback thread must finish", newerCallback.isAlive)
+        try { gateway.beginSendText(device, "blocked"); fail("New callback must remain blocked") }
+        catch (error: GatewayException) { assertEquals(ShareErrorKind.IDENTITY_CHANGED, error.failure.kind) }
+        assertTrue(client.submissions.isEmpty())
+        gateway.close()
+    }
+
+    private class BeforeFirstHandlerFuture(private val beforeFirstHandler: () -> Unit) : CompletableFuture<OperationResult>() {
+        private val first = AtomicBoolean(true)
+        override fun whenComplete(action: BiConsumer<in OperationResult, in Throwable?>): CompletableFuture<OperationResult> {
+            if (first.compareAndSet(true, false)) beforeFirstHandler()
+            return super.whenComplete(action)
+        }
+    }
+
+    @Test fun initialize_cannot_return_before_ready_publication_even_if_await_handler_runs_first() = runTest {
+        val client = FakeClient()
+        val future = DelayedFirstHandlerFuture()
+        client.initializeResult = future
+        val gateway = AndroidShareSdkGateway(client, backgroundScope)
+        val outcome = CompletableDeferred<Result<Unit>>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            outcome.complete(runCatching { gateway.initialize(GatewayConfig("local")); gateway.subscribe(); Unit })
+        }
+        future.complete(OperationResult(99))
+        val earlyOutcome = if (outcome.isCompleted) outcome.await() else null
+        future.releaseFirstHandler()
+        assertNull("An early successful initialize must already permit subscription", earlyOutcome?.exceptionOrNull())
+        assertTrue(outcome.await().isSuccess)
+        assertEquals(listOf("discovery", "connection", "transfer"), client.observers)
+        gateway.close()
+    }
+
+    private class DelayedFirstHandlerFuture : CompletableFuture<OperationResult>() {
+        private var firstHandler: BiConsumer<in OperationResult, in Throwable?>? = null
+        private val published = CompletableFuture<OperationResult>()
+        override fun whenComplete(action: BiConsumer<in OperationResult, in Throwable?>): CompletableFuture<OperationResult> {
+            if (firstHandler == null) { firstHandler = action; return published }
+            return super.whenComplete(action)
+        }
+        fun releaseFirstHandler() {
+            val value = getNow(null)
+            firstHandler!!.accept(value, null)
+            published.complete(value)
+        }
+    }
+
     private class FakeClient : SdkClient {
         val observers = mutableListOf<String>()
         val submissions = mutableListOf<SdkSubmission>()
@@ -141,7 +216,8 @@ class AndroidShareSdkGatewayTest {
         var connection: ((ConnectionEvent) -> Unit)? = null
         var progressInsideSend: TransferId? = null
         var forgetResult: CompletableFuture<OperationResult>? = null
-        override fun initialize(config: SdkConfig) = done()
+        var initializeResult: CompletableFuture<OperationResult>? = null
+        override fun initialize(config: SdkConfig) = initializeResult?.let { SdkSubmission(99, it) } ?: done()
         override fun start() = done()
         override fun stop() = done()
         override fun setForeground(value: Boolean) = Unit
