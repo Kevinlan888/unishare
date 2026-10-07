@@ -26,11 +26,11 @@ public sealed class RuntimeProjectionAdapterTests
     {
         public DeviceId? SelectedDeviceId { get; set; } = Device;
         public IReadOnlyList<ActivityRecord> Timeline = [];
+        public int DeviceRefreshes;
         public int Selections;
         public int Renders;
         public void RefreshDevices()
-        { /* Value-equal device replacement does not trigger selection. */
-        }
+            => DeviceRefreshes++;
         public void RenderActivities(DeviceId device)
         {
             Timeline = tracker.GetDeviceSnapshot(device);
@@ -107,5 +107,34 @@ public sealed class RuntimeProjectionAdapterTests
         Assert.IsFalse(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.TransferCompleted(new(transfer, null))));
         Assert.IsTrue(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.DiscoveryStateChanged(DiscoveryState.Browsing)));
         Assert.IsTrue(RuntimeProjectionAdapter.RequiresSdkRefresh(new ShareSdkEvent.PairingCompleted(new(3), Device, null)));
+    }
+
+    [TestMethod]
+    public void TrackerChangesRefreshTheSelectedTimelineWithoutRebuildingDeviceRows()
+    {
+        var tracker = new ActivityTracker(new Repository(), new Clock());
+        var projection = new Projection(tracker);
+        var queue = new Queue<Action>();
+        using var adapter = new RuntimeProjectionAdapter(tracker, projection, queue.Enqueue);
+
+        tracker.BeginOutgoing(Device, new(1), ContentKind.File, "large.bin", "application/octet-stream", 100, ShareOrigin.Direct);
+        while (queue.TryDequeue(out var action))
+            action();
+
+        Assert.AreEqual(1, projection.Renders, "The selected activity timeline must receive the transfer update.");
+        Assert.AreEqual(0, projection.DeviceRefreshes, "Transfer progress must not recreate recent-device rows.");
+    }
+
+    [TestMethod]
+    public void ExplicitActivityRefreshDoesNotRebuildDeviceRows()
+    {
+        var tracker = new ActivityTracker(new Repository(), new Clock());
+        var projection = new Projection(tracker);
+        using var adapter = new RuntimeProjectionAdapter(tracker, projection, _ => { });
+
+        adapter.RefreshSelectedActivities();
+
+        Assert.AreEqual(1, projection.Renders);
+        Assert.AreEqual(0, projection.DeviceRefreshes);
     }
 }

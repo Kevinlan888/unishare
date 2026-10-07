@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using UniShare.App.Presentation;
 using UniShare.Application.Models;
@@ -31,9 +32,20 @@ public sealed partial class FileActivityCard : UserControl, IDisposable
         CancelButton.Visibility = item.Status is ActivityStatus.AwaitingPeer or ActivityStatus.Transferring ? Visibility.Visible : Visibility.Collapsed;
         RetryButton.Visibility = item.Direction == ShareDirection.Outgoing && item.Status == ActivityStatus.Failed && model.CanSend ? Visibility.Visible : Visibility.Collapsed;
         ProgressPanel.Visibility = item.Status == ActivityStatus.Transferring ? Visibility.Visible : Visibility.Collapsed;
+        MetricsPanel.Visibility = item.Status == ActivityStatus.Transferring && item.BytesPerSecond > 0 ? Visibility.Visible : Visibility.Collapsed;
+        CompletedActionsPanel.Visibility = item.FileAvailable ? Visibility.Visible : Visibility.Collapsed;
     }
     private void AcceptClick(object sender, RoutedEventArgs e) => model.Decide(item, ActivityStatus.Transferring);
     private void RejectClick(object sender, RoutedEventArgs e) => model.Decide(item, ActivityStatus.Rejected);
     private void CancelClick(object sender, RoutedEventArgs e) => model.Decide(item, ActivityStatus.Cancelled);
     private void RetryClick(object sender, RoutedEventArgs e) => model.Retry(item);
+    private async void OpenLocationClick(object sender, RoutedEventArgs e) => await item.OpenAsync(true);
+    private void RefreshFileAvailability(object sender, PointerRoutedEventArgs e) => item.RefreshFileAvailability();
+    private async void OpenDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (!item.FileAvailable)
+            return;
+        await item.OpenAsync(false);
+        e.Handled = true;
+    }
 }

@@ -50,22 +50,26 @@ public sealed class ActivityItemViewModelTests
     [TestMethod]
     public async Task MissingReceivedFileDisablesAndRechecksBothOpenActions()
     {
-        using var f = new ViewModelFixture();
-        var record = f.Record(new(Guid.NewGuid()), ActivityStatus.Completed, direction: ShareDirection.Incoming) with
+        foreach (var kind in new[] { ContentKind.File, ContentKind.Image })
         {
-            ReceivedFilePath = "received"
-        };
-        var vm = new ActivityItemViewModel(record, f.Ui, f.Dispatcher);
-        Assert.IsTrue(vm.OpenCommand.CanExecute(null));
-        Assert.IsTrue(vm.OpenLocationCommand.CanExecute(null));
-        f.Ui.Exists = false;
-        vm.RefreshFileAvailability();
-        Assert.IsFalse(vm.OpenCommand.CanExecute(null));
-        Assert.IsFalse(vm.OpenLocationCommand.CanExecute(null));
-        await vm.OpenCommand.ExecuteAsync(null);
-        await vm.OpenLocationCommand.ExecuteAsync(null);
-        Assert.AreEqual(0, f.Ui.Opened.Count);
-        Assert.AreEqual("Activity.Completed", vm.StatusResourceKey);
+            using var f = new ViewModelFixture();
+            var record = f.Record(new(Guid.NewGuid()), ActivityStatus.Completed, direction: ShareDirection.Incoming) with
+            {
+                Kind = kind,
+                ReceivedFilePath = "received"
+            };
+            var vm = new ActivityItemViewModel(record, f.Ui, f.Dispatcher);
+            Assert.IsTrue(vm.OpenCommand.CanExecute(null), $"{kind} should open through the system file boundary.");
+            Assert.IsTrue(vm.OpenLocationCommand.CanExecute(null), $"{kind} should expose its file location.");
+            f.Ui.Exists = false;
+            vm.RefreshFileAvailability();
+            Assert.IsFalse(vm.OpenCommand.CanExecute(null));
+            Assert.IsFalse(vm.OpenLocationCommand.CanExecute(null));
+            await vm.OpenCommand.ExecuteAsync(null);
+            await vm.OpenLocationCommand.ExecuteAsync(null);
+            Assert.AreEqual(0, f.Ui.Opened.Count);
+            Assert.AreEqual("Activity.Completed", vm.StatusResourceKey);
+        }
     }
 
     [TestMethod]

@@ -77,7 +77,7 @@ public sealed class SqliteActivityRepository : IActivityRepository
             Add(command, "$status", (int)record.Status);
             Add(command, "$transferred", record.TransferredBytes.ToString(CultureInfo.InvariantCulture));
             Add(command, "$error", record.ErrorKind is { } error ? (int)error : null);
-            Add(command, "$path", record.Direction == ShareDirection.Incoming && record.Kind == ContentKind.File &&
+            Add(command, "$path", record.Direction == ShareDirection.Incoming && record.Kind is ContentKind.File or ContentKind.Image &&
                 record.Status == ActivityStatus.Completed && record.ErrorKind is null ? record.ReceivedFilePath : null);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             await PruneCoreAsync(connection, transaction, clock?.UtcNow ?? DateTimeOffset.UtcNow,

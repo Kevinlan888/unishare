@@ -81,6 +81,38 @@ public sealed class ActivityProjectionTests
     }
 
     [TestMethod]
+    public void ProgressSamplesExposeTransferSpeedAndEstimatedRemainingTime()
+    {
+        var started = DateTimeOffset.Parse("2026-10-07T10:00:00Z");
+        var current = Projection(25, transferredBytes: 256 * 1024, byteCount: 1024 * 1024, updatedAt: started);
+        var activities = new ObservableCollection<ActivityProjection> { current };
+
+        ActivityProjectionCollection.Synchronize(activities,
+            [Projection(50, transferredBytes: 512 * 1024, byteCount: 1024 * 1024, updatedAt: started.AddSeconds(2))]);
+
+        Assert.AreEqual(128 * 1024d, current.BytesPerSecond);
+        Assert.AreEqual("128 KB/s", current.SpeedText);
+        Assert.AreEqual(TimeSpan.FromSeconds(4), current.EstimatedRemaining);
+        Assert.AreEqual("00:04", current.EstimatedRemainingText);
+    }
+
+    [TestMethod]
+    public void DelayedProgressSamplesDoNotRegressTransferMetrics()
+    {
+        var started = DateTimeOffset.Parse("2026-10-07T10:00:00Z");
+        var current = Projection(25, transferredBytes: 256 * 1024, byteCount: 1024 * 1024, updatedAt: started);
+        var activities = new ObservableCollection<ActivityProjection> { current };
+        ActivityProjectionCollection.Synchronize(activities,
+            [Projection(50, transferredBytes: 512 * 1024, byteCount: 1024 * 1024, updatedAt: started.AddSeconds(2))]);
+
+        ActivityProjectionCollection.Synchronize(activities,
+            [Projection(40, transferredBytes: 400 * 1024, byteCount: 1024 * 1024, updatedAt: started.AddSeconds(1))]);
+
+        Assert.AreEqual(128 * 1024d, current.BytesPerSecond);
+        Assert.AreEqual(TimeSpan.FromSeconds(4), current.EstimatedRemaining);
+    }
+
+    [TestMethod]
     public void SynchronizingUpdatesLateContentWithoutReplacingTheProjection()
     {
         var current = Projection(0, text: "", status: ActivityStatus.AwaitingDecision);
@@ -127,10 +159,80 @@ public sealed class ActivityProjectionTests
         Assert.AreEqual(1, statusTextChanges);
     }
 
+    [TestMethod]
+    public async Task CompletedIncomingFilesAndImagesUseTheSystemOpenBoundary()
+    {
+        foreach (var kind in new[] { ContentKind.File, ContentKind.Image })
+        {
+            var calls = new List<(string Path, bool Location)>();
+            var item = new ActivityProjection(kind, ShareDirection.Incoming, "received", "", "1 MB", "12:00",
+                ActivityStatus.Completed, receivedFilePath: "C:\\Downloads\\received.bin", fileExists: _ => true,
+                open: (path, location) =>
+                {
+                    calls.Add((path, location));
+                    return Task.CompletedTask;
+                });
+
+            Assert.IsTrue(item.FileAvailable);
+            await item.OpenAsync(false);
+            await item.OpenAsync(true);
+
+            CollectionAssert.AreEqual(new[]
+            {
+                ("C:\\Downloads\\received.bin", false),
+                ("C:\\Downloads\\received.bin", true)
+            }, calls);
+        }
+    }
+
+    [TestMethod]
+    public void CompletionNotifiesFileAvailabilityAfterThePathAndStatusAreUpdated()
+    {
+        var current = new ActivityProjection(ContentKind.Image, ShareDirection.Incoming, "photo.png", "", "1 MB", "12:00",
+            ActivityStatus.Transferring) { Id = Activity };
+        var completed = new ActivityProjection(ContentKind.Image, ShareDirection.Incoming, "photo.png", "", "1 MB", "12:01",
+            ActivityStatus.Completed, receivedFilePath: "C:\\Downloads\\photo.png", fileExists: _ => true) { Id = Activity };
+        var observed = new List<bool>();
+        current.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ActivityProjection.FileAvailable))
+                observed.Add(current.FileAvailable);
+        };
+
+        ActivityProjectionCollection.Synchronize(new ObservableCollection<ActivityProjection> { current }, [completed]);
+
+        CollectionAssert.AreEqual(new[] { true }, observed);
+    }
+
+    [TestMethod]
+    public async Task DeletedReceivedItemRefreshesAvailabilityAndDoesNotInvokeTheSystem()
+    {
+        var exists = true;
+        var openCalls = 0;
+        var item = new ActivityProjection(ContentKind.File, ShareDirection.Incoming, "received.bin", "", "1 MB", "12:00",
+            ActivityStatus.Completed, receivedFilePath: "C:\\Downloads\\received.bin", fileExists: _ => exists,
+            open: (_, _) => { openCalls++; return Task.CompletedTask; });
+        var observed = new List<bool>();
+        item.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ActivityProjection.FileAvailable))
+                observed.Add(item.FileAvailable);
+        };
+
+        exists = false;
+        item.RefreshFileAvailability();
+        await item.OpenAsync(false);
+
+        Assert.IsTrue(observed.Count >= 1);
+        Assert.IsTrue(observed.All(value => !value));
+        Assert.AreEqual(0, openCalls);
+    }
+
     private static ActivityProjection Projection(double progress, ActivityId? id = null, string text = "",
-        ActivityStatus status = ActivityStatus.Transferring, string name = "large.bin") => new(
+        ActivityStatus status = ActivityStatus.Transferring, string name = "large.bin", ulong transferredBytes = 0,
+        ulong byteCount = 0, DateTimeOffset? updatedAt = null) => new(
         ContentKind.File, ShareDirection.Outgoing, name, text, "100", "12:00",
-        status, ShareOrigin.Direct, progress)
+        status, ShareOrigin.Direct, progress, transferredBytes, byteCount, updatedAt)
     {
         Id = id ?? Activity
     };

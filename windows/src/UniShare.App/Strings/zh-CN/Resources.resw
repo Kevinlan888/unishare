@@ -43,6 +43,8 @@
 <data name="Activity.Rejected" xml:space="preserve"><value>已拒绝</value></data>
 <data name="Activity.Cancelled" xml:space="preserve"><value>已取消</value></data>
 <data name="Activity.Failed" xml:space="preserve"><value>失败：连接已断开</value></data>
+<data name="EstimatedRemainingLabel.Text" xml:space="preserve"><value>预计剩余</value></data>
+<data name="OpenLocationButton.Content" xml:space="preserve"><value>打开文件位置</value></data>
 <data name="WindowTitle.Text" xml:space="preserve"><value>分享</value></data>
 <data name="ShellPage.AutomationProperties.Name" xml:space="preserve"><value>UniShare 分享主界面</value></data>
 <data name="SharePage.AutomationProperties.Name" xml:space="preserve"><value>与设备分享</value></data>
@@ -83,7 +85,7 @@
 <data name="NotesSummary.Text" xml:space="preserve"><value>12 KB · 昨天</value></data>
 <data name="ClipboardOrigin.Text" xml:space="preserve"><value>剪贴板</value></data>
 <data name="MountainImage.AutomationProperties.Name" xml:space="preserve"><value>山湖照片，IMG_3281.jpg</value></data>
-<data name="TransferProgress.AutomationProperties.Name" xml:space="preserve"><value>project.zip 传输进度</value></data>
+<data name="TransferProgress.AutomationProperties.Name" xml:space="preserve"><value>传输进度</value></data>
 <data name="AcceptButton.Content" xml:space="preserve"><value>接受</value></data>
 <data name="RejectButton.Content" xml:space="preserve"><value>拒绝</value></data>
 <data name="CancelButton.Content" xml:space="preserve"><value>取消</value></data>

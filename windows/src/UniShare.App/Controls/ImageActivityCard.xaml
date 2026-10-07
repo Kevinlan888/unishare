@@ -4,6 +4,8 @@
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Border
     x:Name="Card"
+    DoubleTapped="OpenDoubleTapped"
+    PointerEntered="RefreshFileAvailability"
     CornerRadius="14"
     Padding="8"
     BorderThickness="1"
@@ -47,6 +49,32 @@
         Text="{Binding Size}"
         Style="{StaticResource SecondaryText}" />
       <StackPanel
+        x:Name="ProgressPanel"
+        Spacing="4">
+        <ProgressBar
+          x:Uid="TransferProgress"
+          Value="{Binding Progress}"
+          Maximum="100"
+          MinWidth="200" />
+        <TextBlock
+          Text="{Binding ProgressText}"
+          Style="{StaticResource SecondaryText}" />
+        <StackPanel
+          x:Name="MetricsPanel"
+          Orientation="Horizontal"
+          Spacing="6">
+          <TextBlock
+            Text="{Binding SpeedText}"
+            Style="{StaticResource SecondaryText}" />
+          <TextBlock
+            x:Uid="EstimatedRemainingLabel"
+            Style="{StaticResource SecondaryText}" />
+          <TextBlock
+            Text="{Binding EstimatedRemainingText}"
+            Style="{StaticResource SecondaryText}" />
+        </StackPanel>
+      </StackPanel>
+      <StackPanel
         Orientation="Horizontal"
         Spacing="10"
         HorizontalAlignment="Right">
@@ -81,6 +109,15 @@
           x:Name="RetryButton"
           x:Uid="RetryButton"
           Click="RetryClick" />
+      </StackPanel>
+      <StackPanel
+        x:Name="CompletedActionsPanel"
+        Orientation="Horizontal"
+        HorizontalAlignment="Right">
+        <Button
+          x:Name="OpenLocationButton"
+          x:Uid="OpenLocationButton"
+          Click="OpenLocationClick" />
       </StackPanel>
     </StackPanel>
   </Border>

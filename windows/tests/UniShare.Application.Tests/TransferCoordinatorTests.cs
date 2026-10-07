@@ -561,7 +561,7 @@ public sealed class TransferCoordinatorTests
     }
 
     [TestMethod]
-    public async Task IncomingImagePublishesFileAndProcessPreviewWithoutPersistingImageOrPath()
+    public async Task IncomingImagePublishesFileAndProcessPreviewAndRetainsItsFinalPath()
     {
         var repo = new Repository();
         var tracker = Tracker(repo);
@@ -587,8 +587,7 @@ public sealed class TransferCoordinatorTests
         Assert.AreEqual("image/png", preview.MimeType);
         await tracker.SavePendingAsync();
         Assert.AreEqual(ActivityStatus.Completed, repo.Records[id].Status);
-        Assert.IsNull(repo.Records[id].ReceivedFilePath);
-        Assert.IsFalse(repo.Records[id].ToString().Contains("published.txt"));
+        Assert.AreEqual("published.txt", repo.Records[id].ReceivedFilePath);
     }
 
     [TestMethod]

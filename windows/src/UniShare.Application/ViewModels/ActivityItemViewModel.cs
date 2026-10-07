@@ -36,7 +36,9 @@ public sealed class ActivityItemViewModel : CommandViewModel
             return TimeSpan.FromSeconds(Math.Min(seconds, TimeSpan.MaxValue.TotalSeconds - 1));
         }
     }
-    public bool FileAvailable => record is { Direction: ShareDirection.Incoming, Kind: ContentKind.File, Status: ActivityStatus.Completed, ReceivedFilePath: { } path } && files.FileExists(path);
+    public bool FileAvailable => record is
+        { Direction: ShareDirection.Incoming, Kind: ContentKind.File or ContentKind.Image, Status: ActivityStatus.Completed, ReceivedFilePath: { } path } &&
+        files.FileExists(path);
     public IAsyncRelayCommand OpenCommand { get; }
     public IAsyncRelayCommand OpenLocationCommand { get; }
 

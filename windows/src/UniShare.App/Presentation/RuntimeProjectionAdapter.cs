@@ -31,12 +31,18 @@ public sealed class RuntimeProjectionAdapter : IDisposable
         return value is not (ShareSdkEvent.OfferReceived or ShareSdkEvent.OutgoingTransferRegistered or
             ShareSdkEvent.ProgressReceived or ShareSdkEvent.TransferCompleted);
     }
-    private void OnChanged(object? sender, EventArgs args) => dispatch(Refresh);
+    private void OnChanged(object? sender, EventArgs args) => dispatch(RefreshSelectedActivities);
     public void Refresh()
     {
         if (disposed)
             return;
         projection.RefreshDevices();
+        RefreshSelectedActivities();
+    }
+    public void RefreshSelectedActivities()
+    {
+        if (disposed)
+            return;
         if (projection.SelectedDeviceId is { } device)
             projection.RenderActivities(device);
     }

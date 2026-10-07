@@ -167,6 +167,18 @@ public sealed class ActivityTrackerTests
     }
 
     [TestMethod]
+    public void CompletedIncomingImagesRetainTheirPublishedPath()
+    {
+        var tracker = Create();
+        var offer = Offer() with { Kind = ContentKind.Image, DisplayName = "photo.png", MimeType = "image/png" };
+        var record = tracker.AddIncomingOffer(offer);
+
+        tracker.Complete(record.Id, new(Transfer, null), "C:\\Downloads\\photo.png");
+
+        Assert.AreEqual("C:\\Downloads\\photo.png", tracker.GetDeviceSnapshot(Device).Single().ReceivedFilePath);
+    }
+
+    [TestMethod]
     public void LegalTableDisallowsResurrectionAndRegressingToWaiting()
     {
         Assert.IsTrue(ActivityTransition.CanTransition(ActivityStatus.AwaitingPeer, ActivityStatus.Transferring));

@@ -127,11 +127,91 @@ public sealed class SqliteActivityRepositoryTests
         await ActivitySchema.InitializeAsync(connection, default);
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA user_version";
-        Assert.AreEqual(1L, command.ExecuteScalar());
+        Assert.AreEqual(2L, command.ExecuteScalar());
         command.CommandText = "PRAGMA journal_mode";
         Assert.AreEqual("wal", command.ExecuteScalar());
         command.CommandText = "PRAGMA foreign_keys";
         Assert.AreEqual(1L, command.ExecuteScalar());
+    }
+
+    [TestMethod]
+    public async Task VersionOneDatabaseMigratesWithoutLosingActivitiesAndAcceptsImagePaths()
+    {
+        using var directory = new TemporaryDirectory();
+        Directory.CreateDirectory(directory.Path);
+        var database = System.IO.Path.Combine(directory.Path, "activity.db");
+        var existing = Record() with
+        {
+            Direction = ShareDirection.Incoming,
+            ReceivedFilePath = "C:\\Downloads\\report.txt"
+        };
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }.ToString()))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE activities (
+                    id TEXT PRIMARY KEY NOT NULL, device_id TEXT NOT NULL, transfer_id TEXT, operation_id TEXT,
+                    retry_of TEXT, direction INTEGER NOT NULL, kind INTEGER NOT NULL, origin INTEGER NOT NULL,
+                    display_name TEXT NOT NULL, mime_type TEXT NOT NULL, byte_count TEXT NOT NULL,
+                    created_at TEXT NOT NULL, created_ticks INTEGER NOT NULL, updated_at TEXT NOT NULL,
+                    completed_at TEXT, status INTEGER NOT NULL, transferred_bytes TEXT NOT NULL, error_kind INTEGER,
+                    received_file_path TEXT,
+                    CHECK (received_file_path IS NULL OR
+                        (direction = 0 AND kind = 3 AND status = 3 AND error_kind IS NULL))
+                );
+                CREATE INDEX activities_device_created ON activities(device_id, created_ticks DESC, id);
+                PRAGMA user_version=1;
+                """;
+            await command.ExecuteNonQueryAsync();
+            command.CommandText = """
+                INSERT INTO activities (id, device_id, transfer_id, operation_id, retry_of,
+                    direction, kind, origin, display_name, mime_type, byte_count, created_at,
+                    created_ticks, updated_at, completed_at, status, transferred_bytes, error_kind, received_file_path)
+                VALUES ($id, $device, $transfer, $operation, $retry, $direction, $kind, $origin,
+                    $name, $mime, $bytes, $created, $ticks, $updated, $completed, $status, $transferred, $error, $path)
+                """;
+            command.Parameters.AddWithValue("$id", existing.Id.Value.ToString("D"));
+            command.Parameters.AddWithValue("$device", existing.DeviceId.Value.ToString("D"));
+            command.Parameters.AddWithValue("$transfer", existing.TransferId!.Value.Value.ToString("D"));
+            command.Parameters.AddWithValue("$operation", existing.OperationId!.Value.Value.ToString());
+            command.Parameters.AddWithValue("$retry", existing.RetryOf!.Value.Value.ToString("D"));
+            command.Parameters.AddWithValue("$direction", (int)existing.Direction);
+            command.Parameters.AddWithValue("$kind", (int)existing.Kind);
+            command.Parameters.AddWithValue("$origin", (int)existing.Origin);
+            command.Parameters.AddWithValue("$name", existing.DisplayName);
+            command.Parameters.AddWithValue("$mime", existing.MimeType);
+            command.Parameters.AddWithValue("$bytes", existing.ByteCount.ToString());
+            command.Parameters.AddWithValue("$created", existing.CreatedAt.ToString("O"));
+            command.Parameters.AddWithValue("$ticks", existing.CreatedAt.UtcTicks);
+            command.Parameters.AddWithValue("$updated", existing.UpdatedAt.ToString("O"));
+            command.Parameters.AddWithValue("$completed", existing.CompletedAt!.Value.ToString("O"));
+            command.Parameters.AddWithValue("$status", (int)existing.Status);
+            command.Parameters.AddWithValue("$transferred", existing.TransferredBytes.ToString());
+            command.Parameters.AddWithValue("$error", DBNull.Value);
+            command.Parameters.AddWithValue("$path", existing.ReceivedFilePath!);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var repository = Repository(directory);
+        var image = existing with
+        {
+            Id = new(Guid.NewGuid()),
+            Direction = ShareDirection.Incoming,
+            Kind = ContentKind.Image,
+            MimeType = "image/png",
+            ReceivedFilePath = "C:\\Downloads\\photo.png"
+        };
+        await repository.UpsertAsync(image, default);
+
+        var rows = await repository.LoadDeviceAsync(Device, default);
+        Assert.AreEqual(existing, rows.Single(row => row.Id == existing.Id));
+        Assert.AreEqual(image.ReceivedFilePath, rows.Single(row => row.Id == image.Id).ReceivedFilePath);
+        using var reopened = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }.ToString());
+        await reopened.OpenAsync();
+        using var version = reopened.CreateCommand();
+        version.CommandText = "PRAGMA user_version";
+        Assert.AreEqual(2L, version.ExecuteScalar());
     }
 
     [TestMethod]
@@ -159,7 +239,7 @@ public sealed class SqliteActivityRepositoryTests
     }
 
     [TestMethod]
-    public async Task OnlySuccessfulReceivedFilesRetainFinalPathsInRawDatabase()
+    public async Task OnlySuccessfulReceivedFilesAndImagesRetainFinalPathsInRawDatabase()
     {
         using var directory = new TemporaryDirectory();
         var repository = Repository(directory);
@@ -170,10 +250,11 @@ public sealed class SqliteActivityRepositoryTests
             ReceivedFilePath = path
         };
         await repository.UpsertAsync(successful, default);
+        var successfulImage = successful with { Id = new(Guid.NewGuid()), Kind = ContentKind.Image };
+        await repository.UpsertAsync(successfulImage, default);
         foreach (var record in new[] {
             successful with { Direction = ShareDirection.Outgoing },
             successful with { Kind = ContentKind.Text },
-            successful with { Kind = ContentKind.Image },
             successful with { Status = ActivityStatus.Failed },
             successful with { Status = ActivityStatus.Transferring },
             successful with { ErrorKind = ShareErrorKind.StorageFailed } })
@@ -184,15 +265,17 @@ public sealed class SqliteActivityRepositoryTests
             }, default);
         var rows = await repository.LoadDeviceAsync(Device, default);
         Assert.AreEqual(path, rows.Single(row => row.Id == successful.Id).ReceivedFilePath);
-        Assert.IsTrue(rows.Where(row => row.Id != successful.Id).All(row => row.ReceivedFilePath is null));
+        Assert.AreEqual(path, rows.Single(row => row.Id == successfulImage.Id).ReceivedFilePath);
+        Assert.IsTrue(rows.Where(row => row.Id != successful.Id && row.Id != successfulImage.Id).All(row => row.ReceivedFilePath is null));
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = System.IO.Path.Combine(directory.Path, "activity.db"), Pooling = false }.ToString());
         await connection.OpenAsync();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT received_file_path FROM activities WHERE received_file_path IS NOT NULL";
         using var reader = command.ExecuteReader();
-        Assert.IsTrue(reader.Read());
-        Assert.AreEqual(path, reader.GetString(0));
-        Assert.IsFalse(reader.Read());
+        var retained = new List<string>();
+        while (reader.Read())
+            retained.Add(reader.GetString(0));
+        CollectionAssert.AreEqual(new[] { path, path }, retained);
     }
 
     [TestMethod]

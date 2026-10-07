@@ -380,7 +380,8 @@ public sealed class ActivityTracker : ITransferDrain
             CompletedAt = now,
             TransferredBytes = status == ActivityStatus.Completed ? record.ByteCount : record.TransferredBytes,
             ErrorKind = terminal.Failure?.Kind,
-            ReceivedFilePath = status == ActivityStatus.Completed && record.Direction == ShareDirection.Incoming && record.Kind == ContentKind.File
+            ReceivedFilePath = status == ActivityStatus.Completed && record.Direction == ShareDirection.Incoming &&
+                record.Kind is ContentKind.File or ContentKind.Image
                 ? receivedFilePath : null
         });
         active.Remove(activity);

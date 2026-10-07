@@ -22,6 +22,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     private readonly PrivacyDiagnosticSink diagnostics = new();
     private readonly DispatcherQueue dispatcher;
     private readonly DispatcherAdapter bindingDispatcher;
+    private readonly IViewModelFiles viewModelFiles;
     private readonly Dictionary<DeviceId, DeviceSessionViewModel> sessionModels = [];
     private readonly ShellProjection model;
     private readonly AppNotificationService notifications;
@@ -44,7 +45,8 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         dispatcher = window.DispatcherQueue;
         bindingDispatcher = new(dispatcher);
         SettingsViewModel? preferences = null;
-        Preferences = preferences = new(settingsStore, new WindowsViewModelFiles(() => preferences?.Settings.ReceiveDirectory), bindingDispatcher, new());
+        viewModelFiles = new WindowsViewModelFiles(() => preferences?.Settings.ReceiveDirectory);
+        Preferences = preferences = new(settingsStore, viewModelFiles, bindingDispatcher, new());
         sdk = model.IsDemo ? new DemoSdkClient() : new NativeShareSdkClient(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniShare", "Identity"),
             (stage, outcome, failure, error) => TryLog(DiagnosticComponent.Sdk, stage, outcome, failure, error),
@@ -248,7 +250,8 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
         includePreview ? tracker.GetPreview(record.Id)?.Text ?? "" : "", ActivityProjection.FormatSize(record.ByteCount),
         record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin,
-        ActivityProjection.ProgressPercentage(record.TransferredBytes, record.ByteCount))
+        ActivityProjection.ProgressPercentage(record.TransferredBytes, record.ByteCount), record.TransferredBytes,
+        record.ByteCount, record.UpdatedAt, record.ReceivedFilePath, viewModelFiles.FileExists, OpenReceivedFileAsync)
     {
         Id = record.Id
     };
@@ -261,7 +264,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         var device = Session.Devices.Devices.FirstOrDefault(value => value.Id == id);
         if (device is null)
             return null;
-        var created = new DeviceSessionViewModel(device, Session.Devices, transfers, tracker, sdk, new WindowsViewModelFiles(() => Preferences.Settings.ReceiveDirectory), bindingDispatcher);
+        var created = new DeviceSessionViewModel(device, Session.Devices, transfers, tracker, sdk, viewModelFiles, bindingDispatcher);
         sessionModels.Add(id, created);
         return created;
     }
@@ -274,8 +277,19 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     });
     public Task SendClipboardAsync() => RunAsync(vm => vm.SendClipboardCommand.ExecuteAsync(null));
     public Task SendFileAsync(string path, ContentKind kind) => RunAsync(vm => (kind == ContentKind.Image ? vm.SendImageCommand : vm.SendFileCommand).ExecuteAsync(path));
-    public Task ConnectAsync() => RunAsync(vm => vm.PairCommand.ExecuteAsync(null));
-    public Task ForgetAsync() => RunAsync(vm => vm.ForgetCommand.ExecuteAsync(null), requireRunning: false);
+    public Task ConnectAsync() => RunAsync(vm => vm.PairCommand.ExecuteAsync(null), refreshDevices: true);
+    public Task ForgetAsync() => RunAsync(vm => vm.ForgetCommand.ExecuteAsync(null), requireRunning: false, refreshDevices: true);
+    private async Task OpenReceivedFileAsync(string path, bool location)
+    {
+        try
+        {
+            await viewModelFiles.OpenAsync(path, location, CancellationToken.None);
+        }
+        catch
+        {
+            model.Notice = Strings.Get(location ? "Activity.OpenLocationFailed" : "Activity.OpenFailed");
+        }
+    }
     public async Task DecideAsync(ActivityProjection activity, ActivityStatus result)
     {
         if (activity.Id is not { } id)
@@ -294,7 +308,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
             return;
         await RunAsync(vm => vm.RetryCommand.ExecuteAsync(id));
     }
-    private async Task RunAsync(Func<DeviceSessionViewModel, Task> work, bool requireRunning = true)
+    private async Task RunAsync(Func<DeviceSessionViewModel, Task> work, bool requireRunning = true, bool refreshDevices = false)
     {
         if (requireRunning && Session.State != SessionState.Running || disposed)
             return;
@@ -304,7 +318,10 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         await work(vm);
         if (vm.ErrorResourceKey is { } key)
             model.Notice = Strings.Get(key);
-        projection.Refresh();
+        if (refreshDevices)
+            projection.Refresh();
+        else
+            projection.RefreshSelectedActivities();
     }
     public void Dispose()
     {

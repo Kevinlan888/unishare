@@ -11,9 +11,10 @@ internal sealed class WindowsViewModelFiles(Func<string?> receiveRoot) : IViewMo
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (location)
-            await Launcher.LaunchFolderAsync(await StorageFolder.GetFolderFromPathAsync(Path.GetDirectoryName(path)!));
+            SystemLaunch.EnsureSucceeded(await Launcher.LaunchFolderAsync(
+                await StorageFolder.GetFolderFromPathAsync(Path.GetDirectoryName(path)!)));
         else
-            await Launcher.LaunchFileAsync(await StorageFile.GetFileFromPathAsync(path));
+            SystemLaunch.EnsureSucceeded(await Launcher.LaunchFileAsync(await StorageFile.GetFileFromPathAsync(path)));
     }
     public Task<bool> ValidateReceiveDirectoryAsync(string? path, CancellationToken cancellationToken) =>
         ReceiveDirectoryValidator.ValidateAsync(path, receiveRoot, cancellationToken);

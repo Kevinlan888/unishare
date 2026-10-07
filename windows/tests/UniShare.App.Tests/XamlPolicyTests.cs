@@ -169,6 +169,38 @@ public sealed partial class XamlPolicyTests
     }
 
     [TestMethod]
+    public void FileAndImageTransfersDisplayLiveSpeedAndEstimatedRemainingTime()
+    {
+        foreach (var name in new[] { "FileActivityCard", "ImageActivityCard" })
+        {
+            var card = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Controls", name + ".xaml"));
+            Assert.IsTrue(card.Descendants().Any(element =>
+                element.Name.LocalName == "TextBlock" && element.Attribute("Text")?.Value == "{Binding SpeedText}"),
+                $"{name} does not display live transfer speed.");
+            Assert.IsTrue(card.Descendants().Any(element =>
+                element.Name.LocalName == "TextBlock" && element.Attribute("Text")?.Value == "{Binding EstimatedRemainingText}"),
+                $"{name} does not display estimated remaining time.");
+        }
+    }
+
+    [TestMethod]
+    public void CompletedFileAndImageCardsExposeLocationAndDoubleTapOpenActions()
+    {
+        foreach (var name in new[] { "FileActivityCard", "ImageActivityCard" })
+        {
+            var card = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Controls", name + ".xaml"));
+            Assert.IsTrue(card.Descendants().Any(element => element.Attribute("DoubleTapped")?.Value == "OpenDoubleTapped"),
+                $"{name} does not open a received item on double-tap.");
+            Assert.IsTrue(card.Descendants().Any(element => element.Attribute("PointerEntered")?.Value == "RefreshFileAvailability"),
+                $"{name} does not recheck whether a received item still exists before interaction.");
+            Assert.IsTrue(card.Descendants().Any(element =>
+                element.Name.LocalName == "Button" &&
+                element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value == "OpenLocationButton"),
+                $"{name} does not expose an open-location action.");
+        }
+    }
+
+    [TestMethod]
     public void SharedFilesDisplayTheirFormattedSize()
     {
         var pane = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceDetailsPane.xaml"));
