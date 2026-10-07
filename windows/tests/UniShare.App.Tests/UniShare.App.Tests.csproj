@@ -15,6 +15,7 @@
     <Compile Include="../../src/UniShare.App/Presentation/ViewSubscriptions.cs" Link="Production/ViewSubscriptions.cs" />
     <Compile Include="../../src/UniShare.App/Services/NotificationPayload.cs" Link="Production/NotificationPayload.cs" />
     <Compile Include="../../src/UniShare.App/Services/TrayIconService.cs" Link="Production/TrayIconService.cs" />
+    <Compile Include="../../src/UniShare.App/Services/TrayIconHandle.cs" Link="Production/TrayIconHandle.cs" />
     <Compile Include="../../src/UniShare.App/Services/StartupTaskService.cs" Link="Production/StartupTaskService.cs" />
     <Compile Include="../../src/UniShare.App/Services/SystemLaunch.cs" Link="Production/SystemLaunch.cs" />
     <Compile Include="../../src/UniShare.App/Services/WindowController.cs" Link="Production/WindowController.cs" />

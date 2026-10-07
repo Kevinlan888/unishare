@@ -17,6 +17,7 @@ public sealed class Win32TrayPlatform : ITrayPlatform
     private bool disposed;
     private bool iconAdded;
     private Action<TrayCommand>? callback;
+    private TrayIconHandle? trayIcon;
     private NotifyIconData icon;
     private string open = "", pause = "", exit = "";
     private readonly uint taskbarCreated = RegisterWindowMessageW("TaskbarCreated");
@@ -35,6 +36,7 @@ public sealed class Win32TrayPlatform : ITrayPlatform
         window = CreateWindowExW(0, className, "", 0, 0, 0, 0, 0, 0, 0, instance, 0);
         if (window == 0)
             throw new Win32Exception(Marshal.GetLastWin32Error());
+        trayIcon = new(Path.Combine(AppContext.BaseDirectory, "Assets", "TrayIcon.ico"));
         icon = new()
         {
             Size = (uint)Marshal.SizeOf<NotifyIconData>(),
@@ -42,7 +44,7 @@ public sealed class Win32TrayPlatform : ITrayPlatform
             Id = 1,
             Flags = 1 | 2 | 4,
             Callback = CallbackMessage,
-            Icon = LoadIconW(0, (nint)32512),
+            Icon = trayIcon.Value,
             Tooltip = "UniShare",
             Info = "",
             InfoTitle = ""
@@ -59,13 +61,6 @@ public sealed class Win32TrayPlatform : ITrayPlatform
         this.pause = pause;
         this.exit = exit;
         icon.Tooltip = tooltip.Length < 128 ? tooltip : tooltip[..127];
-        icon.Icon = LoadIconW(0, (nint)(state switch
-        {
-            TrayState.Warning => 32515,
-            TrayState.Pausing => 32516,
-            TrayState.Paused => 32513,
-            _ => 32512
-        }));
         Shell_NotifyIconW(1, ref icon);
     }
     private nint ProcessMessage(nint hwnd, uint message, nuint wparam, nint lparam)
@@ -115,6 +110,8 @@ public sealed class Win32TrayPlatform : ITrayPlatform
             Shell_NotifyIconW(2, ref icon);
             iconAdded = false;
         }
+        trayIcon?.Dispose();
+        trayIcon = null;
         if (window != 0)
         {
             DestroyWindow(window);
@@ -166,7 +163,6 @@ public sealed class Win32TrayPlatform : ITrayPlatform
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint CreateWindowExW(uint exStyle, string className, string name, uint style, int x, int y, int width, int height, nint parent, nint menu, nint instance, nint param);
     [DllImport("user32.dll")] private static extern bool DestroyWindow(nint hwnd);
     [DllImport("user32.dll")] private static extern nint DefWindowProcW(nint hwnd, uint message, nuint wparam, nint lparam);
-    [DllImport("user32.dll")] private static extern nint LoadIconW(nint instance, nint resource);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessageW(string message);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool Shell_NotifyIconW(uint message, ref NotifyIconData data);
     [DllImport("user32.dll")] private static extern nint CreatePopupMenu();

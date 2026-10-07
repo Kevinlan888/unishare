@@ -21,6 +21,7 @@
     <ProjectReference Include="../UniShare.Native/UniShare.Native.csproj" />
     <ProjectReference Include="../UniShare.Infrastructure/UniShare.Infrastructure.csproj" />
     <Content Include="Assets\*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\*.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="licenses\NLog-LICENSE.txt" Link="licenses\NLog-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Remove="Assets\**" />
   </ItemGroup>
