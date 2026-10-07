@@ -73,32 +73,35 @@ class AndroidReceivePublisherTest {
         assertTrue(journalDirectory.listFiles().orEmpty().isEmpty())
     }
 
-    @Test fun syncFailureForEitherBackendRemovesTargetAndKeepsPrivateSource() {
+    @Test fun syncFailureRemovesDownloadsTargetAndKeepsPrivateSource() {
         destination.unsyncableTarget = true
-        listOf(ReceiveDestination.Downloads, ReceiveDestination.SafTree(Uri.parse("content://test.documents/tree/root"))).forEach { target ->
-            val staging = source()
-            try { publisher.publish(staging, "report.txt", "text/plain", target); fail("Unsynced content must not publish") }
-            catch (_: IOException) { }
-            assertTrue(staging.file.exists())
-            assertTrue(destination.files.isEmpty())
-        }
+        val staging = source()
+        try { publisher.publish(staging, "report.txt", "text/plain", ReceiveDestination.Downloads); fail("Unsynced content must not publish") }
+        catch (_: IOException) { }
+        assertTrue(staging.file.exists())
+        assertTrue(destination.files.isEmpty())
     }
 
-    @Test fun safPublishesByRenameAndDeletesTemporaryDocumentOnFailure() {
-        val tree = Uri.parse("content://test.documents/tree/root")
-        destination.addExisting("report.txt")
+    @Test fun safFailsWithoutAnyProviderEffectsAndPreservesCompletePrivateSource() {
         val staging = source()
-        destination.onCommit = { assertTrue(staging.file.exists()) }
-        val uri = publisher.publish(staging, "report.txt", "text/plain", ReceiveDestination.SafTree(tree))
-        assertEquals("report (1).txt", destination.names[uri])
-        assertArrayEquals(byteArrayOf(1, 2, 3, 4), destination.files.getValue(uri).readBytes())
-        assertFalse(staging.file.exists())
-        val failed = source()
-        destination.failOpen = true
-        try { publisher.publish(failed, "failed.txt", "text/plain", ReceiveDestination.SafTree(tree)); fail() }
-        catch (_: IOException) { }
-        assertTrue(failed.file.exists())
-        assertFalse(destination.names.values.any { it.endsWith(".partial") || it == "failed.txt" })
+        val tree = Uri.parse("content://test.documents/tree/sensitive-directory")
+        try {
+            publisher.publish(staging, "report.txt", "text/plain", ReceiveDestination.SafTree(tree))
+            fail("A generic SAF provider cannot guarantee hidden atomic publication")
+        } catch (failure: IOException) {
+            assertEquals("Receive directory cannot guarantee private atomic publication", failure.message)
+            assertFalse(failure.message!!.contains("sensitive-directory"))
+            assertNull(failure.cause)
+        }
+        assertTrue(staging.file.isFile)
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), staging.file.readBytes())
+        assertEquals(0, destination.queryCount)
+        assertEquals(0, destination.createCount)
+        assertEquals(0, destination.openCount)
+        assertEquals(0, destination.renameCount)
+        assertEquals(0, destination.deleteCount)
+        assertTrue(destination.files.isEmpty())
+        assertFalse(journalDirectory.exists())
     }
 
     @Test fun startupRecoveryRemovesHalfPublicationFromSimulatedProcessDeath() {
@@ -113,31 +116,12 @@ class AndroidReceivePublisherTest {
         assertFalse(staging.file.exists())
     }
 
-    @Test fun safStartupRecoveryRemovesUnrenamedTemporaryDocument() {
-        destination.failOpenWithProcessDeath = true
-        val tree = Uri.parse("content://test.documents/tree/root")
-        try { publisher.publish(source(), "report.txt", "text/plain", ReceiveDestination.SafTree(tree)); fail() }
-        catch (_: SimulatedProcessDeath) { }
-        AndroidReceivePublisher(context, resolver, journalDirectory).cleanupAfterRestart()
-        assertTrue(destination.files.isEmpty())
-    }
-
     @Test fun recoveryFindsCreatedRowWhenProcessDiesBeforeInsertReturnsUri() {
         destination.dieAfterCreate = true
         destination.appendTemporaryExtension = true
         try { publisher.publish(source(), "report.txt", "text/plain", ReceiveDestination.Downloads); fail() }
         catch (_: SimulatedProcessDeath) { }
         assertTrue(destination.files.isNotEmpty())
-        AndroidReceivePublisher(context, resolver, journalDirectory).cleanupAfterRestart()
-        assertTrue(destination.files.isEmpty())
-    }
-
-    @Test fun safRecoveryFindsProviderExtendedNameBeforeCreateReturnsUri() {
-        destination.dieAfterCreate = true
-        destination.appendTemporaryExtension = true
-        val tree = Uri.parse("content://test.documents/tree/root")
-        try { publisher.publish(source(), "report.txt", "text/plain", ReceiveDestination.SafTree(tree)); fail() }
-        catch (_: SimulatedProcessDeath) { }
         AndroidReceivePublisher(context, resolver, journalDirectory).cleanupAfterRestart()
         assertTrue(destination.files.isEmpty())
     }
@@ -167,11 +151,17 @@ private class FileDestinationProvider(private val directory: File) : ContentProv
     var dieAfterCreate = false
     var appendTemporaryExtension = false
     var unsyncableTarget = false
+    var queryCount = 0
+    var createCount = 0
+    var openCount = 0
+    var renameCount = 0
+    var deleteCount = 0
     private var nextId = 1L
     var onCommit: (() -> Unit)? = null
     override fun onCreate() = true
     override fun getType(uri: Uri) = "application/octet-stream"
     override fun insert(uri: Uri, values: ContentValues?): Uri = create(uri.authority!!, values!!.getAsString(MediaStore.MediaColumns.DISPLAY_NAME)).also {
+        createCount++
         pending[it] = values.getAsInteger(MediaStore.MediaColumns.IS_PENDING)
         if (dieAfterCreate) throw SimulatedProcessDeath()
     }
@@ -183,6 +173,7 @@ private class FileDestinationProvider(private val directory: File) : ContentProv
             queryArgs?.getInt(MediaStore.QUERY_ARG_MATCH_PENDING) == MediaStore.MATCH_INCLUDE || uri.getBooleanQueryParameter("includePending", false))
     private fun queryRows(projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, includePending: Boolean): Cursor =
         MatrixCursor(projection ?: arrayOf(MediaStore.MediaColumns.DISPLAY_NAME)).apply {
+            queryCount++
             names.forEach { (uri, name) ->
                 if ((includePending || pending[uri] != 1) && (selectionArgs == null || name in selectionArgs ||
                     (selection?.contains("LIKE") == true && name.startsWith(selectionArgs[0].removeSuffix("%"))))) addRow(columnNames.map {
@@ -201,33 +192,24 @@ private class FileDestinationProvider(private val directory: File) : ContentProv
         return 1
     }
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+        deleteCount++
         names.remove(uri); pending.remove(uri)
         return if (files.remove(uri)?.delete() == true) 1 else 0
     }
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+        openCount++
         if (failOpenWithProcessDeath) throw SimulatedProcessDeath()
         if (failOpen) throw IOException("Injected storage failure")
         if (unsyncableTarget) return ParcelFileDescriptor.open(File("/dev/null"), ParcelFileDescriptor.MODE_READ_WRITE)
         return ParcelFileDescriptor.open(files.getValue(uri), ParcelFileDescriptor.MODE_READ_WRITE or ParcelFileDescriptor.MODE_TRUNCATE)
     }
     override fun call(method: String, arg: String?, extras: android.os.Bundle?): android.os.Bundle {
-        val result = android.os.Bundle()
         when (method) {
-            "android:createDocument" -> {
-                val uri = create("test.documents", extras!!.getString(DocumentsContract.Document.COLUMN_DISPLAY_NAME)!!)
-                if (dieAfterCreate) throw SimulatedProcessDeath()
-                result.putParcelable("uri", uri)
-            }
-            "android:renameDocument" -> {
-                val uri = documentUri(extras!!)
-                onCommit?.invoke()
-                names[uri] = extras.getString(DocumentsContract.Document.COLUMN_DISPLAY_NAME)!!
-                result.putParcelable("uri", uri)
-            }
-            "android:deleteDocument" -> delete(documentUri(extras!!), null, null)
-            else -> throw UnsupportedOperationException()
+            "android:createDocument" -> createCount++
+            "android:renameDocument" -> renameCount++
+            "android:deleteDocument" -> deleteCount++
         }
-        return result
+        throw AssertionError("Unsafe SAF provider must never be contacted")
     }
     fun addExisting(name: String) { create("media", name) }
     private fun create(authority: String, name: String): Uri = (if (authority == "media")
@@ -236,8 +218,4 @@ private class FileDestinationProvider(private val directory: File) : ContentProv
         files[it] = File(directory, it.lastPathSegment!!).apply { createNewFile() }
         names[it] = if (appendTemporaryExtension && name.startsWith("unishare-")) "$name.txt" else name
     }
-
-    @Suppress("DEPRECATION") // Instrumentation also runs on API29–32, before the typed overload exists.
-    private fun documentUri(bundle: android.os.Bundle): Uri = if (android.os.Build.VERSION.SDK_INT >= 33)
-        bundle.getParcelable("uri", Uri::class.java)!! else bundle.getParcelable<Uri>("uri")!!
 }

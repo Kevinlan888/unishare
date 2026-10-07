@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.ParcelFileDescriptor
-import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.AtomicFile
 import java.io.File
@@ -18,7 +17,7 @@ import java.io.IOException
 import java.util.Properties
 import java.util.UUID
 
-/** Bounded copying with durable private recovery intents for both public storage APIs. */
+/** Bounded copying with durable private recovery intents for pending MediaStore Downloads. */
 class AndroidReceivePublisher(
     context: Context,
     private val resolver: ContentResolver = context.contentResolver,
@@ -27,57 +26,42 @@ class AndroidReceivePublisher(
     private val store = StagingStore(context)
 
     override fun publish(staging: PreparedStaging, displayName: String, mimeType: String, destination: ReceiveDestination): Uri = synchronized(lock) {
+        // Generic SAF has neither hidden pending documents nor a provably atomic publication API.
+        // Reject before touching its provider, even when it offers document creation or rename.
+        if (destination is ReceiveDestination.SafTree) {
+            throw IOException("Receive directory cannot guarantee private atomic publication")
+        }
         store.validate(staging)
         val name = safeName(displayName)
         val mime = mimeType.takeIf { it.isNotBlank() && it.none(Char::isISOControl) } ?: "application/octet-stream"
-        val container = when (destination) {
-            ReceiveDestination.Downloads -> {
-                if (Build.VERSION.SDK_INT < 29) throw IOException("Select a receive directory on this Android version")
-                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            }
-            is ReceiveDestination.SafTree -> {
-                if (!DocumentsContract.isTreeUri(destination.uri)) throw IOException("Invalid receive directory")
-                destination.uri
-            }
-        }
-        val finalName = uniqueName(name, destination, container)
+        if (Build.VERSION.SDK_INT < 29) throw IOException("Safe Downloads publication requires Android 10 or later")
+        val container = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val finalName = uniqueName(name, container)
         val token = UUID.randomUUID().toString()
         val temporaryName = "unishare-$token.partial"
         val journal = File(journalDirectory, "$token.properties")
         val record = Properties().apply {
-            setProperty("kind", if (destination == ReceiveDestination.Downloads) "downloads" else "saf")
+            setProperty("kind", "downloads")
             setProperty("container", container.toString())
             setProperty("temporaryName", temporaryName)
         }
         writeJournal(journal, record)
         var target: Uri? = null
         try {
-            target = when (destination) {
-                ReceiveDestination.Downloads -> resolver.insert(container, ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, temporaryName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, downloadsPath)
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                }) ?: throw IOException("Could not prepare receive destination")
-                is ReceiveDestination.SafTree -> DocumentsContract.createDocument(
-                    resolver, DocumentsContract.buildDocumentUriUsingTree(container, DocumentsContract.getTreeDocumentId(container)), mime, temporaryName,
-                ) ?: throw IOException("Could not prepare receive destination")
-            }
+            target = resolver.insert(container, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, temporaryName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, downloadsPath)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }) ?: throw IOException("Could not prepare receive destination")
             record.setProperty("target", target.toString())
             writeJournal(journal, record)
             copyAndSync(staging.file, target)
-            target = when (destination) {
-                ReceiveDestination.Downloads -> {
-                    val updated = resolver.update(target, ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, finalName)
-                        put(MediaStore.MediaColumns.IS_PENDING, 0)
-                    }, null, null)
-                    if (updated != 1) throw IOException("Could not commit receive destination")
-                    target
-                }
-                is ReceiveDestination.SafTree -> DocumentsContract.renameDocument(resolver, target, finalName)
-                    ?: throw IOException("Could not commit receive destination")
-            }
+            val updated = resolver.update(target, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, finalName)
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }, null, null)
+            if (updated != 1) throw IOException("Could not commit receive destination")
             // Only full, synced content can reach this point. No journal is needed for a committed file.
             AtomicFile(journal).delete()
             store.deleteUri(staging.uri)
@@ -89,7 +73,7 @@ class AndroidReceivePublisher(
         }
     }
 
-    /** Failed cleanup keeps its intent for the next startup (e.g. a temporarily unavailable tree). */
+    /** Failed cleanup keeps its intent for the next startup (e.g. unavailable external storage). */
     fun cleanupAfterRestart() = synchronized(lock) {
         journalDirectory.listFiles().orEmpty().filter { it.name.endsWith(".properties") || it.name.endsWith(".properties.bak") }
             .map { File(journalDirectory, it.name.removeSuffix(".bak")) }.distinct().forEach { journal ->
@@ -118,63 +102,34 @@ class AndroidReceivePublisher(
         }
     }
 
-    private fun uniqueName(name: String, destination: ReceiveDestination, container: Uri): String {
+    private fun uniqueName(name: String, container: Uri): String {
         val dot = name.lastIndexOf('.').takeIf { it > 0 } ?: name.length
         val base = name.substring(0, dot)
         val extension = name.substring(dot)
         for (index in 0..10_000) {
             val candidate = if (index == 0) name else "$base ($index)$extension"
-            if (!hasName(candidate, destination, container)) return candidate
+            if (!hasName(candidate, container)) return candidate
         }
         throw IOException("Receive directory has too many name collisions")
     }
 
-    private fun hasName(name: String, destination: ReceiveDestination, container: Uri): Boolean = when (destination) {
-        ReceiveDestination.Downloads -> resolver.query(container, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+    private fun hasName(name: String, container: Uri): Boolean = resolver.query(container, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
             "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?", arrayOf(name, downloadsPath), null)
             ?.use { it.moveToFirst() } ?: throw IOException("Receive directory unavailable")
-        is ReceiveDestination.SafTree -> {
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(container, DocumentsContract.getTreeDocumentId(container))
-            resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
-                var found = false
-                while (cursor.moveToNext()) if (cursor.getString(0) == name) { found = true; break }
-                found
-            } ?: throw IOException("Receive directory unavailable")
-        }
-    }
 
     private fun removeUnfinished(record: Properties, target: Uri?): Boolean {
         return try {
+            // Only pending Downloads are supported; never replay document operations from legacy intents.
+            if (record.getProperty("kind") != "downloads") return false
             val container = Uri.parse(record.getProperty("container") ?: return false)
             val name = record.getProperty("temporaryName") ?: return false
-            when (record.getProperty("kind")) {
-                "downloads" -> {
-                    if (target != null) resolver.delete(target, null, null)
-                    // Intent is written before insert, so this also handles death before insert returns its URI.
-                    queryPending(container, name)
-                        ?.use { cursor ->
-                            while (cursor.moveToNext()) {
-                                if (resolver.delete(ContentUris.withAppendedId(container, cursor.getLong(0)), null, null) != 1) return false
-                            }
-                        } ?: return false
+            if (target != null) resolver.delete(target, null, null)
+            // Intent is written before insert, so this also handles death before insert returns its URI.
+            queryPending(container, name)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    if (resolver.delete(ContentUris.withAppendedId(container, cursor.getLong(0)), null, null) != 1) return false
                 }
-                "saf" -> {
-                    if (target != null) {
-                        try { DocumentsContract.deleteDocument(resolver, target) }
-                        catch (_: java.io.FileNotFoundException) { /* Already deleted. */ }
-                    }
-                    val children = DocumentsContract.buildChildDocumentsUriUsingTree(container, DocumentsContract.getTreeDocumentId(container))
-                    resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
-                        ?.use { cursor ->
-                            // DocumentsProvider may append a MIME extension to the requested temporary name.
-                            while (cursor.moveToNext()) if (cursor.getString(1).startsWith(name)) {
-                                val uri = DocumentsContract.buildDocumentUriUsingTree(container, cursor.getString(0))
-                                if (!DocumentsContract.deleteDocument(resolver, uri)) return false
-                            }
-                        } ?: return false
-                }
-                else -> return false
-            }
+            } ?: return false
             true
         } catch (_: Exception) { false }
     }

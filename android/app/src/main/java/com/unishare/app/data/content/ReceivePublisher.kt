@@ -4,6 +4,7 @@ import android.net.Uri
 
 sealed interface ReceiveDestination {
     data object Downloads : ReceiveDestination
+    /** Generic SAF publication is unsupported: requests fail before any directory side effects. */
     data class SafTree(val uri: Uri) : ReceiveDestination
 }
 

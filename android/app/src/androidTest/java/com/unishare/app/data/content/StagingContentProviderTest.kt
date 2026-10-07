@@ -91,11 +91,11 @@ class StagingContentProviderTest {
     }
 
     @Test @SdkSuppress(maxSdkVersion = 28)
-    fun oldAndroidRequiresSafInsteadOfExposingANonAtomicDownloadsFile() {
+    fun oldAndroidRejectsDownloadsWithoutExposingPrivateSource() {
         val staging = create()
         try {
             AndroidReceivePublisher(context).publish(staging, "report.txt", "text/plain", ReceiveDestination.Downloads)
-            fail("Legacy Android must require a receive directory")
+            fail("Legacy Android must reject non-atomic Downloads publication")
         } catch (_: IOException) { }
         assertTrue(staging.file.exists())
     }
