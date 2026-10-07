@@ -38,9 +38,24 @@ internal sealed class FakeNativeApi : IUniShareNativeApi
 
     public uint AbiVersion() => Version;
     public NativeError ConfigInit(out NativeConfig config)
-    { config = new() { AbiVersion = 1, StructSize = (uint)Marshal.SizeOf<NativeConfig>() }; return default; }
-    public NativeError CreatePlatform(NativeSpan directory, out ulong platform) { platform = 77; return default; }
-    public NativeError ReleasePlatform(ulong platform) { Ownership.Add("platform released"); return default; }
+    {
+        config = new()
+        {
+            AbiVersion = 1,
+            StructSize = (uint)Marshal.SizeOf<NativeConfig>()
+        };
+        return default;
+    }
+    public NativeError CreatePlatform(NativeSpan directory, out ulong platform)
+    {
+        platform = 77;
+        return default;
+    }
+    public NativeError ReleasePlatform(ulong platform)
+    {
+        Ownership.Add("platform released");
+        return default;
+    }
     public NativeError Create(ulong platform, in NativeConfig config, nint callback, nint context, out ulong sdk, out ulong operation)
     {
         Config = config;
@@ -52,7 +67,8 @@ internal sealed class FakeNativeApi : IUniShareNativeApi
     public NativeError Submit(ulong sdk, in NativeSubmission submission, nint callback, nint context, out ulong operation)
     {
         LastCommand = submission.Command;
-        if (submission.Command == NativeCommand.SendText) CopiedText = NativeMapper.Text(submission.Text);
+        if (submission.Command == NativeCommand.SendText)
+            CopiedText = NativeMapper.Text(submission.Text);
         if (submission.Source.Stream != 0 || submission.Stream != 0)
         {
             LastStream = submission.Source.Stream != 0 ? submission.Source.Stream : submission.Stream;
@@ -62,7 +78,8 @@ internal sealed class FakeNativeApi : IUniShareNativeApi
     }
     private NativeError Add(NativeCommand command, nint callback, nint context, out ulong operation)
     {
-        var error = NextError; NextError = default;
+        var error = NextError;
+        NextError = default;
         operation = error.Code != 0 || ZeroOperation ? 0 : (ulong)Interlocked.Increment(ref next);
         ZeroOperation = false;
         if (operation != 0)
@@ -74,28 +91,57 @@ internal sealed class FakeNativeApi : IUniShareNativeApi
         return error;
     }
     public NativeError Destroy(ulong sdk)
-    { DuringDestroy?.Invoke(); DestroyCount++; Calls.Clear(); EventCallback = 0; DiagnosticCallback = 0; return default; }
+    {
+        DuringDestroy?.Invoke();
+        DestroyCount++;
+        Calls.Clear();
+        EventCallback = 0;
+        DiagnosticCallback = 0;
+        return default;
+    }
     public NativeError SetEventHandler(ulong sdk, nint callback, nint context)
     {
-        EventCallback = callback; EventContext = context;
-        if (callback != 0) LastRegistration = (callback, context);
+        EventCallback = callback;
+        EventContext = context;
+        if (callback != 0)
+            LastRegistration = (callback, context);
         return default;
     }
     public NativeError SetDiagnosticHandler(ulong sdk, nint callback, nint context)
     {
-        if (DiagnosticRegistrationException is not null) throw DiagnosticRegistrationException;
-        DiagnosticCallback = callback; DiagnosticContext = context;
+        if (DiagnosticRegistrationException is not null)
+            throw DiagnosticRegistrationException;
+        DiagnosticCallback = callback;
+        DiagnosticContext = context;
         DiagnosticRegistrations.Add((callback, context));
         return default;
     }
     internal void EmitDiagnostic(NativeDiagnosticEvent value) => Invoke(DiagnosticCallback, DiagnosticContext, value);
-    public NativeError GetDevices(ulong sdk, out nint devices) { devices = DeviceRoot; return default; }
-    public NativeError GetTrustedDevices(ulong sdk, out nint devices) { devices = TrustedRoot; return default; }
-    public NativeError Free(nint allocation) { FreeAllocation?.Invoke(allocation); return default; }
+    public NativeError GetDevices(ulong sdk, out nint devices)
+    {
+        devices = DeviceRoot;
+        return default;
+    }
+    public NativeError GetTrustedDevices(ulong sdk, out nint devices)
+    {
+        devices = TrustedRoot;
+        return default;
+    }
+    public NativeError Free(nint allocation)
+    {
+        FreeAllocation?.Invoke(allocation);
+        return default;
+    }
     public NativeError RegisterSource(nint file, out ulong stream)
-    { SourceHandle = file; return Register(file, "source registered", 88, out stream); }
+    {
+        SourceHandle = file;
+        return Register(file, "source registered", 88, out stream);
+    }
     public NativeError RegisterDestination(nint file, out ulong stream)
-    { DestinationHandle = file; return Register(file, "destination registered", 89, out stream); }
+    {
+        DestinationHandle = file;
+        return Register(file, "destination registered", 89, out stream);
+    }
     private NativeError Register(nint file, string label, ulong token, out ulong stream)
     {
         DuringRegistration?.Invoke(file);
@@ -103,12 +149,21 @@ internal sealed class FakeNativeApi : IUniShareNativeApi
         stream = RegistrationError.Code == 0 ? token : 0;
         return RegistrationError;
     }
-    public NativeError ReleaseStream(ulong stream) { Ownership.Add("stream released"); return default; }
+    public NativeError ReleaseStream(ulong stream)
+    {
+        Ownership.Add("stream released");
+        return default;
+    }
     internal void Complete(ulong operation, NativeError error = default, Guid transfer = default, NativeContent content = default)
     {
         var call = Calls[operation];
         Invoke(call.Callback, call.Context, new NativeResult
-        { Operation = operation, Error = error, Transfer = NativeMapper.ToNativeUuid(transfer), Content = content });
+        {
+            Operation = operation,
+            Error = error,
+            Transfer = NativeMapper.ToNativeUuid(transfer),
+            Content = content
+        });
     }
     internal void Emit(NativeEvent value) => Emit(LastRegistration, value);
     internal static void Emit((nint Callback, nint Context) registration, NativeEvent value)

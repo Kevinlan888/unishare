@@ -1,33 +1,47 @@
 using Microsoft.UI.Xaml;
-using Microsoft.Windows.Globalization;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
+using Microsoft.Windows.Globalization;
 using UniShare.App.Services;
 namespace UniShare.App;
+
 public partial class App : Microsoft.UI.Xaml.Application
 {
-    public MainWindow? MainWindow { get; private set; }
+    public MainWindow? MainWindow
+    {
+        get; private set;
+    }
     private AppRuntime? runtime;
     private AppInstance? instance;
     public App()
     {
         UnhandledException += (_, args) => DemoSnapshotService.WriteFailure(args.Exception);
         var args = Environment.GetCommandLineArgs();
-        if (args.Contains("--en-US")) ApplicationLanguages.PrimaryLanguageOverride = "en-US";
-        if (args.Contains("--zh-CN")) ApplicationLanguages.PrimaryLanguageOverride = "zh-CN";
-        try { InitializeComponent(); }
+        if (args.Contains("--en-US"))
+            ApplicationLanguages.PrimaryLanguageOverride = "en-US";
+        if (args.Contains("--zh-CN"))
+            ApplicationLanguages.PrimaryLanguageOverride = "zh-CN";
+        try
+        {
+            InitializeComponent();
+        }
         catch (Exception error) { DemoSnapshotService.WriteFailure(error); throw; }
     }
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         try
         {
-            if (runtime is not null) { await runtime.Lifecycle.ActivateAsync(); return; }
+            if (runtime is not null)
+            {
+                await runtime.Lifecycle.ActivateAsync();
+                return;
+            }
             instance = AppInstance.FindOrRegisterForKey("UniShare.Windows");
             if (!instance.IsCurrent)
             {
                 await instance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs());
-                Exit(); return;
+                Exit();
+                return;
             }
             instance.Activated += OnActivated;
             var model = CompositionRoot.Create(Environment.GetCommandLineArgs());
@@ -47,10 +61,12 @@ public partial class App : Microsoft.UI.Xaml.Application
     {
         MainWindow?.DispatcherQueue.TryEnqueue(async () =>
         {
-            if (runtime is null) return;
+            if (runtime is null)
+                return;
             if (args.Kind == ExtendedActivationKind.AppNotification && args.Data is AppNotificationActivatedEventArgs notification)
                 await runtime.ActivateNotificationAsync(notification.Argument);
-            else if (args.Kind != ExtendedActivationKind.StartupTask) await runtime.Lifecycle.ActivateAsync();
+            else if (args.Kind != ExtendedActivationKind.StartupTask)
+                await runtime.Lifecycle.ActivateAsync();
         });
     }
     public void ChangeLanguage(string? language)

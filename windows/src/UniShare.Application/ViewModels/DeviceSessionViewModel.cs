@@ -25,7 +25,12 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     public DeviceSessionViewModel(DeviceEntry device, DeviceStore devices, TransferCoordinator coordinator,
         ActivityTracker tracker, IShareSdkClient sdk, IViewModelFiles files, IViewModelDispatcher dispatcher) : base(dispatcher)
     {
-        Device = device; this.devices = devices; this.coordinator = coordinator; this.tracker = tracker; this.sdk = sdk; this.files = files;
+        Device = device;
+        this.devices = devices;
+        this.coordinator = coordinator;
+        this.tracker = tracker;
+        this.sdk = sdk;
+        this.files = files;
         connectionAvailable = device.IsConnected;
         var cancellationLane = CreateCommandLane();
         SendTextCommand = Command(async () =>
@@ -49,7 +54,10 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         CancelCommand = Command<ActivityId>(async id =>
         {
             cancellationSubmitted.Add(id);
-            try { await coordinator.CancelAsync(id, CancellationToken.None).ConfigureAwait(false); }
+            try
+            {
+                await coordinator.CancelAsync(id, CancellationToken.None).ConfigureAwait(false);
+            }
             catch
             {
                 await Dispatcher.InvokeAsync(() => cancellationSubmitted.Remove(id)).ConfigureAwait(false);
@@ -73,7 +81,8 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
             await tracker.LoadDeviceAsync(Device.Id).ConfigureAwait(false);
             await Dispatcher.InvokeAsync(Refresh).ConfigureAwait(false);
         }, () => true, "History.LoadFailed");
-        tracker.Changed += OnActivitiesChanged; sdk.EventReceived += OnSdkEvent;
+        tracker.Changed += OnActivitiesChanged;
+        sdk.EventReceived += OnSdkEvent;
         Refresh();
     }
 
@@ -83,11 +92,18 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     public bool CanSend => Device.CanTransfer;
     public bool IdentityChanged => Device.IsBlocked;
     public string? IdentityResourceKey => IdentityChanged ? "Device.IdentityChanged" : null;
-    public IReadOnlyList<ActivityItemViewModel> Activities { get => activities; private set => SetProperty(ref activities, value); }
+    public IReadOnlyList<ActivityItemViewModel> Activities
+    {
+        get => activities; private set => SetProperty(ref activities, value);
+    }
     public string ComposerText
     {
         get => composerText;
-        set { if (SetProperty(ref composerText, value)) SendTextCommand.NotifyCanExecuteChanged(); }
+        set
+        {
+            if (SetProperty(ref composerText, value))
+                SendTextCommand.NotifyCanExecuteChanged();
+        }
     }
     public IAsyncRelayCommand SendTextCommand { get; }
     public IAsyncRelayCommand<string> SendFileCommand { get; }
@@ -115,38 +131,49 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     // always post to the injected dispatcher; no terminal event is applied here.
     public void Refresh()
     {
-        if (disposed) return;
-        if (!CanSend) RevokeSendEligibility();
+        if (disposed)
+            return;
+        if (!CanSend)
+            RevokeSendEligibility();
         else
         {
             lock (eligibilityGate)
             {
                 // Recheck the thread-safe device state inside generation
                 // ownership so an event cannot race an unsafe reset.
-                if (CanSend && sendEligibility.Source.IsCancellationRequested) sendEligibility = new();
+                if (CanSend && sendEligibility.Source.IsCancellationRequested)
+                    sendEligibility = new();
             }
         }
         var snapshot = tracker.GetDeviceSnapshot(Device.Id);
         var current = snapshot.Select(record =>
         {
-            if (!items.TryGetValue(record.Id, out var item)) items.Add(record.Id, item = new(record, files, Dispatcher));
-            else item.Update(record);
+            if (!items.TryGetValue(record.Id, out var item))
+                items.Add(record.Id, item = new(record, files, Dispatcher));
+            else
+                item.Update(record);
             return item;
         }).ToArray();
-        foreach (var id in items.Keys.Except(snapshot.Select(x => x.Id)).ToArray()) items.Remove(id);
+        foreach (var id in items.Keys.Except(snapshot.Select(x => x.Id)).ToArray())
+            items.Remove(id);
         Activities = current;
-        OnPropertyChanged(nameof(DeviceName)); OnPropertyChanged(nameof(CanSend));
-        OnPropertyChanged(nameof(IdentityChanged)); OnPropertyChanged(nameof(IdentityResourceKey)); NotifyCommands();
+        OnPropertyChanged(nameof(DeviceName));
+        OnPropertyChanged(nameof(CanSend));
+        OnPropertyChanged(nameof(IdentityChanged));
+        OnPropertyChanged(nameof(IdentityResourceKey));
+        NotifyCommands();
     }
 
     private void OnActivitiesChanged(object? sender, EventArgs args) => Dispatcher.Post(Refresh);
     private void OnSdkEvent(object? sender, ShareSdkEvent value)
     {
-        if (disposed) return;
+        if (disposed)
+            return;
         if (value is ShareSdkEvent.ConnectionChanged connectionState && connectionState.Device == Device.Id)
         {
             connectionAvailable = connectionState.State == ConnectionState.Connected;
-            if (!connectionAvailable) Interlocked.Increment(ref connectionGeneration);
+            if (!connectionAvailable)
+                Interlocked.Increment(ref connectionGeneration);
         }
         // This is non-binding state: revoke synchronously on the SDK thread.
         // Clipboard/staging continuations do not wait for UI notifications.
@@ -156,7 +183,8 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
             value is ShareSdkEvent.PairingCompleted { Failure.Kind: ShareErrorKind.IdentityChanged } pairing && pairing.Device == Device.Id)
         {
             connectionAvailable = false;
-            if (value is not ShareSdkEvent.ConnectionChanged) Interlocked.Increment(ref connectionGeneration);
+            if (value is not ShareSdkEvent.ConnectionChanged)
+                Interlocked.Increment(ref connectionGeneration);
             RevokeSendEligibility();
         }
         if (value is ShareSdkEvent.DeviceOnline or ShareSdkEvent.DeviceUpdated or ShareSdkEvent.DeviceOffline or
@@ -166,12 +194,14 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
 
     private CancellationToken CaptureEligibilityToken()
     {
-        lock (eligibilityGate) return sendEligibility.Source.Token;
+        lock (eligibilityGate)
+            return sendEligibility.Source.Token;
     }
 
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
     {
-        if (connectionAvailable || Device.IsConnected) return;
+        if (connectionAvailable || Device.IsConnected)
+            return;
         var generation = Volatile.Read(ref connectionGeneration);
         await sdk.ConnectAsync(Device.Id, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
@@ -185,7 +215,8 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         Task cancellation;
         lock (eligibilityGate)
         {
-            if (sendEligibility.Source.IsCancellationRequested) return;
+            if (sendEligibility.Source.IsCancellationRequested)
+                return;
             // CancelAsync marks the token cancelled synchronously, but runs
             // callbacks asynchronously. No callback can invert the dispatcher/
             // generation lock order, and concurrent observers see revocation.
@@ -196,7 +227,10 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
 
     private static async Task ObserveCancellationAsync(Task cancellation)
     {
-        try { await cancellation.ConfigureAwait(false); }
+        try
+        {
+            await cancellation.ConfigureAwait(false);
+        }
         catch { /* Callback failures do not undo synchronous revocation. */ }
     }
 
@@ -210,6 +244,10 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     }
     public void Dispose()
     {
-        if (disposed) return; disposed = true; tracker.Changed -= OnActivitiesChanged; sdk.EventReceived -= OnSdkEvent;
+        if (disposed)
+            return;
+        disposed = true;
+        tracker.Changed -= OnActivitiesChanged;
+        sdk.EventReceived -= OnSdkEvent;
     }
 }

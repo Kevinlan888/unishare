@@ -34,7 +34,12 @@ public sealed class JsonSettingsStoreTests
         using var directory = new TemporaryDirectory();
         var store = new JsonSettingsStore(directory.Path);
         var first = new AppSettings { DeviceName = "first", ReceiveDirectory = "D:\\receive", Theme = ThemePolicy.Dark };
-        var second = first with { DeviceName = "second", Window = new(2, 3, 900, 600, true), StartupEnabled = true };
+        var second = first with
+        {
+            DeviceName = "second",
+            Window = new(2, 3, 900, 600, true),
+            StartupEnabled = true
+        };
         await store.SaveAsync(first, default);
         await store.SaveAsync(second, default);
         Assert.AreEqual(second, await new JsonSettingsStore(directory.Path).LoadAsync(default));
@@ -64,7 +69,10 @@ public sealed class JsonSettingsStoreTests
         var store = new JsonSettingsStore(directory.Path);
         var prior = new AppSettings { DeviceName = "prior", ReceiveDirectory = "D:\\receive" };
         await store.SaveAsync(prior, default);
-        await store.SaveAsync(prior with { DeviceName = "current" }, default);
+        await store.SaveAsync(prior with
+        {
+            DeviceName = "current"
+        }, default);
         await File.WriteAllTextAsync(System.IO.Path.Combine(directory.Path, "settings.json"), "{");
         await File.WriteAllTextAsync(System.IO.Path.Combine(directory.Path, "settings.json.tmp"), "{partial");
         Assert.AreEqual(prior, await store.LoadAsync(default));

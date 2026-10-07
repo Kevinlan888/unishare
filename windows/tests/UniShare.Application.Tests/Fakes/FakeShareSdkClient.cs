@@ -9,11 +9,26 @@ internal sealed class FakeShareSdkClient : IShareSdkClient
     public List<string> Calls { get; } = [];
     public IReadOnlyList<DeviceSnapshot> Devices { get; set; } = [];
     public IReadOnlySet<DeviceId> Trusted { get; set; } = new HashSet<DeviceId>();
-    public Func<Task>? Initializing { get; set; }
-    public Func<Task>? Starting { get; set; }
-    public Func<Task>? Stopping { get; set; }
-    public Func<Task>? Forgetting { get; set; }
-    public SdkOptions? Options { get; private set; }
+    public Func<Task>? Initializing
+    {
+        get; set;
+    }
+    public Func<Task>? Starting
+    {
+        get; set;
+    }
+    public Func<Task>? Stopping
+    {
+        get; set;
+    }
+    public Func<Task>? Forgetting
+    {
+        get; set;
+    }
+    public SdkOptions? Options
+    {
+        get; private set;
+    }
     public void Emit(ShareSdkEvent value) => EventReceived?.Invoke(this, value);
     public Task InitializeAsync(SdkOptions options, CancellationToken cancellationToken)
     {
@@ -31,13 +46,18 @@ internal sealed class FakeShareSdkClient : IShareSdkClient
         Calls.Add("stop");
         return Stopping?.Invoke() ?? Task.CompletedTask;
     }
-    public ValueTask DisposeAsync() { Calls.Add("dispose"); return ValueTask.CompletedTask; }
+    public ValueTask DisposeAsync()
+    {
+        Calls.Add("dispose");
+        return ValueTask.CompletedTask;
+    }
     public IReadOnlyList<DeviceSnapshot> GetDevices() => Devices;
     public IReadOnlySet<DeviceId> GetTrustedDevices() => Trusted;
     public async Task ForgetDeviceAsync(DeviceId device, CancellationToken cancellationToken)
     {
         Calls.Add("forget");
-        if (Forgetting is not null) await Forgetting();
+        if (Forgetting is not null)
+            await Forgetting();
         Trusted = Trusted.Where(id => id != device).ToHashSet();
         Devices = Devices.Select(value => value.Id == device ? value with { IsTrusted = false } : value).ToArray();
     }

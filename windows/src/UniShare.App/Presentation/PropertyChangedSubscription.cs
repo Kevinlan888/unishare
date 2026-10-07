@@ -22,7 +22,8 @@ internal sealed class PropertyChangedSubscription : IDisposable
 
     public void Dispose()
     {
-        if (source is null) return;
+        if (source is null)
+            return;
         source.PropertyChanged -= OnPropertyChanged;
         source = null;
         refresh = null;

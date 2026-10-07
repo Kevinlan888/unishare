@@ -24,6 +24,7 @@ internal sealed class NativeUtf8 : IDisposable
     public void Dispose()
     {
         var pointer = Interlocked.Exchange(ref allocation, 0);
-        if (pointer != 0) Marshal.FreeHGlobal(pointer);
+        if (pointer != 0)
+            Marshal.FreeHGlobal(pointer);
     }
 }

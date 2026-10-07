@@ -23,12 +23,17 @@ public sealed class ActivityTrackerTests
     [TestMethod]
     public async Task IncomingPreviewPublicationIsProcessOnlyAndValidatesKind()
     {
-        var repository = new Repository(); var tracker = Create(repository);
-        var offer = Offer() with { Kind = ContentKind.Text };
+        var repository = new Repository();
+        var tracker = Create(repository);
+        var offer = Offer() with
+        {
+            Kind = ContentKind.Text
+        };
         var record = tracker.AddIncomingOffer(offer);
         var setter = typeof(ActivityTracker).GetMethod("PublishIncomingPreview");
         Assert.IsNotNull(setter, "Incoming preview publication is missing.");
-        var changes = 0; tracker.Changed += (_, _) => { changes++; Assert.IsNotNull(tracker.GetPreview(record.Id)); };
+        var changes = 0;
+        tracker.Changed += (_, _) => { changes++; Assert.IsNotNull(tracker.GetPreview(record.Id)); };
         setter.Invoke(tracker, [record.Id, new ShareContent(ContentKind.Text, "private body", "text/plain", [])]);
         Assert.AreEqual("private body", tracker.GetPreview(record.Id)!.Text);
         Assert.AreEqual(1, changes);
@@ -50,9 +55,11 @@ public sealed class ActivityTrackerTests
     [TestMethod]
     public async Task OutgoingReservationHoldsDrainCommitsAfterBlockAndRejectsDoubleCommit()
     {
-        var tracker = Create(); dynamic reservation = Reserve(tracker);
+        var tracker = Create();
+        dynamic reservation = Reserve(tracker);
         Assert.IsTrue(tracker.HasActiveTransfers);
-        var idle = tracker.WaitForIdleAsync(default); Assert.IsFalse(idle.IsCompleted);
+        var idle = tracker.WaitForIdleAsync(default);
+        Assert.IsFalse(idle.IsCompleted);
         tracker.BlockNewTransfers();
         Assert.Throws<InvalidOperationException>(() => Begin(tracker));
         tracker.BindTransfer(new OperationId(12), Transfer);
@@ -69,9 +76,12 @@ public sealed class ActivityTrackerTests
     [TestMethod]
     public async Task AbortedReservationReleasesDrainOnceAndCannotCommit()
     {
-        var tracker = Create(); dynamic reservation = Reserve(tracker);
+        var tracker = Create();
+        dynamic reservation = Reserve(tracker);
         var idle = tracker.WaitForIdleAsync(default);
-        tracker.BlockNewTransfers(); reservation.Dispose(); reservation.Dispose();
+        tracker.BlockNewTransfers();
+        reservation.Dispose();
+        reservation.Dispose();
         await idle.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.AreEqual(0, tracker.GetDeviceSnapshot(Device).Count);
         Assert.Throws<InvalidOperationException>(() => reservation.Commit(Device, new OperationId(1), ContentKind.Text, "Text", "text/plain", 3UL, ShareOrigin.Direct, null, null));
@@ -81,12 +91,21 @@ public sealed class ActivityTrackerTests
     [TestMethod]
     public async Task IncomingPreviewSurvivesProvisionalIdentityReconciliation()
     {
-        var repository = new Repository(); var original = Create(repository); var offer = Offer() with { Kind = ContentKind.Text };
-        var durable = original.AddIncomingOffer(offer); original.Complete(durable.Id, new(Transfer, null)); await original.SavePendingAsync();
+        var repository = new Repository();
+        var original = Create(repository);
+        var offer = Offer() with
+        {
+            Kind = ContentKind.Text
+        };
+        var durable = original.AddIncomingOffer(offer);
+        original.Complete(durable.Id, new(Transfer, null));
+        await original.SavePendingAsync();
         repository.Loading = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        var replay = Create(repository); var provisional = replay.AddIncomingOffer(offer);
+        var replay = Create(repository);
+        var provisional = replay.AddIncomingOffer(offer);
         replay.PublishIncomingPreview(provisional.Id, new(ContentKind.Text, "process body", "text/plain", []));
-        repository.Loading.SetResult(new[] { repository.Records[durable.Id] }); await replay.LoadDeviceAsync(Device);
+        repository.Loading.SetResult(new[] { repository.Records[durable.Id] });
+        await replay.LoadDeviceAsync(Device);
         Assert.AreEqual("process body", replay.GetPreview(durable.Id)?.Text);
         Assert.AreEqual("process body", replay.GetPreview(provisional.Id)?.Text);
     }
@@ -94,20 +113,36 @@ public sealed class ActivityTrackerTests
     [TestMethod]
     public async Task ThrowingChangedSubscriberCannotInterruptReservationCommitOrOtherObservers()
     {
-        var repository = new Repository(); var tracker = Create(repository); var observed = 0; var notificationsOutsideGate = true;
+        var repository = new Repository();
+        var tracker = Create(repository);
+        var observed = 0;
+        var notificationsOutsideGate = true;
         tracker.Changed += (_, _) => throw new IOException("private observer payload");
         tracker.Changed += (_, _) =>
         {
             observed++;
             notificationsOutsideGate &= Task.Run(() => tracker.GetDeviceSnapshot(Device)).Wait(TimeSpan.FromSeconds(1));
         };
-        using var reservation = tracker.ReserveOutgoing(); Exception? commitError = null;
-        try { reservation.Commit(Device, new(1), ContentKind.Text, "Text", "text/plain", 4); } catch (Exception error) { commitError = error; }
-        var record = tracker.GetDeviceSnapshot(Device).Single(); Exception? completionError = null;
-        try { tracker.Complete(record.Id, new(null, null)); } catch (Exception error) { completionError = error; }
-        Assert.IsNull(commitError); Assert.IsNull(completionError);
-        Assert.AreEqual(2, observed); Assert.IsTrue(notificationsOutsideGate);
-        await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5)); await tracker.SavePendingAsync();
+        using var reservation = tracker.ReserveOutgoing();
+        Exception? commitError = null;
+        try
+        {
+            reservation.Commit(Device, new(1), ContentKind.Text, "Text", "text/plain", 4);
+        }
+        catch (Exception error) { commitError = error; }
+        var record = tracker.GetDeviceSnapshot(Device).Single();
+        Exception? completionError = null;
+        try
+        {
+            tracker.Complete(record.Id, new(null, null));
+        }
+        catch (Exception error) { completionError = error; }
+        Assert.IsNull(commitError);
+        Assert.IsNull(completionError);
+        Assert.AreEqual(2, observed);
+        Assert.IsTrue(notificationsOutsideGate);
+        await tracker.WaitForIdleAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+        await tracker.SavePendingAsync();
         Assert.AreEqual(ActivityStatus.Completed, repository.Records[record.Id].Status);
     }
 
@@ -768,7 +803,10 @@ public sealed class ActivityTrackerTests
         Assert.AreEqual(3, changes);
     }
 
-    private sealed class Clock : IClock { public DateTimeOffset UtcNow { get; set; } = Now; }
+    private sealed class Clock : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = Now;
+    }
 
     // The real repository boundary is external storage; this in-memory double
     // preserves upsert/load semantics and exposes write ordering and payloads.
@@ -777,11 +815,26 @@ public sealed class ActivityTrackerTests
         public Dictionary<ActivityId, ActivityRecord> Records { get; } = [];
         public List<ActivityRecord> Writes { get; } = [];
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource? Release { get; set; }
-        public TaskCompletionSource<IReadOnlyList<ActivityRecord>>? Loading { get; set; }
-        public bool FailFirstWrite { get; set; }
-        public int LoadCalls { get; private set; }
-        public int MaxConcurrentWrites { get; private set; }
+        public TaskCompletionSource? Release
+        {
+            get; set;
+        }
+        public TaskCompletionSource<IReadOnlyList<ActivityRecord>>? Loading
+        {
+            get; set;
+        }
+        public bool FailFirstWrite
+        {
+            get; set;
+        }
+        public int LoadCalls
+        {
+            get; private set;
+        }
+        public int MaxConcurrentWrites
+        {
+            get; private set;
+        }
         private int concurrentWrites;
         private int writeAttempts;
         public async Task UpsertAsync(ActivityRecord record, CancellationToken cancellationToken)
@@ -791,8 +844,10 @@ public sealed class ActivityTrackerTests
             try
             {
                 Entered.TrySetResult();
-                if (Release is { } release) await release.Task;
-                if (Interlocked.Increment(ref writeAttempts) == 1 && FailFirstWrite) throw new IOException("storage unavailable");
+                if (Release is { } release)
+                    await release.Task;
+                if (Interlocked.Increment(ref writeAttempts) == 1 && FailFirstWrite)
+                    throw new IOException("storage unavailable");
                 Writes.Add(record);
                 Records[record.Id] = record;
             }

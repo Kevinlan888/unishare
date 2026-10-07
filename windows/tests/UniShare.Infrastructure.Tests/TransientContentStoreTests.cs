@@ -18,11 +18,16 @@ public sealed class TransientContentStoreTests
         var root = Directory.CreateTempSubdirectory("unishare-transient-tests-").FullName;
         try
         {
-            var store = Store(root); var first = await store.CreateTextDestinationAsync(default); var second = await store.CreateTextDestinationAsync(default);
-            Assert.AreNotEqual(first.Path, second.Path); Assert.AreEqual(0L, new FileInfo(first.Path).Length);
+            var store = Store(root);
+            var first = await store.CreateTextDestinationAsync(default);
+            var second = await store.CreateTextDestinationAsync(default);
+            Assert.AreNotEqual(first.Path, second.Path);
+            Assert.AreEqual(0L, new FileInfo(first.Path).Length);
             await using (var stream = new FileStream(first.Path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
                 await stream.WriteAsync(System.Text.Encoding.UTF8.GetBytes("private text"));
-            await first.DisposeAsync(); await first.DisposeAsync(); await second.DisposeAsync();
+            await first.DisposeAsync();
+            await first.DisposeAsync();
+            await second.DisposeAsync();
             Assert.AreEqual(0, Directory.GetFiles(root).Length);
         }
         finally { Directory.Delete(root, true); }
@@ -33,10 +38,14 @@ public sealed class TransientContentStoreTests
         var root = Directory.CreateTempSubdirectory("unishare-transient-tests-").FullName;
         try
         {
-            var store = Store(root); await using var source = await store.StageClipboardImageAsync(new byte[] { 1, 2, 3 }, "image/png", default);
+            var store = Store(root);
+            await using var source = await store.StageClipboardImageAsync(new byte[] { 1, 2, 3 }, "image/png", default);
             CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, await File.ReadAllBytesAsync(source.Path));
-            Assert.AreEqual(3UL, source.Source.ByteCount); Assert.AreEqual("image/png", source.Source.MimeType);
-            await source.DisposeAsync(); await source.DisposeAsync(); Assert.IsFalse(File.Exists(source.Path));
+            Assert.AreEqual(3UL, source.Source.ByteCount);
+            Assert.AreEqual("image/png", source.Source.MimeType);
+            await source.DisposeAsync();
+            await source.DisposeAsync();
+            Assert.IsFalse(File.Exists(source.Path));
         }
         finally { Directory.Delete(root, true); }
     }

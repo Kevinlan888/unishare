@@ -1,5 +1,6 @@
-using Microsoft.UI.Dispatching;
 using System.Globalization;
+using Microsoft.UI.Dispatching;
+using UniShare.App.Presentation;
 using UniShare.Application.Abstractions;
 using UniShare.Application.Models;
 using UniShare.Application.Services;
@@ -8,7 +9,6 @@ using UniShare.Infrastructure.Files;
 using UniShare.Infrastructure.Logging;
 using UniShare.Infrastructure.Storage;
 using UniShare.Native;
-using UniShare.App.Presentation;
 
 namespace UniShare.App.Services;
 
@@ -39,7 +39,10 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
 
     public AppRuntime(MainWindow window, ShellProjection model, Action exit)
     {
-        this.window = window; this.model = model; dispatcher = window.DispatcherQueue; bindingDispatcher = new(dispatcher);
+        this.window = window;
+        this.model = model;
+        dispatcher = window.DispatcherQueue;
+        bindingDispatcher = new(dispatcher);
         SettingsViewModel? preferences = null;
         Preferences = preferences = new(settingsStore, new WindowsViewModelFiles(() => preferences?.Settings.ReceiveDirectory), bindingDispatcher, new());
         sdk = model.IsDemo ? new DemoSdkClient() : new NativeShareSdkClient(Path.Combine(
@@ -57,7 +60,8 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         AppLifecycleCoordinator? lifecycle = null;
         tray = new(new Win32TrayPlatform(), Strings.Get, command =>
         {
-            if (lifecycle is null) return;
+            if (lifecycle is null)
+                return;
             _ = command switch
             {
                 TrayCommand.Open => lifecycle.ActivateAsync(),
@@ -89,21 +93,26 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
             }
             stage = DiagnosticStage.SdkInitialize;
             TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Began);
-            await Session.InitializeAsync(new() { DeviceName = Preferences.Settings.DeviceName });
+            await Session.InitializeAsync(new()
+            {
+                DeviceName = Preferences.Settings.DeviceName
+            });
             TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Succeeded);
             stage = DiagnosticStage.SdkStart;
             TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Began);
             await Session.StartAsync();
             TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Succeeded);
             stage = DiagnosticStage.StartupTask;
-            if (Preferences.Settings.StartupEnabled && Startup.Available) await Startup.SetEnabledAsync(true);
+            if (Preferences.Settings.StartupEnabled && Startup.Available)
+                await Startup.SetEnabledAsync(true);
             projection.Refresh();
         }
         catch (Exception error)
         {
             TryLog(DiagnosticComponent.App, stage, DiagnosticOutcome.Failed,
                 (error as NativeShareSdkException)?.Failure, error is NativeShareSdkException ? null : error);
-            model.Notice = Strings.Get("Notification.SdkFailure"); bridge.NotifySdkFailure();
+            model.Notice = Strings.Get("Notification.SdkFailure");
+            bridge.NotifySdkFailure();
         }
         finally { ready.TrySetResult(); }
     }
@@ -111,13 +120,19 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     private void TryLog(DiagnosticComponent component, DiagnosticStage stage, DiagnosticOutcome outcome,
         ShareFailure? failure = null, Exception? error = null)
     {
-        try { diagnostics.WriteEvent(component, stage, outcome, failure, error); }
+        try
+        {
+            diagnostics.WriteEvent(component, stage, outcome, failure, error);
+        }
         catch { /* A diagnostics failure must not prevent sharing. */ }
     }
     public async Task ActivateNotificationAsync(string arguments)
     {
         await ready.Task;
-        try { await bridge.ActivateAsync(arguments); }
+        try
+        {
+            await bridge.ActivateAsync(arguments);
+        }
         catch { model.Notice = Strings.Get("Transfer.RejectFailed"); }
     }
     public async Task<SettingsSaveResult> SetStartupAsync(bool enabled)
@@ -130,31 +145,38 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         ArgumentNullException.ThrowIfNull(update);
         var candidate = update(Preferences.Settings);
         Preferences.Settings = candidate;
-        if (model.IsDemo) return new(true, null);
+        if (model.IsDemo)
+            return new(true, null);
         var result = await Preferences.AutosaveAsync(candidate, CancellationToken.None);
-        if (!result.Saved && result.ErrorResourceKey is { } key) model.Notice = Strings.Get(key);
+        if (!result.Saved && result.ErrorResourceKey is { } key)
+            model.Notice = Strings.Get(key);
         return result;
     }
     public void ApplyLanguage(LanguagePolicy language)
     {
         ((App)Microsoft.UI.Xaml.Application.Current).ChangeLanguage(
             LanguagePolicyResolver.Resolve(language, CultureInfo.CurrentUICulture.Name));
-        tray.RefreshText(); projection.Refresh();
+        tray.RefreshText();
+        projection.Refresh();
     }
     private void Dispatch(Action action)
     {
         // Always queue, including on the UI thread, so cleanup and Exit retain
         // FIFO order and notification actions never reenter a native callback.
-        if (!dispatcher.TryEnqueue(() => { action(); model.NotifyRuntimeState(); })) throw new InvalidOperationException("Application dispatcher is unavailable.");
+        if (!dispatcher.TryEnqueue(() => { action(); model.NotifyRuntimeState(); }))
+            throw new InvalidOperationException("Application dispatcher is unavailable.");
     }
     private void OnSdkEvent(object? sender, ShareSdkEvent value)
     {
-        if (!RuntimeProjectionAdapter.RequiresSdkRefresh(value)) return;
+        if (!RuntimeProjectionAdapter.RequiresSdkRefresh(value))
+            return;
         Dispatch(() =>
         {
             projection.Refresh();
-            if (value is ShareSdkEvent.PairingCompleted { Failure: null } completed) SelectDevice(completed.Device);
-            if (value is ShareSdkEvent.PairingCompleted { Failure: not null }) model.Notice = Strings.Get("Pairing.ConfirmFailed");
+            if (value is ShareSdkEvent.PairingCompleted { Failure: null } completed)
+                SelectDevice(completed.Device);
+            if (value is ShareSdkEvent.PairingCompleted { Failure: not null })
+                model.Notice = Strings.Get("Pairing.ConfirmFailed");
         });
     }
     DeviceId? IRuntimeProjection.SelectedDeviceId => model.SelectedDevice?.Id;
@@ -162,43 +184,57 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     void IRuntimeProjection.RenderActivities(DeviceId device) => RenderActivities(device);
     private void RefreshDevices()
     {
-        if (disposed || model.IsDemo) return;
+        if (disposed || model.IsDemo)
+            return;
         var selected = model.SelectedDevice?.Id;
-        model.Recent.Clear(); model.Nearby.Clear();
+        model.Recent.Clear();
+        model.Nearby.Clear();
         foreach (var device in Session.Devices.Devices)
         {
             var projection = new DeviceProjection(device.Name, device.Snapshot?.Platform == DevicePlatform.Windows ? "\uE7F4" : "\uE8EA",
                 Strings.Get(device.IsOnline ? "Online" : "Offline"), "", device.IsTrusted, device.IsOnline, device.Snapshot?.Platform.ToString() ?? "")
-                { Id = device.Id, Blocked = device.IsBlocked };
+            {
+                Id = device.Id,
+                Blocked = device.IsBlocked
+            };
             (device.IsTrusted ? model.Recent : model.Nearby).Add(projection);
         }
         if (selected is { } id)
         {
             model.SelectedDevice = model.Recent.Concat(model.Nearby).FirstOrDefault(value => value.Id == id);
-            if (model.SelectedDevice?.Blocked == true) model.Notice = Strings.Get("IdentityWarning");
+            if (model.SelectedDevice?.Blocked == true)
+                model.Notice = Strings.Get("IdentityWarning");
         }
-        else if (model.SelectedDevice is not null) model.SelectedDevice = null;
-        if (Session.State == SessionState.Running && model.Notice == Strings.Get("Loading")) model.Notice = null;
+        else if (model.SelectedDevice is not null)
+            model.SelectedDevice = null;
+        if (Session.State == SessionState.Running && model.Notice == Strings.Get("Loading"))
+            model.Notice = null;
     }
     public void SelectDevice(DeviceId device)
     {
-        if (disposed) return;
+        if (disposed)
+            return;
         var entry = Session.Devices.Devices.FirstOrDefault(value => value.Id == device && !value.IsBlocked);
-        if (entry is null) return;
+        if (entry is null)
+            return;
         Session.Devices.SelectedDevice = entry;
         var projection = model.Recent.Concat(model.Nearby).FirstOrDefault(value => value.Id == device);
-        if (projection is null) return;
+        if (projection is null)
+            return;
         model.SelectedDevice = projection;
         RenderActivities(device);
         _ = tracker.LoadDeviceAsync(device);
     }
     public void SelectionChanged(DeviceProjection? device)
     {
-        if (model.IsDemo || device?.Id is not { } id) return;
+        if (model.IsDemo || device?.Id is not { } id)
+            return;
         var entry = Session.Devices.Devices.FirstOrDefault(value => value.Id == id);
-        if (entry is null) return;
+        if (entry is null)
+            return;
         Session.Devices.SelectedDevice = entry;
-        RenderActivities(id); _ = tracker.LoadDeviceAsync(id);
+        RenderActivities(id);
+        _ = tracker.LoadDeviceAsync(id);
     }
     private void RenderActivities(DeviceId device)
     {
@@ -207,25 +243,36 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         var records = tracker.GetDeviceSnapshot(device);
         foreach (var record in records)
             model.Activities.Add(new(record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
-                tracker.GetPreview(record.Id)?.Text ?? "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin) { Id = record.Id });
+                tracker.GetPreview(record.Id)?.Text ?? "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin)
+            {
+                Id = record.Id
+            });
         foreach (var record in RecentFileActivities.Select(records))
             model.SharedFiles.Add(new(record.Kind, record.Direction, record.DisplayName,
-                "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin) { Id = record.Id });
+                "", record.ByteCount.ToString(), record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin)
+            {
+                Id = record.Id
+            });
     }
     private DeviceSessionViewModel? CurrentSession()
     {
-        if (model.SelectedDevice?.Id is not { } id) return null;
-        if (sessionModels.TryGetValue(id, out var existing)) return existing;
+        if (model.SelectedDevice?.Id is not { } id)
+            return null;
+        if (sessionModels.TryGetValue(id, out var existing))
+            return existing;
         var device = Session.Devices.Devices.FirstOrDefault(value => value.Id == id);
-        if (device is null) return null;
+        if (device is null)
+            return null;
         var created = new DeviceSessionViewModel(device, Session.Devices, transfers, tracker, sdk, new WindowsViewModelFiles(() => Preferences.Settings.ReceiveDirectory), bindingDispatcher);
-        sessionModels.Add(id, created); return created;
+        sessionModels.Add(id, created);
+        return created;
     }
     public Task SendTextAsync(string text) => RunAsync(async vm =>
     {
         vm.ComposerText = text;
         await vm.SendTextCommand.ExecuteAsync(null);
-        if (vm.ErrorResourceKey is null && model.ComposerText == text) model.ComposerText = vm.ComposerText;
+        if (vm.ErrorResourceKey is null && model.ComposerText == text)
+            model.ComposerText = vm.ComposerText;
     });
     public Task SendClipboardAsync() => RunAsync(vm => vm.SendClipboardCommand.ExecuteAsync(null));
     public Task SendFileAsync(string path, ContentKind kind) => RunAsync(vm => (kind == ContentKind.Image ? vm.SendImageCommand : vm.SendFileCommand).ExecuteAsync(path));
@@ -233,7 +280,8 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     public Task ForgetAsync() => RunAsync(vm => vm.ForgetCommand.ExecuteAsync(null), requireRunning: false);
     public async Task DecideAsync(ActivityProjection activity, ActivityStatus result)
     {
-        if (activity.Id is not { } id) return;
+        if (activity.Id is not { } id)
+            return;
         await RunAsync(vm => result switch
         {
             ActivityStatus.Transferring => vm.AcceptCommand.ExecuteAsync(id),
@@ -244,38 +292,67 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     }
     public async Task RetryAsync(ActivityProjection activity)
     {
-        if (activity.Id is not { } id) return;
+        if (activity.Id is not { } id)
+            return;
         await RunAsync(vm => vm.RetryCommand.ExecuteAsync(id));
     }
     private async Task RunAsync(Func<DeviceSessionViewModel, Task> work, bool requireRunning = true)
     {
-        if (requireRunning && Session.State != SessionState.Running || disposed) return;
-        var vm = CurrentSession(); if (vm is null) return;
+        if (requireRunning && Session.State != SessionState.Running || disposed)
+            return;
+        var vm = CurrentSession();
+        if (vm is null)
+            return;
         await work(vm);
-        if (vm.ErrorResourceKey is { } key) model.Notice = Strings.Get(key);
+        if (vm.ErrorResourceKey is { } key)
+            model.Notice = Strings.Get(key);
         projection.Refresh();
     }
     public void Dispose()
     {
-        if (disposed) return; disposed = true;
-        projection.Dispose(); sdk.EventReceived -= OnSdkEvent;
-        foreach (var vm in sessionModels.Values) vm.Dispose(); sessionModels.Clear();
-        bridge.Dispose(); Pairing.Dispose(); notifications.Dispose(); model.Runtime = null;
+        if (disposed)
+            return;
+        disposed = true;
+        projection.Dispose();
+        sdk.EventReceived -= OnSdkEvent;
+        foreach (var vm in sessionModels.Values)
+            vm.Dispose();
+        sessionModels.Clear();
+        bridge.Dispose();
+        Pairing.Dispose();
+        notifications.Dispose();
+        model.Runtime = null;
     }
-    private sealed class SystemClock : IClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
+    private sealed class SystemClock : IClock
+    {
+        public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
+    }
     private sealed class CompositeShutdown(params IAppShutdown[] components) : IAppShutdown
     {
-        public void BlockNewWork() { foreach (var component in components) component.BlockNewWork(); }
+        public void BlockNewWork()
+        {
+            foreach (var component in components)
+                component.BlockNewWork();
+        }
         public Task RetireAsync() => Task.WhenAll(components.Select(component => component.RetireAsync()));
     }
     private sealed class DispatcherAdapter(DispatcherQueue queue) : IViewModelDispatcher
     {
-        public void Post(Action action) { if (!queue.TryEnqueue(action.Invoke)) throw new InvalidOperationException(); }
+        public void Post(Action action)
+        {
+            if (!queue.TryEnqueue(action.Invoke))
+                throw new InvalidOperationException();
+        }
         public Task InvokeAsync(Action action)
         {
-            if (queue.HasThreadAccess) { action(); return Task.CompletedTask; }
+            if (queue.HasThreadAccess)
+            {
+                action();
+                return Task.CompletedTask;
+            }
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (!queue.TryEnqueue(() => { try { action(); completion.SetResult(); } catch (Exception error) { completion.SetException(error); } })) completion.SetException(new InvalidOperationException());
+            if (!queue.TryEnqueue(() => { try { action(); completion.SetResult(); } catch (Exception error) { completion.SetException(error); } }))
+                completion.SetException(new InvalidOperationException());
             return completion.Task;
         }
     }

@@ -3,11 +3,20 @@ using System.Runtime.InteropServices;
 namespace UniShare.Native.Interop;
 
 [StructLayout(LayoutKind.Sequential)]
-internal unsafe struct NativeUuid { internal fixed byte Bytes[16]; }
+internal unsafe struct NativeUuid
+{
+    internal fixed byte Bytes[16];
+}
 [StructLayout(LayoutKind.Sequential)]
-internal struct NativeSpan { internal nint Data; internal ulong Length; }
+internal struct NativeSpan
+{
+    internal nint Data; internal ulong Length;
+}
 [StructLayout(LayoutKind.Sequential)]
-internal struct NativeError { internal uint Code; internal uint HasPlatformError; internal long PlatformError; }
+internal struct NativeError
+{
+    internal uint Code; internal uint HasPlatformError; internal long PlatformError;
+}
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeDiagnosticEvent
 {
@@ -16,7 +25,10 @@ internal struct NativeDiagnosticEvent
     internal NativeError Error;
 }
 [StructLayout(LayoutKind.Sequential)]
-internal struct NativeContent { internal uint Type; internal NativeSpan Text; internal NativeSpan MimeType; internal NativeSpan Image; }
+internal struct NativeContent
+{
+    internal uint Type; internal NativeSpan Text; internal NativeSpan MimeType; internal NativeSpan Image;
+}
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeConfig
 {
@@ -38,13 +50,25 @@ internal struct NativeDevice
     internal ulong AddressCount;
 }
 [StructLayout(LayoutKind.Sequential)]
-internal struct NativeDevices { internal nint Items; internal ulong Count; }
+internal struct NativeDevices
+{
+    internal nint Items; internal ulong Count;
+}
 [StructLayout(LayoutKind.Sequential)]
-internal unsafe struct NativeTrustedDevice { internal NativeUuid Id; internal fixed byte PublicKeyFingerprint[32]; }
+internal unsafe struct NativeTrustedDevice
+{
+    internal NativeUuid Id; internal fixed byte PublicKeyFingerprint[32];
+}
 [StructLayout(LayoutKind.Sequential)]
-internal struct NativeTrustedDevices { internal nint Items; internal ulong Count; }
+internal struct NativeTrustedDevices
+{
+    internal nint Items; internal ulong Count;
+}
 [StructLayout(LayoutKind.Sequential)]
-internal struct NativeResult { internal ulong Operation; internal NativeError Error; internal NativeUuid Transfer; internal NativeContent Content; }
+internal struct NativeResult
+{
+    internal ulong Operation; internal NativeError Error; internal NativeUuid Transfer; internal NativeContent Content;
+}
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeEvent
 {
@@ -59,4 +83,7 @@ internal struct NativeEvent
     internal ulong ByteCount, Transferred;
 }
 [StructLayout(LayoutKind.Sequential)]
-internal struct NativeSource { internal ulong Stream; internal NativeSpan DisplayName, MimeType; internal ulong ByteCount; }
+internal struct NativeSource
+{
+    internal ulong Stream; internal NativeSpan DisplayName, MimeType; internal ulong ByteCount;
+}

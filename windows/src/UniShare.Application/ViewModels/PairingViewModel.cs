@@ -22,8 +22,11 @@ public sealed class PairingViewModel : CommandViewModel, IDisposable
         get => Volatile.Read(ref pendingRequest);
         private set
         {
-            if (ReferenceEquals(PendingRequest, value)) return;
-            Volatile.Write(ref pendingRequest, value); OnPropertyChanged(); NotifyCommands();
+            if (ReferenceEquals(PendingRequest, value))
+                return;
+            Volatile.Write(ref pendingRequest, value);
+            OnPropertyChanged();
+            NotifyCommands();
         }
     }
     public IAsyncRelayCommand ConfirmMatchesCommand { get; }
@@ -31,15 +34,26 @@ public sealed class PairingViewModel : CommandViewModel, IDisposable
     private bool IsCurrent(ShareSdkEvent.PairingRequested? request) => request is not null && ReferenceEquals(PendingRequest, request);
     private async Task CompleteAsync(ShareSdkEvent.PairingRequested request, bool matches)
     {
-        if (matches) await sdk.ConfirmPairingAsync(request.Request, true, CancellationToken.None).ConfigureAwait(false);
-        else await sdk.RejectPairingAsync(request.Request, CancellationToken.None).ConfigureAwait(false);
+        if (matches)
+            await sdk.ConfirmPairingAsync(request.Request, true, CancellationToken.None).ConfigureAwait(false);
+        else
+            await sdk.RejectPairingAsync(request.Request, CancellationToken.None).ConfigureAwait(false);
         await Dispatcher.InvokeAsync(() => { if (ReferenceEquals(PendingRequest, request)) PendingRequest = null; }).ConfigureAwait(false);
     }
     private void OnEvent(object? sender, ShareSdkEvent value) => Dispatcher.Post(() =>
     {
-        if (disposed) return;
-        if (value is ShareSdkEvent.PairingRequested requested) PendingRequest = requested;
-        else if (value is ShareSdkEvent.PairingCompleted completed && PendingRequest?.Request == completed.Request) PendingRequest = null;
+        if (disposed)
+            return;
+        if (value is ShareSdkEvent.PairingRequested requested)
+            PendingRequest = requested;
+        else if (value is ShareSdkEvent.PairingCompleted completed && PendingRequest?.Request == completed.Request)
+            PendingRequest = null;
     });
-    public void Dispose() { if (disposed) return; disposed = true; sdk.EventReceived -= OnEvent; }
+    public void Dispose()
+    {
+        if (disposed)
+            return;
+        disposed = true;
+        sdk.EventReceived -= OnEvent;
+    }
 }

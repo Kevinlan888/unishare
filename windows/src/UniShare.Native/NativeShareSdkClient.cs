@@ -15,7 +15,10 @@ public sealed class NativeShareSdkException(ShareFailure failure) : Exception(fa
 
 public sealed class NativeShareSdkClient : IShareSdkClient
 {
-    private enum ClientState { New, Initialized, Running, Stopped, Disposed }
+    private enum ClientState
+    {
+        New, Initialized, Running, Stopped, Disposed
+    }
     private sealed record EventContext(NativeShareSdkClient Client, long Generation);
     private sealed class ApiHandle(ulong token, Func<ulong, NativeError> release) : SafeNativeHandle(token)
     {
@@ -63,7 +66,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         this.nativeDiagnostic = nativeDiagnostic;
         this.transferDiagnostic = transferDiagnostic;
         diagnosticEvents = Channel.CreateBounded<(DiagnosticRecord?, TransferDiagnosticRecord?)>(new BoundedChannelOptions(diagnosticQueueCapacity)
-        { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait });
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
         _ = Task.Run(DrainCallbacksAsync);
         _ = Task.Run(DrainEventsAsync);
         _ = Task.Run(DrainDiagnosticsAsync);
@@ -95,17 +102,24 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 using var name = new NativeUtf8(options.DeviceName);
                 using var directory = new NativeUtf8(identityDirectory);
                 config.DeviceName = name.Span;
-                config.MaxConnections = options.MaxConnections; config.MaxPendingRequests = options.MaxPendingRequests;
-                config.MaxBufferBytes = options.MaxBufferBytes; config.MaxTextBytes = options.MaxTextBytes;
-                config.MaxImageBytes = options.MaxImageBytes; config.MaxFileBytes = options.MaxFileBytes;
-                config.ControlFrameBytes = options.ControlFrameBytes; config.DataChunkBytes = options.DataChunkBytes;
-                config.RequestTimeoutSeconds = options.RequestTimeoutSeconds; config.OfflineDebounceSeconds = options.OfflineDebounceSeconds;
+                config.MaxConnections = options.MaxConnections;
+                config.MaxPendingRequests = options.MaxPendingRequests;
+                config.MaxBufferBytes = options.MaxBufferBytes;
+                config.MaxTextBytes = options.MaxTextBytes;
+                config.MaxImageBytes = options.MaxImageBytes;
+                config.MaxFileBytes = options.MaxFileBytes;
+                config.ControlFrameBytes = options.ControlFrameBytes;
+                config.DataChunkBytes = options.DataChunkBytes;
+                config.RequestTimeoutSeconds = options.RequestTimeoutSeconds;
+                config.OfflineDebounceSeconds = options.OfflineDebounceSeconds;
                 Throw(api.CreatePlatform(directory.Span, out var platformToken));
-                if (platformToken == 0) throw InvalidSubmission();
+                if (platformToken == 0)
+                    throw InvalidSubmission();
                 using var platform = new ApiHandle(platformToken, api.ReleasePlatform);
                 callbackRoot = GCHandle.Alloc(this);
                 var error = api.Create(platform.Token, config, CompletionPointer, GCHandle.ToIntPtr(callbackRoot), out var sdkToken, out var operation);
-                if (sdkToken != 0) sdk = new ApiHandle(sdkToken, api.Destroy);
+                if (sdkToken != 0)
+                    sdk = new ApiHandle(sdkToken, api.Destroy);
                 if (error.Code != 0 || operation == 0 || sdkToken == 0)
                 {
                     DestroySdk();
@@ -118,13 +132,21 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             }
             var result = await completion.ConfigureAwait(false);
             Throw(result.Terminal.Failure);
-            lock (submissionGate) { RequireState(ClientState.New); state = ClientState.Initialized; }
+            lock (submissionGate)
+            {
+                RequireState(ClientState.New);
+                state = ClientState.Initialized;
+            }
             Report(DiagnosticStage.SdkInitialize, DiagnosticOutcome.Succeeded);
         }
         catch (Exception error)
         {
             Report(DiagnosticStage.SdkInitialize, DiagnosticOutcome.Failed, error);
-            lock (submissionGate) { if (ownsInitialization && state != ClientState.Disposed) DestroySdk(); }
+            lock (submissionGate)
+            {
+                if (ownsInitialization && state != ClientState.Disposed)
+                    DestroySdk();
+            }
             throw;
         }
         finally { lifecycle.Release(); }
@@ -144,7 +166,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             lock (submissionGate)
             {
                 RequireInitialized();
-                if (state == ClientState.Running) return;
+                if (state == ClientState.Running)
+                    return;
                 cancellationToken.ThrowIfCancellationRequested();
                 generation = ++nextGeneration;
                 var root = GCHandle.Alloc(new EventContext(this, generation));
@@ -160,7 +183,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 RequireInitialized();
                 // A native replacement can stop after Start succeeds but before
                 // this continuation runs. Its newer state must win that race.
-                if (stoppedGeneration != generation) state = ClientState.Running;
+                if (stoppedGeneration != generation)
+                    state = ClientState.Running;
             }
             Report(DiagnosticStage.SdkStart, DiagnosticOutcome.Succeeded);
         }
@@ -170,7 +194,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             lock (submissionGate)
             {
                 activeGeneration = 0;
-                if (sdk is not null) Throw(api.SetEventHandler(sdk.Token, 0, 0));
+                if (sdk is not null)
+                    Throw(api.SetEventHandler(sdk.Token, 0, 0));
             }
             throw;
         }
@@ -199,7 +224,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 var submitted = Submit(new(NativeCommand.Stop));
-                if (submitted.Operation.Value == 0) Throw(submitted.Completion.GetAwaiter().GetResult().Terminal.Failure);
+                if (submitted.Operation.Value == 0)
+                    Throw(submitted.Completion.GetAwaiter().GetResult().Terminal.Failure);
                 completion = submitted.Completion;
                 activeGeneration = 0;
                 state = ClientState.Stopped;
@@ -207,7 +233,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 Throw(api.SetEventHandler(sdk!.Token, 0, 0));
             }
             var result = await completion.ConfigureAwait(false);
-            lock (submissionGate) { operations.CancelAll(); outgoing.Clear(); }
+            lock (submissionGate)
+            {
+                operations.CancelAll();
+                outgoing.Clear();
+            }
             Throw(result.Terminal.Failure);
             Report(DiagnosticStage.SdkStop, DiagnosticOutcome.Succeeded);
         }
@@ -221,8 +251,11 @@ public sealed class NativeShareSdkClient : IShareSdkClient
 
     private void Report(DiagnosticStage stage, DiagnosticOutcome outcome, Exception? error = null)
     {
-        try { diagnostic?.Invoke(stage, outcome, (error as NativeShareSdkException)?.Failure,
-            error is NativeShareSdkException ? null : error); }
+        try
+        {
+            diagnostic?.Invoke(stage, outcome, (error as NativeShareSdkException)?.Failure,
+            error is NativeShareSdkException ? null : error);
+        }
         catch { /* Logging must never change SDK lifecycle behavior. */ }
     }
 
@@ -234,7 +267,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             Throw(api.GetDevices(sdk!.Token, out var root));
             try
             {
-                if (root == 0) return [];
+                if (root == 0)
+                    return [];
                 var snapshot = Marshal.PtrToStructure<NativeDevices>(root);
                 NativeMapper.ValidateArray(snapshot.Items, snapshot.Count);
                 var result = new DeviceSnapshot[(int)snapshot.Count];
@@ -255,7 +289,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             try
             {
                 var result = new HashSet<DeviceId>();
-                if (root == 0) return result;
+                if (root == 0)
+                    return result;
                 var snapshot = Marshal.PtrToStructure<NativeTrustedDevices>(root);
                 NativeMapper.ValidateArray(snapshot.Items, snapshot.Count);
                 for (var i = 0; i < (int)snapshot.Count; i++)
@@ -322,7 +357,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         }
         catch (Exception error)
         {
-            if (!sourceOpened) ReportTransfer(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Failed,
+            if (!sourceOpened)
+                ReportTransfer(TransferDiagnosticStage.SourceOpen, NativeDiagnosticOutcome.Failed,
                 DiagnosticDirection.Send, kind, sequence, (error as NativeShareSdkException)?.Failure.Kind ?? ShareErrorKind.StorageFailed,
                 (error as NativeShareSdkException)?.Failure.PlatformError);
             throw;
@@ -353,7 +389,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         }
         catch (Exception error)
         {
-            if (!destinationOpened) ReportTransfer(TransferDiagnosticStage.DestinationPrepare,
+            if (!destinationOpened)
+                ReportTransfer(TransferDiagnosticStage.DestinationPrepare,
                 error is OperationCanceledException ? NativeDiagnosticOutcome.Cancelled : NativeDiagnosticOutcome.Failed,
                 DiagnosticDirection.Receive, (ContentKind)0, sequence,
                 error is OperationCanceledException ? ShareErrorKind.Cancelled :
@@ -367,15 +404,19 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private void ReportTransfer(TransferDiagnosticStage stage, NativeDiagnosticOutcome outcome,
         DiagnosticDirection direction, ContentKind kind, ulong sequence, ShareErrorKind? category = null, long? platformCode = null)
     {
-        if (transferDiagnostic is null) return;
+        if (transferDiagnostic is null)
+            return;
         try
         {
             var record = new TransferDiagnosticRecord(stage, outcome, direction, kind switch
             {
-                ContentKind.Text => DiagnosticContentKind.Text, ContentKind.Image => DiagnosticContentKind.Image,
-                ContentKind.File => DiagnosticContentKind.File, _ => DiagnosticContentKind.Unknown
+                ContentKind.Text => DiagnosticContentKind.Text,
+                ContentKind.Image => DiagnosticContentKind.Image,
+                ContentKind.File => DiagnosticContentKind.File,
+                _ => DiagnosticContentKind.Unknown
             }, sequence, category, platformCode);
-            if (!diagnosticEvents.Writer.TryWrite((null, record))) Interlocked.Increment(ref droppedDiagnosticEvents);
+            if (!diagnosticEvents.Writer.TryWrite((null, record)))
+                Interlocked.Increment(ref droppedDiagnosticEvents);
         }
         catch { /* File operations must not depend on diagnostics. */ }
     }
@@ -403,7 +444,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             var error = destination ? api.RegisterDestination(file.DangerousGetHandle(), out var token)
                 : api.RegisterSource(file.DangerousGetHandle(), out token);
             Throw(error);
-            if (token == 0) throw InvalidSubmission();
+            if (token == 0)
+                throw InvalidSubmission();
             file.Dispose();
             return new ApiHandle(token, api.ReleaseStream);
         }
@@ -412,7 +454,10 @@ public sealed class NativeShareSdkClient : IShareSdkClient
 
     private static SafeFileHandle OpenSource(string path)
     {
-        try { return File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); }
+        try
+        {
+            return File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
             // File.OpenHandle's exception message includes the caller's full path.
@@ -441,7 +486,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 NativeMapper.Failure(error) ?? InvalidSubmission().Failure))));
         var id = new OperationId(operation);
         var completion = operations.Register(id);
-        if (outgoingSend) outgoing.Register(id);
+        if (outgoingSend)
+            outgoing.Register(id);
         return (id, completion);
     }
 
@@ -449,17 +495,23 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private static async Task CheckAsync(Task<NativeCompletion> task, CancellationToken cancellationToken)
         => Throw((await task.WaitAsync(cancellationToken).ConfigureAwait(false)).Terminal.Failure);
     private static void Throw(NativeError error) => Throw(NativeMapper.Failure(error));
-    private static void Throw(ShareFailure? failure) { if (failure is not null) throw new NativeShareSdkException(failure); }
+    private static void Throw(ShareFailure? failure)
+    {
+        if (failure is not null)
+            throw new NativeShareSdkException(failure);
+    }
     private static NativeShareSdkException InvalidSubmission() => new(new(ShareErrorKind.InvalidInput, "Native submission returned an invalid token or operation."));
     private void RequireState(ClientState required)
     {
         ObjectDisposedException.ThrowIf(state == ClientState.Disposed, this);
-        if (state != required) throw new InvalidOperationException("SDK lifecycle state does not allow this command.");
+        if (state != required)
+            throw new InvalidOperationException("SDK lifecycle state does not allow this command.");
     }
     private void RequireInitialized()
     {
         ObjectDisposedException.ThrowIf(state == ClientState.Disposed, this);
-        if (state == ClientState.New) throw new InvalidOperationException("SDK has not initialized.");
+        if (state == ClientState.New)
+            throw new InvalidOperationException("SDK has not initialized.");
     }
 
     private static unsafe nint CompletionPointer => (nint)(delegate* unmanaged[Cdecl]<nint, nint, void>)&OnCompletion;
@@ -506,7 +558,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         try
         {
             var registration = (EventContext)GCHandle.FromIntPtr(context).Target!;
-            if (Volatile.Read(ref registration.Client.activeGeneration) != registration.Generation) return;
+            if (Volatile.Read(ref registration.Client.activeGeneration) != registration.Generation)
+                return;
             var value = NativeMapper.Event(Marshal.PtrToStructure<NativeEvent>(pointer));
             registration.Client.callbacks.Writer.TryWrite(() => registration.Client.ProcessEvent(registration.Generation, value));
         }
@@ -517,7 +570,8 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     {
         lock (submissionGate)
         {
-            if (!operations.Complete(result)) return;
+            if (!operations.Complete(result))
+                return;
             outgoing.Complete(result.Operation, result.Terminal.TransferId);
         }
     }
@@ -526,13 +580,15 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     {
         lock (submissionGate)
         {
-            if (generation != activeGeneration || state == ClientState.Disposed) return;
+            if (generation != activeGeneration || state == ClientState.Disposed)
+                return;
             if (value is ShareSdkEvent.DiscoveryStateChanged { State: DiscoveryState.Stopped })
             {
                 stoppedGeneration = generation;
                 state = ClientState.Stopped;
             }
-            if (value is ShareSdkEvent.OfferReceived offer) outgoing.ObserveIncoming(offer.Offer.TransferId);
+            if (value is ShareSdkEvent.OfferReceived offer)
+                outgoing.ObserveIncoming(offer.Offer.TransferId);
             if (value is ShareSdkEvent.ProgressReceived progress && outgoing.ObserveProgress(progress.Progress.TransferId) is { } registered)
                 events.Writer.TryWrite((generation, registered));
             events.Writer.TryWrite((generation, value));
@@ -541,19 +597,26 @@ public sealed class NativeShareSdkClient : IShareSdkClient
 
     private async Task DrainCallbacksAsync()
     {
-        await foreach (var callback in callbacks.Reader.ReadAllAsync().ConfigureAwait(false)) callback();
+        await foreach (var callback in callbacks.Reader.ReadAllAsync().ConfigureAwait(false))
+            callback();
     }
 
     private async Task DrainEventsAsync()
     {
         await foreach (var envelope in events.Reader.ReadAllAsync().ConfigureAwait(false))
         {
-            if (envelope.Generation != Volatile.Read(ref activeGeneration)) continue;
-            if (EventReceived is not { } handlers) continue;
+            if (envelope.Generation != Volatile.Read(ref activeGeneration))
+                continue;
+            if (EventReceived is not { } handlers)
+                continue;
             foreach (EventHandler<ShareSdkEvent> handler in handlers.GetInvocationList())
             {
-                if (envelope.Generation != Volatile.Read(ref activeGeneration)) break;
-                try { handler(this, envelope.Event); }
+                if (envelope.Generation != Volatile.Read(ref activeGeneration))
+                    break;
+                try
+                {
+                    handler(this, envelope.Event);
+                }
                 catch { /* A subscriber cannot unwind through native code or halt dispatch. */ }
             }
         }
@@ -565,8 +628,10 @@ public sealed class NativeShareSdkClient : IShareSdkClient
         {
             try
             {
-                if (record.Native is { } native) nativeDiagnostic?.Invoke(native);
-                if (record.Transfer is { } transfer) transferDiagnostic?.Invoke(transfer);
+                if (record.Native is { } native)
+                    nativeDiagnostic?.Invoke(native);
+                if (record.Transfer is { } transfer)
+                    transferDiagnostic?.Invoke(transfer);
             }
             catch { /* Logging cannot affect SDK behavior or halt diagnostics. */ }
             ReportDroppedDiagnostics();
@@ -577,9 +642,13 @@ public sealed class NativeShareSdkClient : IShareSdkClient
     private void ReportDroppedDiagnostics()
     {
         var count = Interlocked.Exchange(ref droppedDiagnosticEvents, 0);
-        if (count == 0) return;
-        try { nativeDiagnostic?.Invoke(new(NativeDiagnosticStage.DiagnosticQueue, NativeDiagnosticOutcome.Failed,
-            DiagnosticDirection.None, DiagnosticContentKind.None, (ulong)count, ShareErrorKind.ResourceLimit, null)); }
+        if (count == 0)
+            return;
+        try
+        {
+            nativeDiagnostic?.Invoke(new(NativeDiagnosticStage.DiagnosticQueue, NativeDiagnosticOutcome.Failed,
+            DiagnosticDirection.None, DiagnosticContentKind.None, (ulong)count, ShareErrorKind.ResourceLimit, null));
+        }
         catch { /* Best-effort diagnostic. */ }
     }
 
@@ -593,11 +662,15 @@ public sealed class NativeShareSdkClient : IShareSdkClient
                 diagnosticRegistered = false;
             }
             Throw(api.Destroy(sdk.Token));
-            sdk.SetHandleAsInvalid(); sdk.Dispose(); sdk = null;
+            sdk.SetHandleAsInvalid();
+            sdk.Dispose();
+            sdk = null;
         }
         // ABI destroy drains all native callbacks before these roots are freed.
-        if (callbackRoot.IsAllocated) callbackRoot.Free();
-        foreach (var root in eventRoots) root.Free();
+        if (callbackRoot.IsAllocated)
+            callbackRoot.Free();
+        foreach (var root in eventRoots)
+            root.Free();
         eventRoots.Clear();
     }
 
@@ -610,7 +683,9 @@ public sealed class NativeShareSdkClient : IShareSdkClient
             outgoing.Clear();
             operations.CancelAll();
             DestroySdk();
-            callbacks.Writer.TryComplete(); events.Writer.TryComplete(); diagnosticEvents.Writer.TryComplete();
+            callbacks.Writer.TryComplete();
+            events.Writer.TryComplete();
+            diagnosticEvents.Writer.TryComplete();
         }
         // Do not await the event reader: disposal is allowed from its subscriber.
         return ValueTask.CompletedTask;

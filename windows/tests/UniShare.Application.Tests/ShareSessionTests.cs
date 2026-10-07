@@ -17,14 +17,23 @@ public sealed class ShareSessionTests
     [DataRow(true, true)]
     public async Task DiscoveryFailureDuringActiveStartCannotBeOverwrittenAndNextGenerationCanRetry(bool resume, bool delayed)
     {
-        var sdk = new FakeShareSdkClient(); var drain = new FakeTransferDrain(); var session = new ShareSession(sdk, drain);
+        var sdk = new FakeShareSdkClient();
+        var drain = new FakeTransferDrain();
+        var session = new ShareSession(sdk, drain);
         await session.InitializeAsync(new());
-        if (resume) { await session.StartAsync(); await session.PauseAsync(); }
-        drain.Calls.Clear(); var entered = Signal(); var returned = Signal();
+        if (resume)
+        {
+            await session.StartAsync();
+            await session.PauseAsync();
+        }
+        drain.Calls.Clear();
+        var entered = Signal();
+        var returned = Signal();
         sdk.Starting = () =>
         {
             entered.SetResult();
-            if (delayed) return returned.Task;
+            if (delayed)
+                return returned.Task;
             sdk.Emit(new ShareSdkEvent.DiscoveryFailed(new(ShareErrorKind.DiscoveryFailed, "private start diagnostic")));
             return Task.CompletedTask;
         };
@@ -39,9 +48,12 @@ public sealed class ShareSessionTests
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => start);
             Assert.AreEqual(resume ? SessionState.Paused : SessionState.Faulted, session.State);
-            Assert.IsFalse(drain.NewTransfersAllowed); Assert.IsFalse(drain.Calls.Contains("allow"));
-            sdk.Starting = null; await session.ResumeAsync();
-            Assert.AreEqual(SessionState.Running, session.State); Assert.IsTrue(drain.NewTransfersAllowed);
+            Assert.IsFalse(drain.NewTransfersAllowed);
+            Assert.IsFalse(drain.Calls.Contains("allow"));
+            sdk.Starting = null;
+            await session.ResumeAsync();
+            Assert.AreEqual(SessionState.Running, session.State);
+            Assert.IsTrue(drain.NewTransfersAllowed);
             CollectionAssert.AreEqual(resume ? new[] { "initialize", "start", "stop", "start", "stop", "start" }
                 : new[] { "initialize", "start", "stop", "start" }, sdk.Calls);
         }
@@ -108,7 +120,11 @@ public sealed class ShareSessionTests
         sdk.Stopping = () => { sdk.Devices = []; return Task.CompletedTask; };
         await session.PauseAsync();
 
-        var updated = device with { Name = "Rediscovered phone", LastSeen = device.LastSeen.AddMinutes(1) };
+        var updated = device with
+        {
+            Name = "Rediscovered phone",
+            LastSeen = device.LastSeen.AddMinutes(1)
+        };
         sdk.Starting = () => { sdk.Devices = [updated]; return Task.CompletedTask; };
         await session.ResumeAsync();
         Assert.AreSame(entry, session.Devices.Devices.Single());
@@ -131,7 +147,11 @@ public sealed class ShareSessionTests
         var release = Signal();
         sdk.Initializing = () => { entered.SetResult(); return release.Task; };
         var options = new SdkOptions { DeviceName = "Desktop" };
-        async Task Activate() { await session.InitializeAsync(options); await session.StartAsync(); }
+        async Task Activate()
+        {
+            await session.InitializeAsync(options);
+            await session.StartAsync();
+        }
         var first = Activate();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var second = Activate();
@@ -225,7 +245,8 @@ public sealed class ShareSessionTests
         await session.InitializeAsync(new());
         await session.StartAsync();
         drain.BeginTransfer();
-        var stopEntered = Signal(); var stopReleased = Signal();
+        var stopEntered = Signal();
+        var stopReleased = Signal();
         sdk.Stopping = () => { stopEntered.SetResult(); return stopReleased.Task; };
         var pause = session.PauseAsync();
         await drain.WaitEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -243,15 +264,24 @@ public sealed class ShareSessionTests
     [TestMethod]
     public async Task CallerCancellationAfterPauseAdmissionStillDrainsAndDoesNotFault()
     {
-        var sdk = new FakeShareSdkClient(); var drain = new FakeTransferDrain(); var session = new ShareSession(sdk, drain);
-        await session.InitializeAsync(new()); await session.StartAsync(); drain.BeginTransfer();
+        var sdk = new FakeShareSdkClient();
+        var drain = new FakeTransferDrain();
+        var session = new ShareSession(sdk, drain);
+        await session.InitializeAsync(new());
+        await session.StartAsync();
+        drain.BeginTransfer();
         using var cancellation = new CancellationTokenSource();
         var pause = session.PauseAsync(cancellation.Token);
-        await drain.WaitEntered.Task.WaitAsync(TimeSpan.FromSeconds(5)); cancellation.Cancel();
-        Assert.IsFalse(pause.IsCompleted); Assert.AreEqual(SessionState.Pausing, session.State);
-        Assert.IsFalse(drain.NewTransfersAllowed); Assert.IsFalse(sdk.Calls.Contains("stop"));
-        drain.CompleteTransfer(); await pause.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.AreEqual(SessionState.Paused, session.State); await session.ExitAsync();
+        await drain.WaitEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        Assert.IsFalse(pause.IsCompleted);
+        Assert.AreEqual(SessionState.Pausing, session.State);
+        Assert.IsFalse(drain.NewTransfersAllowed);
+        Assert.IsFalse(sdk.Calls.Contains("stop"));
+        drain.CompleteTransfer();
+        await pause.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(SessionState.Paused, session.State);
+        await session.ExitAsync();
     }
 
     [TestMethod]

@@ -20,9 +20,21 @@ public sealed class HistoryViewModel : CommandViewModel
             await Dispatcher.InvokeAsync(() => Activities = results.Select(record => new ActivityItemViewModel(record, files, Dispatcher)).ToArray()).ConfigureAwait(false);
         }, () => true, "History.LoadFailed");
     }
-    public string Query { get => query; set => SetProperty(ref query, value); }
-    public ActivityStatus? StatusFilter { get => statusFilter; set => SetProperty(ref statusFilter, value); }
-    public ShareDirection? DirectionFilter { get => directionFilter; set => SetProperty(ref directionFilter, value); }
-    public IReadOnlyList<ActivityItemViewModel> Activities { get => activities; private set => SetProperty(ref activities, value); }
+    public string Query
+    {
+        get => query; set => SetProperty(ref query, value);
+    }
+    public ActivityStatus? StatusFilter
+    {
+        get => statusFilter; set => SetProperty(ref statusFilter, value);
+    }
+    public ShareDirection? DirectionFilter
+    {
+        get => directionFilter; set => SetProperty(ref directionFilter, value);
+    }
+    public IReadOnlyList<ActivityItemViewModel> Activities
+    {
+        get => activities; private set => SetProperty(ref activities, value);
+    }
     public IAsyncRelayCommand RefreshCommand { get; }
 }

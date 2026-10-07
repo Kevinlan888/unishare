@@ -6,9 +6,18 @@ public readonly record struct DeviceId(Guid Value);
 public readonly record struct RequestId(ulong Value);
 public readonly record struct OperationId(ulong Value);
 
-public enum DevicePlatform { Windows = 0, Android = 1, Ios = 2 }
-public enum DiscoveryState { Starting, Browsing, NetworkChanged, Stopped }
-public enum ConnectionState { Connected, Disconnected }
+public enum DevicePlatform
+{
+    Windows = 0, Android = 1, Ios = 2
+}
+public enum DiscoveryState
+{
+    Starting, Browsing, NetworkChanged, Stopped
+}
+public enum ConnectionState
+{
+    Connected, Disconnected
+}
 
 public sealed record DeviceSnapshot(
     DeviceId Id,

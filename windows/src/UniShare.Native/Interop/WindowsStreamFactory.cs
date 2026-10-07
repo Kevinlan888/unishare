@@ -19,7 +19,8 @@ internal static class WindowsStreamFactory
         try
         {
             file.DangerousAddRef(ref retained);
-            if (file.IsInvalid) throw new ArgumentException("A live file handle is required.", nameof(file));
+            if (file.IsInvalid)
+                throw new ArgumentException("A live file handle is required.", nameof(file));
             error = destination
                 ? NativeMethods.usdk_windows_open_destination(file.DangerousGetHandle(), out token)
                 : NativeMethods.usdk_windows_open_source(file.DangerousGetHandle(), out token);
@@ -27,7 +28,8 @@ internal static class WindowsStreamFactory
         finally { if (retained) file.DangerousRelease(); }
         if (NativeMapper.Failure(error) is { } failure)
             throw new IOException(failure.Message);
-        if (token == 0) throw new IOException("Native stream registration returned an invalid token.");
+        if (token == 0)
+            throw new IOException("Native stream registration returned an invalid token.");
         file.Dispose();
         return new SafeStreamHandle(token);
     }

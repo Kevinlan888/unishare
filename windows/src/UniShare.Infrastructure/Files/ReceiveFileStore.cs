@@ -24,17 +24,20 @@ public sealed class ReceiveFileStore : ITransferFiles
         }
         catch (Exception error) when (PrivateContentFile.IsFileError(error))
         {
-            if (path.Length != 0) PrivateContentFile.Delete(path);
+            if (path.Length != 0)
+                PrivateContentFile.Delete(path);
             throw new IOException("Unable to prepare received file.");
         }
     }
 
     public Task<string> PublishAsync(PreparedReceive receive, CancellationToken cancellationToken)
     {
-        if (receive is not Receive owned) throw new ArgumentException("Receive destination is not owned by this store.", nameof(receive));
+        if (receive is not Receive owned)
+            throw new ArgumentException("Receive destination is not owned by this store.", nameof(receive));
         lock (owned.Gate)
         {
-            if (owned.Published is { } published) return Task.FromResult(published);
+            if (owned.Published is { } published)
+                return Task.FromResult(published);
             string? movedDestination = null;
             try
             {
@@ -49,7 +52,8 @@ public sealed class ReceiveFileStore : ITransferFiles
                     {
                         File.Move(owned.StagingPath, destination, overwrite: false);
                         movedDestination = destination;
-                        if (OperatingSystem.IsWindows()) File.SetAttributes(destination, File.GetAttributes(destination) & ~FileAttributes.Hidden);
+                        if (OperatingSystem.IsWindows())
+                            File.SetAttributes(destination, File.GetAttributes(destination) & ~FileAttributes.Hidden);
                         owned.Published = destination;
                         return Task.FromResult(destination);
                     }
@@ -60,9 +64,11 @@ public sealed class ReceiveFileStore : ITransferFiles
             {
                 // The partial stays hidden during all collision retries. A
                 // failure to finalize attributes rolls back only our own move.
-                if (movedDestination is not null) PrivateContentFile.Delete(movedDestination);
+                if (movedDestination is not null)
+                    PrivateContentFile.Delete(movedDestination);
                 PrivateContentFile.Delete(owned.StagingPath);
-                if (error is OperationCanceledException) throw;
+                if (error is OperationCanceledException)
+                    throw;
                 throw new IOException("Unable to publish received file.");
             }
         }
@@ -74,8 +80,10 @@ public sealed class ReceiveFileStore : ITransferFiles
     private static string Sanitize(string name)
     {
         var value = new string(name.Select(c => char.IsControl(c) || "<>:\"/\\|?*".Contains(c) ? '_' : c).ToArray()).TrimEnd(' ', '.');
-        if (string.IsNullOrWhiteSpace(value)) value = "Received file";
-        if (value.Length > 160) value = value[..160].TrimEnd(' ', '.');
+        if (string.IsNullOrWhiteSpace(value))
+            value = "Received file";
+        if (value.Length > 160)
+            value = value[..160].TrimEnd(' ', '.');
         var stem = value.Split('.')[0].TrimEnd(' ');
         if (new[] { "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$" }.Contains(stem, StringComparer.OrdinalIgnoreCase) ||
             (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789¹²³".Contains(stem[3])))
@@ -85,10 +93,14 @@ public sealed class ReceiveFileStore : ITransferFiles
     private sealed record Receive(string Value, string Root, string Name) : PreparedReceive(Value, string.Empty)
     {
         public object Gate { get; } = new();
-        public string? Published { get; set; }
+        public string? Published
+        {
+            get; set;
+        }
         public override ValueTask DisposeAsync()
         {
-            lock (Gate) PrivateContentFile.Delete(StagingPath);
+            lock (Gate)
+                PrivateContentFile.Delete(StagingPath);
             return ValueTask.CompletedTask;
         }
     }

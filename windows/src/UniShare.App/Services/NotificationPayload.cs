@@ -1,6 +1,6 @@
+using System.Xml.Linq;
 using UniShare.Application.Abstractions;
 using UniShare.Application.Services;
-using System.Xml.Linq;
 
 namespace UniShare.App.Services;
 
@@ -10,7 +10,8 @@ public static class NotificationPayload
     {
         // No content-bearing domain object crosses this boundary.
         var toast = new XElement("toast");
-        if (request.Device is { } device) toast.SetAttributeValue("launch", NotificationArguments.Build(
+        if (request.Device is { } device)
+            toast.SetAttributeValue("launch", NotificationArguments.Build(
             request.Request is null ? NotificationAction.Open : NotificationAction.ViewAndAccept, device, request.Request));
         toast.Add(new XElement("visual", new XElement("binding", new XAttribute("template", "ToastGeneric"),
             new XElement("text", localize("AppTitle")), new XElement("text", localize(request.BodyResourceKey)))));

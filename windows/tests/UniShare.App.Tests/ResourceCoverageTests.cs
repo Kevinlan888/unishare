@@ -12,7 +12,8 @@ public sealed class ResourceCoverageTests
         get
         {
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
-            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "windows", "UniShare.slnx"))) directory = directory.Parent;
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "windows", "UniShare.slnx")))
+                directory = directory.Parent;
             return Path.Combine(directory!.FullName, "windows", "src", "UniShare.App");
         }
     }
@@ -61,7 +62,8 @@ public sealed class ResourceCoverageTests
         foreach (var language in new[] { "en-US", "zh-CN" })
         {
             var resources = ReadResources(language);
-            foreach (var key in errors) Assert.IsTrue(resources.TryGetValue(key, out var text) && !string.IsNullOrWhiteSpace(text), $"Missing ViewModel error translation: {key} ({language})");
+            foreach (var key in errors)
+                Assert.IsTrue(resources.TryGetValue(key, out var text) && !string.IsNullOrWhiteSpace(text), $"Missing ViewModel error translation: {key} ({language})");
         }
     }
 }

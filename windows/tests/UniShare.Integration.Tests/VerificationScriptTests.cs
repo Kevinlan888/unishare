@@ -101,7 +101,8 @@ public sealed class VerificationScriptTests
     {
         string temporary = Path.Combine(Path.GetTempPath(), "unishare-package-policy-" + Guid.NewGuid());
         string package = Path.Combine(temporary, "package"), native = Path.Combine(temporary, "native");
-        Directory.CreateDirectory(package); Directory.CreateDirectory(native);
+        Directory.CreateDirectory(package);
+        Directory.CreateDirectory(native);
         try
         {
             foreach (string name in new[] { "unishare.dll", "libcrypto-3-x64.dll", "libssl-3-x64.dll" })

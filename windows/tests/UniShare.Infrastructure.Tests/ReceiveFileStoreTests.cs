@@ -36,7 +36,8 @@ public sealed class ReceiveFileStoreTests
             Assert.IsFalse(Path.GetFileName(path).Any(c => char.IsControl(c) || "<>:\"/\\|?*".Contains(c)));
             Assert.IsFalse(path.EndsWith('.') || path.EndsWith(' '));
             Assert.IsTrue(File.Exists(path));
-            if (OperatingSystem.IsWindows()) Assert.IsFalse(File.GetAttributes(path).HasFlag(FileAttributes.Hidden));
+            if (OperatingSystem.IsWindows())
+                Assert.IsFalse(File.GetAttributes(path).HasFlag(FileAttributes.Hidden));
         }
         Assert.AreEqual(0, Directory.GetFiles(root, ".unishare-partial-*").Length);
     }
@@ -47,19 +48,22 @@ public sealed class ReceiveFileStoreTests
         var store = Store();
         var receives = await Task.WhenAll(Enumerable.Range(0, 24).Select(_ => store.CreateReceiveAsync(Offer("report.txt"), root, default)));
         await File.WriteAllTextAsync(Path.Combine(root, "report.txt"), "existing");
-        for (var i = 0; i < receives.Length; i++) await WriteStaging(receives[i].StagingPath, System.Text.Encoding.UTF8.GetBytes(i.ToString()));
+        for (var i = 0; i < receives.Length; i++)
+            await WriteStaging(receives[i].StagingPath, System.Text.Encoding.UTF8.GetBytes(i.ToString()));
         var paths = await Task.WhenAll(receives.Select(receive => Task.Run(() => store.PublishAsync(receive, default))));
         Assert.AreEqual(24, paths.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.AreEqual("existing", await File.ReadAllTextAsync(Path.Combine(root, "report.txt")));
         CollectionAssert.AreEquivalent(Enumerable.Range(0, 24).Select(i => i.ToString()).ToArray(), await Task.WhenAll(paths.Select(path => File.ReadAllTextAsync(path))));
-        foreach (var receive in receives) await receive.DisposeAsync();
+        foreach (var receive in receives)
+            await receive.DisposeAsync();
         Assert.AreEqual(0, Directory.GetFiles(root, ".unishare-partial-*").Length);
     }
 
     [TestMethod]
     public async Task CancelledPublicationAbortsPartialAndExposesNoFinalFile()
     {
-        var store = Store(); await using var receive = await store.CreateReceiveAsync(Offer("cancel.txt"), root, default);
+        var store = Store();
+        await using var receive = await store.CreateReceiveAsync(Offer("cancel.txt"), root, default);
         await WriteStaging(receive.StagingPath, [1, 2, 3]);
         await Assert.ThrowsAsync<OperationCanceledException>(() => store.PublishAsync(receive, new CancellationToken(true)));
         Assert.AreEqual(0, Directory.GetFiles(root).Length);
@@ -68,21 +72,31 @@ public sealed class ReceiveFileStoreTests
     [TestMethod]
     public async Task AbortAfterSdkFailureIsIdempotentAndRemovesPartial()
     {
-        var store = Store(); var receive = await store.CreateReceiveAsync(Offer("sdk.txt"), root, default);
+        var store = Store();
+        var receive = await store.CreateReceiveAsync(Offer("sdk.txt"), root, default);
         await WriteStaging(receive.StagingPath, [1, 2, 3]);
-        await store.AbortAsync(receive); await store.AbortAsync(receive); await receive.DisposeAsync();
+        await store.AbortAsync(receive);
+        await store.AbortAsync(receive);
+        await receive.DisposeAsync();
         Assert.AreEqual(0, Directory.GetFiles(root).Length);
     }
 
     [TestMethod]
     public async Task RenameFailureCleansPartialWithoutLeakingPathInException()
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Inconclusive("Windows ACL verification."); return; }
-        var store = Store(); await using var receive = await store.CreateReceiveAsync(Offer("locked.txt"), root, default);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Windows ACL verification.");
+            return;
+        }
+        var store = Store();
+        await using var receive = await store.CreateReceiveAsync(Offer("locked.txt"), root, default);
         await WriteStaging(receive.StagingPath, [1, 2, 3]);
-        var directory = new DirectoryInfo(root); var original = directory.GetAccessControl();
+        var directory = new DirectoryInfo(root);
+        var original = directory.GetAccessControl();
         using var identity = WindowsIdentity.GetCurrent();
-        var restricted = new DirectorySecurity(); restricted.SetAccessRuleProtection(true, false);
+        var restricted = new DirectorySecurity();
+        restricted.SetAccessRuleProtection(true, false);
         restricted.AddAccessRule(new FileSystemAccessRule(identity.User!, FileSystemRights.ReadAndExecute | FileSystemRights.Delete | FileSystemRights.ChangePermissions, AccessControlType.Allow));
         try
         {
@@ -99,7 +113,9 @@ public sealed class ReceiveFileStoreTests
     [TestMethod]
     public async Task UnwritableDirectoryFailureLeavesNoPartialAndRedactsDestination()
     {
-        var store = Store(); var blocked = Path.Combine(root, "not-a-directory"); await File.WriteAllTextAsync(blocked, "file");
+        var store = Store();
+        var blocked = Path.Combine(root, "not-a-directory");
+        await File.WriteAllTextAsync(blocked, "file");
         var error = await Assert.ThrowsAsync<IOException>(() => store.CreateReceiveAsync(Offer("file.txt"), blocked, default));
         Assert.IsFalse(error.ToString().Contains(blocked));
         Assert.AreEqual(0, Directory.GetFiles(root, ".unishare-partial-*").Length);
@@ -108,8 +124,13 @@ public sealed class ReceiveFileStoreTests
     [TestMethod]
     public async Task PartialIsHiddenAndAclAllowsOnlyCurrentUser()
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Inconclusive("Windows ACL verification."); return; }
-        var store = Store(); await using var receive = await store.CreateReceiveAsync(Offer("private.txt"), root, default);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Windows ACL verification.");
+            return;
+        }
+        var store = Store();
+        await using var receive = await store.CreateReceiveAsync(Offer("private.txt"), root, default);
         Assert.IsTrue(File.GetAttributes(receive.StagingPath).HasFlag(FileAttributes.Hidden));
         var security = new FileInfo(receive.StagingPath).GetAccessControl();
         Assert.IsTrue(security.AreAccessRulesProtected);
@@ -122,10 +143,16 @@ public sealed class ReceiveFileStoreTests
     [TestMethod]
     public async Task RealDirectoryDenyCreateFailsWithoutPartialOrPathDisclosure()
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Inconclusive("Windows ACL verification."); return; }
-        var directory = new DirectoryInfo(root); var original = directory.GetAccessControl();
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Windows ACL verification.");
+            return;
+        }
+        var directory = new DirectoryInfo(root);
+        var original = directory.GetAccessControl();
         using var identity = WindowsIdentity.GetCurrent();
-        var restricted = new DirectorySecurity(); restricted.SetAccessRuleProtection(true, false);
+        var restricted = new DirectorySecurity();
+        restricted.SetAccessRuleProtection(true, false);
         restricted.AddAccessRule(new FileSystemAccessRule(identity.User!, FileSystemRights.ReadAndExecute | FileSystemRights.Delete | FileSystemRights.ChangePermissions, AccessControlType.Allow));
         try
         {

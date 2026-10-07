@@ -92,7 +92,8 @@ public sealed partial class XamlPolicyTests
                 if (!path.Contains(Path.Combine("Resources", "Themes")))
                     foreach (var value in element.Attributes().Where(a => new[] { "Background", "Foreground", "BorderBrush", "Fill", "Color" }.Contains(a.Name.LocalName)).Select(a => a.Value))
                         Assert.IsFalse(LiteralColor().IsMatch(value), $"Literal color in {path}: {value}");
-                if (element.Name.LocalName is not ("Button" or "AppBarButton" or "MenuFlyoutItem") || !element.Descendants().Any(e => e.Name.LocalName is "FontIcon" or "SymbolIcon") && element.Attribute("Icon") is null) continue;
+                if (element.Name.LocalName is not ("Button" or "AppBarButton" or "MenuFlyoutItem") || !element.Descendants().Any(e => e.Name.LocalName is "FontIcon" or "SymbolIcon") && element.Attribute("Icon") is null)
+                    continue;
                 var uid = element.Attribute(XName.Get("Uid", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value;
                 Assert.IsTrue(element.Attribute("AutomationProperties.Name") is not null || uid is not null && resources.ContainsKey(uid + ".AutomationProperties.Name"), $"Unnamed icon action in {path}");
             }

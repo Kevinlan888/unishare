@@ -12,7 +12,8 @@ internal sealed class NativeOperationRegistry
 
     internal Task<NativeCompletion> Register(OperationId operation)
     {
-        if (operation.Value == 0) throw new ArgumentOutOfRangeException(nameof(operation));
+        if (operation.Value == 0)
+            throw new ArgumentOutOfRangeException(nameof(operation));
         var completion = new TaskCompletionSource<NativeCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending.Add(operation, completion);
         return completion.Task;
@@ -20,7 +21,8 @@ internal sealed class NativeOperationRegistry
 
     internal bool Complete(NativeCompletion value)
     {
-        if (!pending.Remove(value.Operation, out var completion)) return false;
+        if (!pending.Remove(value.Operation, out var completion))
+            return false;
         return completion.TrySetResult(value);
     }
 

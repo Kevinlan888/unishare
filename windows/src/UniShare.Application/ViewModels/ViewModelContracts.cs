@@ -28,7 +28,10 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
     private string? errorResourceKey;
     protected IViewModelDispatcher Dispatcher { get; } = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
     public bool IsBusy => defaultLane.IsBusy || additionalLanes.Any(lane => lane.IsBusy);
-    public string? ErrorResourceKey { get => errorResourceKey; private set => SetProperty(ref errorResourceKey, value); }
+    public string? ErrorResourceKey
+    {
+        get => errorResourceKey; private set => SetProperty(ref errorResourceKey, value);
+    }
 
     protected sealed class CommandLane
     {
@@ -40,13 +43,16 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
     // a receive whose acceptance is still awaiting native completion.
     protected CommandLane CreateCommandLane()
     {
-        var lane = new CommandLane(); additionalLanes.Add(lane); return lane;
+        var lane = new CommandLane();
+        additionalLanes.Add(lane);
+        return lane;
     }
 
     protected IAsyncRelayCommand Command(Func<Task> action, Func<bool> enabled, string errorKey)
     {
         var command = new AsyncRelayCommand(() => RunAsync(action, enabled, errorKey, defaultLane), () => !defaultLane.IsBusy && enabled());
-        commands.Add(command); return command;
+        commands.Add(command);
+        return command;
     }
 
     protected IAsyncRelayCommand<T> Command<T>(Func<T?, Task> action, Predicate<T?> enabled, string errorKey, CommandLane? lane = null)
@@ -54,7 +60,8 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
         var admissionLane = lane ?? defaultLane;
         var command = new AsyncRelayCommand<T>(value => RunAsync(() => action(value), () => enabled(value), errorKey, admissionLane),
             value => !admissionLane.IsBusy && enabled(value));
-        commands.Add(command); return command;
+        commands.Add(command);
+        return command;
     }
 
     // Capture must return an immutable, thread-safe snapshot at user invocation.
@@ -67,7 +74,8 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
             var input = capture();
             return RunAsync(() => action(input), () => enabled(input), errorKey, defaultLane);
         }, () => !defaultLane.IsBusy && enabled(capture()));
-        commands.Add(command); return command;
+        commands.Add(command);
+        return command;
     }
 
     // Eligibility, lane admission, and the synchronous start of the operation
@@ -83,13 +91,15 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
         {
             await Dispatcher.InvokeAsync(() =>
             {
-                if (!enabled() || Interlocked.CompareExchange(ref lane.Busy, 1, 0) != 0) return;
+                if (!enabled() || Interlocked.CompareExchange(ref lane.Busy, 1, 0) != 0)
+                    return;
                 admitted = true;
                 ErrorResourceKey = null;
                 operation = action();
                 NotifyCommands();
             }).ConfigureAwait(false);
-            if (operation is not null) await operation.ConfigureAwait(false);
+            if (operation is not null)
+                await operation.ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -105,6 +115,7 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
     protected void NotifyCommands()
     {
         OnPropertyChanged(nameof(IsBusy));
-        foreach (var command in commands) command.NotifyCanExecuteChanged();
+        foreach (var command in commands)
+            command.NotifyCanExecuteChanged();
     }
 }

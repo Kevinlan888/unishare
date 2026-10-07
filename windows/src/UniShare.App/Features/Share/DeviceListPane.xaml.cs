@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 namespace UniShare.App.Features.Share;
+
 public sealed partial class DeviceListPane : UserControl
 {
     private readonly ShellProjection model;
@@ -8,7 +9,9 @@ public sealed partial class DeviceListPane : UserControl
     public event EventHandler? DeviceSelected;
     public DeviceListPane(ShellProjection model)
     {
-        InitializeComponent(); this.model = model; DataContext = model;
+        InitializeComponent();
+        this.model = model;
+        DataContext = model;
         RecentList.SelectedItem = model.SelectedDevice;
         EmptyHint.Visibility = model.Recent.Count + model.Nearby.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(RecentList, Strings.Get("Recent"));
@@ -24,7 +27,10 @@ public sealed partial class DeviceListPane : UserControl
     private void SelectDevice(object sender, ItemClickEventArgs e)
     {
         model.SelectedDevice = (DeviceProjection)e.ClickedItem;
-        if (ReferenceEquals(sender, RecentList)) NearbyList.SelectedItem = null; else RecentList.SelectedItem = null;
+        if (ReferenceEquals(sender, RecentList))
+            NearbyList.SelectedItem = null;
+        else
+            RecentList.SelectedItem = null;
         DeviceSelected?.Invoke(this, EventArgs.Empty);
     }
     public void SetCompact(bool compact)

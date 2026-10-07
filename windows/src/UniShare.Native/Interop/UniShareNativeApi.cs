@@ -61,7 +61,8 @@ internal static partial class WindowsNativeFile
         }
         try
         {
-            if (RandomAccess.GetLength(file) != 0) throw new IOException("Staging file must be empty.");
+            if (RandomAccess.GetLength(file) != 0)
+                throw new IOException("Staging file must be empty.");
             return file;
         }
         catch { file.Dispose(); throw; }

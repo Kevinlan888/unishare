@@ -28,7 +28,10 @@ public sealed class JsonSettingsStore : ISettingsStore
             var settings = await ReadAsync(path, cancellationToken).ConfigureAwait(false) ??
                 await ReadAsync(path + ".bak", cancellationToken).ConfigureAwait(false) ?? new AppSettings();
             return settings.ReceiveDirectory is null
-                ? settings with { ReceiveDirectory = Path.Combine(downloadsDirectory(), "UniShare") }
+                ? settings with
+                {
+                    ReceiveDirectory = Path.Combine(downloadsDirectory(), "UniShare")
+                }
                 : settings;
         }
         finally { gate.Release(); }
@@ -64,7 +67,8 @@ public sealed class JsonSettingsStore : ISettingsStore
 
     private static async Task<AppSettings?> ReadAsync(string file, CancellationToken cancellationToken)
     {
-        if (!File.Exists(file)) return null;
+        if (!File.Exists(file))
+            return null;
         try
         {
             await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -82,7 +86,8 @@ public sealed class JsonSettingsStore : ISettingsStore
         var result = SHGetKnownFolderPath(in downloads, 0, IntPtr.Zero, out var folder);
         try
         {
-            if (result < 0) Marshal.ThrowExceptionForHR(result);
+            if (result < 0)
+                Marshal.ThrowExceptionForHR(result);
             return Marshal.PtrToStringUni(folder) ?? throw new IOException("Downloads folder could not be resolved.");
         }
         finally { if (folder != IntPtr.Zero) Marshal.FreeCoTaskMem(folder); }

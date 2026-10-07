@@ -21,22 +21,32 @@ public sealed class SettingsViewModel : CommandViewModel, IAppShutdown
 
     public SettingsViewModel(ISettingsStore store, IViewModelFiles files, IViewModelDispatcher dispatcher, AppSettings settings) : base(dispatcher)
     {
-        this.store = store; this.files = files; this.settings = persistedSettings = settings;
+        this.store = store;
+        this.files = files;
+        this.settings = persistedSettings = settings;
         SaveCommand = Command(async () =>
         {
             var result = await EnqueueSave(Settings, validateUnchangedDirectory: true, CancellationToken.None).ConfigureAwait(false);
-            if (!result.Saved && result.ErrorResourceKey == SaveFailed) throw new IOException("Settings could not be saved.");
+            if (!result.Saved && result.ErrorResourceKey == SaveFailed)
+                throw new IOException("Settings could not be saved.");
         }, () => true, SaveFailed);
     }
-    public AppSettings Settings { get => settings; set => SetProperty(ref settings, value); }
-    public string? ValidationResourceKey { get => validationResourceKey; private set => SetProperty(ref validationResourceKey, value); }
+    public AppSettings Settings
+    {
+        get => settings; set => SetProperty(ref settings, value);
+    }
+    public string? ValidationResourceKey
+    {
+        get => validationResourceKey; private set => SetProperty(ref validationResourceKey, value);
+    }
     public IAsyncRelayCommand SaveCommand { get; }
     public void AcceptLoadedSettings(AppSettings value)
     {
         ArgumentNullException.ThrowIfNull(value);
         lock (saveGate)
         {
-            if (!saveTail.IsCompleted) throw new InvalidOperationException("Settings cannot be replaced while a save is pending.");
+            if (!saveTail.IsCompleted)
+                throw new InvalidOperationException("Settings cannot be replaced while a save is pending.");
             Settings = persistedSettings = value;
         }
     }
@@ -47,14 +57,23 @@ public sealed class SettingsViewModel : CommandViewModel, IAppShutdown
         ArgumentNullException.ThrowIfNull(candidate);
         lock (saveGate)
         {
-            if (!acceptingSaves) return Task.FromResult(new SettingsSaveResult(false, SaveFailed));
+            if (!acceptingSaves)
+                return Task.FromResult(new SettingsSaveResult(false, SaveFailed));
             var operation = SaveAfterAsync(saveTail, candidate, validateUnchangedDirectory, cancellationToken);
             saveTail = ObserveAsync(operation);
             return operation;
         }
     }
-    public void BlockNewWork() { lock (saveGate) acceptingSaves = false; }
-    public Task RetireAsync() { lock (saveGate) return saveTail; }
+    public void BlockNewWork()
+    {
+        lock (saveGate)
+            acceptingSaves = false;
+    }
+    public Task RetireAsync()
+    {
+        lock (saveGate)
+            return saveTail;
+    }
     public Task<bool> ValidateReceiveDirectoryAsync(CancellationToken cancellationToken = default) => ValidateAsync(Settings.ReceiveDirectory, cancellationToken);
     private async Task<SettingsSaveResult> SaveAfterAsync(Task predecessor, AppSettings candidate, bool validateUnchangedDirectory, CancellationToken cancellationToken)
     {
@@ -74,13 +93,19 @@ public sealed class SettingsViewModel : CommandViewModel, IAppShutdown
     }
     private static async Task ObserveAsync(Task operation)
     {
-        try { await operation.ConfigureAwait(false); }
+        try
+        {
+            await operation.ConfigureAwait(false);
+        }
         catch { /* Each caller observes its own cancellation; later saves must still run. */ }
     }
     private async Task<bool> ValidateAsync(string? path, CancellationToken cancellationToken)
     {
         bool valid;
-        try { valid = await files.ValidateReceiveDirectoryAsync(path, cancellationToken).ConfigureAwait(false); }
+        try
+        {
+            valid = await files.ValidateReceiveDirectoryAsync(path, cancellationToken).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) { throw; }
         catch { valid = false; }
         await Dispatcher.InvokeAsync(() => ValidationResourceKey = valid ? null : ReceiveDirectoryNotWritable).ConfigureAwait(false);

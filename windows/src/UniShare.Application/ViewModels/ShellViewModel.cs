@@ -5,7 +5,10 @@ using UniShare.Application.Services;
 
 namespace UniShare.Application.ViewModels;
 
-public enum ShellSection { Share, History, Settings }
+public enum ShellSection
+{
+    Share, History, Settings
+}
 public sealed record DiscoveryBannerState(string ResourceKey, ShareErrorKind ErrorKind, bool CanRetry);
 
 public sealed class ShellViewModel : CommandViewModel, IDisposable
@@ -22,7 +25,9 @@ public sealed class ShellViewModel : CommandViewModel, IDisposable
     public ShellViewModel(DeviceStore store, IShareSdkClient sdk, Func<Task> retryDiscovery,
         Func<DeviceEntry, DeviceSessionViewModel> createSession, IViewModelDispatcher dispatcher) : base(dispatcher)
     {
-        this.store = store; this.sdk = sdk; this.createSession = createSession;
+        this.store = store;
+        this.sdk = sdk;
+        this.createSession = createSession;
         Devices = new(store);
         Devices.Refresh();
         RetryDiscoveryCommand = Command(async () =>
@@ -35,15 +40,20 @@ public sealed class ShellViewModel : CommandViewModel, IDisposable
     }
 
     public DeviceListViewModel Devices { get; }
-    public ShellSection SelectedSection { get => selectedSection; set => SetProperty(ref selectedSection, value); }
+    public ShellSection SelectedSection
+    {
+        get => selectedSection; set => SetProperty(ref selectedSection, value);
+    }
     public DeviceEntry? SelectedDevice
     {
         get => store.SelectedDevice;
         set
         {
-            if (ReferenceEquals(store.SelectedDevice, value)) return;
+            if (ReferenceEquals(store.SelectedDevice, value))
+                return;
             store.SelectedDevice = value;
-            if (value is null) SelectedSession = null;
+            if (value is null)
+                SelectedSession = null;
             else
             {
                 if (!sessions.TryGetValue(value.Id, out var session))
@@ -58,7 +68,10 @@ public sealed class ShellViewModel : CommandViewModel, IDisposable
             OnPropertyChanged();
         }
     }
-    public DeviceSessionViewModel? SelectedSession { get => selectedSession; private set => SetProperty(ref selectedSession, value); }
+    public DeviceSessionViewModel? SelectedSession
+    {
+        get => selectedSession; private set => SetProperty(ref selectedSession, value);
+    }
     public DiscoveryBannerState? DiscoveryBanner
     {
         get => discoveryBanner;
@@ -66,25 +79,41 @@ public sealed class ShellViewModel : CommandViewModel, IDisposable
         {
             // A repeated error with identical semantic fields is still a new
             // discovery failure; record value equality must not merge attempts.
-            if (ReferenceEquals(discoveryBanner, value)) return;
-            discoveryBanner = value; OnPropertyChanged(); RetryDiscoveryCommand.NotifyCanExecuteChanged();
+            if (ReferenceEquals(discoveryBanner, value))
+                return;
+            discoveryBanner = value;
+            OnPropertyChanged();
+            RetryDiscoveryCommand.NotifyCanExecuteChanged();
         }
     }
     public IAsyncRelayCommand RetryDiscoveryCommand { get; }
-    private void OnSessionDeviceStateChanged(object? sender, EventArgs args) { if (!disposed) Devices.Refresh(); }
+    private void OnSessionDeviceStateChanged(object? sender, EventArgs args)
+    {
+        if (!disposed)
+            Devices.Refresh();
+    }
 
     private void OnEvent(object? sender, ShareSdkEvent value) => Dispatcher.Post(() =>
     {
-        if (disposed) return;
+        if (disposed)
+            return;
         Devices.Refresh();
         if (value is ShareSdkEvent.DiscoveryFailed failure)
             DiscoveryBanner = new(failure.Failure.Kind == ShareErrorKind.PermissionDenied ? "Discovery.PermissionDenied" : "Discovery.Failed", failure.Failure.Kind, true);
-        else if (value is ShareSdkEvent.DiscoveryStateChanged { State: DiscoveryState.Browsing }) DiscoveryBanner = null;
+        else if (value is ShareSdkEvent.DiscoveryStateChanged { State: DiscoveryState.Browsing })
+            DiscoveryBanner = null;
     });
 
     public void Dispose()
     {
-        if (disposed) return; disposed = true; sdk.EventReceived -= OnEvent;
-        foreach (var session in sessions.Values) { session.DeviceStateChanged -= OnSessionDeviceStateChanged; session.Dispose(); }
+        if (disposed)
+            return;
+        disposed = true;
+        sdk.EventReceived -= OnEvent;
+        foreach (var session in sessions.Values)
+        {
+            session.DeviceStateChanged -= OnSessionDeviceStateChanged;
+            session.Dispose();
+        }
     }
 }

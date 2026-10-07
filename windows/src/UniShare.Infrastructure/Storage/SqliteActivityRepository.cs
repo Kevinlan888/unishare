@@ -23,8 +23,11 @@ public sealed class SqliteActivityRepository : IActivityRepository
         gate = AppStorage.Gate(database);
         connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = database, Mode = SqliteOpenMode.ReadWriteCreate,
-            ForeignKeys = true, Pooling = false, DefaultTimeout = 30
+            DataSource = database,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            ForeignKeys = true,
+            Pooling = false,
+            DefaultTimeout = 30
         }.ToString();
         this.clock = clock;
         this.maxPerDevice = maxPerDevice;

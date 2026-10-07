@@ -4,10 +4,22 @@ namespace UniShare.Application.Models;
 
 public readonly record struct TransferId(Guid Value);
 
-public enum ContentKind { Text = 1, Image = 2, File = 3 }
-public enum ShareDirection { Incoming, Outgoing }
-public enum ShareOrigin { Direct, Clipboard }
-public enum ReceiveDecision { Prompt, AutoAccept }
+public enum ContentKind
+{
+    Text = 1, Image = 2, File = 3
+}
+public enum ShareDirection
+{
+    Incoming, Outgoing
+}
+public enum ShareOrigin
+{
+    Direct, Clipboard
+}
+public enum ReceiveDecision
+{
+    Prompt, AutoAccept
+}
 
 public enum ShareErrorKind
 {
@@ -70,7 +82,9 @@ public abstract record TransientSource(ShareSource Source) : IAsyncDisposable
 // The discriminator also prevents external records using the generated copy constructor.
 public abstract record ShareSdkEvent
 {
-    private ShareSdkEvent() { }
+    private ShareSdkEvent()
+    {
+    }
     private protected abstract byte EventCase { get; }
 
     public sealed record DeviceOnline(DeviceSnapshot Device) : ShareSdkEvent

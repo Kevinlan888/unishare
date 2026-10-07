@@ -19,10 +19,24 @@ public sealed class RecentFileActivitiesTests
     {
         using var fixture = new ViewModelFixture();
         var device = new DeviceId(Guid.NewGuid());
-        var oldFile = fixture.Record(device, name: "old.txt") with { CreatedAt = fixture.Clock.UtcNow.AddMinutes(-4) };
-        var text = fixture.Record(device, name: "text") with { Kind = ContentKind.Text, CreatedAt = fixture.Clock.UtcNow.AddMinutes(-1) };
-        var image = fixture.Record(device, name: "photo.jpg") with { Kind = ContentKind.Image, CreatedAt = fixture.Clock.UtcNow.AddMinutes(-2) };
-        var file = fixture.Record(device, name: "new.zip") with { CreatedAt = fixture.Clock.UtcNow };
+        var oldFile = fixture.Record(device, name: "old.txt") with
+        {
+            CreatedAt = fixture.Clock.UtcNow.AddMinutes(-4)
+        };
+        var text = fixture.Record(device, name: "text") with
+        {
+            Kind = ContentKind.Text,
+            CreatedAt = fixture.Clock.UtcNow.AddMinutes(-1)
+        };
+        var image = fixture.Record(device, name: "photo.jpg") with
+        {
+            Kind = ContentKind.Image,
+            CreatedAt = fixture.Clock.UtcNow.AddMinutes(-2)
+        };
+        var file = fixture.Record(device, name: "new.zip") with
+        {
+            CreatedAt = fixture.Clock.UtcNow
+        };
 
         var result = RecentFileActivities.Select([oldFile, text, image, file], limit: 2);
 

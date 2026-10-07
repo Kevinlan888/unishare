@@ -13,12 +13,23 @@ public sealed class AppLifecycleCoordinator
     private bool exiting;
 
     public AppLifecycleCoordinator(ShareSession session, IAppPresence presence, IAppShutdown? shutdown = null)
-    { this.session = session; this.presence = presence; this.shutdown = shutdown; }
+    {
+        this.session = session;
+        this.presence = presence;
+        this.shutdown = shutdown;
+    }
 
-    public void OnWindowCloseRequested() { lock (gate) if (!exiting) presence.HideWindow(); }
+    public void OnWindowCloseRequested()
+    {
+        lock (gate)
+            if (!exiting)
+                presence.HideWindow();
+    }
     public Task ActivateAsync(DeviceId? device = null)
     {
-        lock (gate) if (!exiting) presence.ShowWindow(device);
+        lock (gate)
+            if (!exiting)
+                presence.ShowWindow(device);
         return Task.CompletedTask;
     }
     public Task PauseAsync() => TransitionAsync(false);
@@ -28,7 +39,8 @@ public sealed class AppLifecycleCoordinator
         Task operation;
         lock (gate)
         {
-            if (exiting) return;
+            if (exiting)
+                return;
             presence.SetTrayState(resume ? TrayState.Paused : TrayState.Pausing);
             // Session admission is synchronous even when its SDK transition
             // waits behind another transition. Do not queue user intent here.
@@ -37,14 +49,22 @@ public sealed class AppLifecycleCoordinator
         try
         {
             await operation.ConfigureAwait(false);
-            lock (gate) if (!exiting) presence.SetTrayState(session.State switch
-            { SessionState.Running => TrayState.Normal, SessionState.Pausing => TrayState.Pausing, SessionState.Faulted => TrayState.Warning, _ => TrayState.Paused });
+            lock (gate)
+                if (!exiting)
+                    presence.SetTrayState(session.State switch
+                    {
+                        SessionState.Running => TrayState.Normal,
+                        SessionState.Pausing => TrayState.Pausing,
+                        SessionState.Faulted => TrayState.Warning,
+                        _ => TrayState.Paused
+                    });
         }
         catch
         {
             lock (gate)
             {
-                if (exiting) return;
+                if (exiting)
+                    return;
                 presence.SetTrayState(TrayState.Warning);
                 presence.ShowNotification(new("Notification.SdkFailure", null, null, []));
             }
@@ -63,12 +83,19 @@ public sealed class AppLifecycleCoordinator
     {
         // ShareSession owns native stop/disposal; accepted content continuations
         // can still be retiring afterward. Flush only beyond their owner boundary.
-        try { await session.ExitAsync().ConfigureAwait(false); }
+        try
+        {
+            await session.ExitAsync().ConfigureAwait(false);
+        }
         catch { /* Session's finally has already attempted SDK retirement. */ }
         finally
         {
-            if (shutdown is not null) await shutdown.RetireAsync().ConfigureAwait(false);
-            try { presence.DisposeResources(); }
+            if (shutdown is not null)
+                await shutdown.RetireAsync().ConfigureAwait(false);
+            try
+            {
+                presence.DisposeResources();
+            }
             finally { presence.ExitApplication(); }
         }
     }

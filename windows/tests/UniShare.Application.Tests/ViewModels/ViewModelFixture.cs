@@ -19,15 +19,19 @@ internal sealed class ViewModelFixture : IDisposable
     public readonly TransferCoordinator Coordinator;
     public ViewModelFixture()
     {
-        Tracker = new(Repository, Clock); Devices = new(Sdk);
+        Tracker = new(Repository, Clock);
+        Devices = new(Sdk);
         Coordinator = new(Sdk, Tracker, Files, () => Settings.Value);
     }
     public DeviceEntry Online(bool trusted = true, bool connected = true)
     {
         var snapshot = new DeviceSnapshot(new(Guid.NewGuid()), "Laptop", DevicePlatform.Windows, 1, 0, [], 42, trusted, Clock.UtcNow);
-        Sdk.Devices.Add(snapshot); if (trusted) Sdk.Trusted.Add(snapshot.Id);
+        Sdk.Devices.Add(snapshot);
+        if (trusted)
+            Sdk.Trusted.Add(snapshot.Id);
         Sdk.Emit(new ShareSdkEvent.DeviceOnline(snapshot));
-        if (connected) Sdk.Emit(new ShareSdkEvent.ConnectionChanged(snapshot.Id, ConnectionState.Connected, null));
+        if (connected)
+            Sdk.Emit(new ShareSdkEvent.ConnectionChanged(snapshot.Id, ConnectionState.Connected, null));
         return Devices.Devices.Single(value => value.Id == snapshot.Id);
     }
     public DeviceSessionViewModel Session(DeviceEntry device) => new(device, Devices, Coordinator, Tracker, Sdk, Ui, Dispatcher);
@@ -38,12 +42,20 @@ internal sealed class ViewModelFixture : IDisposable
             name, "application/octet-stream", bytes, Clock.UtcNow, Clock.UtcNow, null, status, 0, null, null);
     public void Dispose() => Devices.Dispose();
 
-    internal sealed class TestClock : IClock { public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse("2026-10-05T10:00:00Z"); }
+    internal sealed class TestClock : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse("2026-10-05T10:00:00Z");
+    }
     internal sealed class TestRepository : IActivityRepository
     {
         public List<ActivityRecord> Records { get; } = [];
         public ActivityQuery? LastQuery;
-        public Task UpsertAsync(ActivityRecord record, CancellationToken token) { Records.RemoveAll(x => x.Id == record.Id); Records.Add(record); return Task.CompletedTask; }
+        public Task UpsertAsync(ActivityRecord record, CancellationToken token)
+        {
+            Records.RemoveAll(x => x.Id == record.Id);
+            Records.Add(record);
+            return Task.CompletedTask;
+        }
         public Task<IReadOnlyList<ActivityRecord>> LoadDeviceAsync(DeviceId device, CancellationToken token) => Task.FromResult<IReadOnlyList<ActivityRecord>>(Records.Where(x => x.DeviceId == device).ToArray());
         public Task<IReadOnlyList<ActivityRecord>> SearchAsync(ActivityQuery query, CancellationToken token)
         {
@@ -75,22 +87,62 @@ internal sealed class ViewModelFixture : IDisposable
         public Task StopAsync(CancellationToken token) => Task.CompletedTask;
         public IReadOnlyList<DeviceSnapshot> GetDevices() => Devices;
         public IReadOnlySet<DeviceId> GetTrustedDevices() => Trusted;
-        public Task ConnectAsync(DeviceId device, CancellationToken token) { Calls.Add("connect"); return Wait?.Invoke() ?? Task.CompletedTask; }
-        public Task ConfirmPairingAsync(RequestId request, bool matches, CancellationToken token) { ConfirmationWasDispatched = IsDispatching?.Invoke() ?? false; Calls.Add($"confirm:{request.Value}:{matches}"); return Wait?.Invoke() ?? Task.CompletedTask; }
-        public Task RejectPairingAsync(RequestId request, CancellationToken token) { Calls.Add($"pair-reject:{request.Value}"); return Wait?.Invoke() ?? Task.CompletedTask; }
-        public Task ForgetDeviceAsync(DeviceId device, CancellationToken token) { Calls.Add("forget"); Trusted.Remove(device); return Task.CompletedTask; }
+        public Task ConnectAsync(DeviceId device, CancellationToken token)
+        {
+            Calls.Add("connect");
+            return Wait?.Invoke() ?? Task.CompletedTask;
+        }
+        public Task ConfirmPairingAsync(RequestId request, bool matches, CancellationToken token)
+        {
+            ConfirmationWasDispatched = IsDispatching?.Invoke() ?? false;
+            Calls.Add($"confirm:{request.Value}:{matches}");
+            return Wait?.Invoke() ?? Task.CompletedTask;
+        }
+        public Task RejectPairingAsync(RequestId request, CancellationToken token)
+        {
+            Calls.Add($"pair-reject:{request.Value}");
+            return Wait?.Invoke() ?? Task.CompletedTask;
+        }
+        public Task ForgetDeviceAsync(DeviceId device, CancellationToken token)
+        {
+            Calls.Add("forget");
+            Trusted.Remove(device);
+            return Task.CompletedTask;
+        }
         public PendingSend BeginSendText(DeviceId device, string text) => Begin($"text:{text}");
         public PendingSend BeginSendFile(DeviceId device, ContentKind kind, ShareSource source) => Begin($"{kind}:{source.Path}");
         private PendingSend Begin(string call)
         {
-            if (FailSend) throw new IOException();
-            Calls.Add(call); var completion = new TaskCompletionSource<TransferTerminal>(TaskCreationOptions.RunContinuationsAsynchronously);
-            Completions.Add(completion); return new(new((ulong)Completions.Count), completion.Task);
+            if (FailSend)
+                throw new IOException();
+            Calls.Add(call);
+            var completion = new TaskCompletionSource<TransferTerminal>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Completions.Add(completion);
+            return new(new((ulong)Completions.Count), completion.Task);
         }
-        public Task AcceptAsync(RequestId request, string path, CancellationToken token) { Calls.Add($"accept:{request.Value}"); return Accepting?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask; }
-        public Task RejectAsync(RequestId request, CancellationToken token) { Calls.Add($"reject:{request.Value}"); return Wait?.Invoke() ?? Task.CompletedTask; }
-        public Task CancelAsync(TransferId transfer, CancellationToken token) { Calls.Add($"cancel:{transfer.Value}"); return Cancelling?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask; }
-        public async Task<ShareContent> ReadClipboardAsync(CancellationToken token) { ClipboardToken = token; Calls.Add("clipboard"); if (Wait is not null) await Wait(); return Clipboard; }
+        public Task AcceptAsync(RequestId request, string path, CancellationToken token)
+        {
+            Calls.Add($"accept:{request.Value}");
+            return Accepting?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask;
+        }
+        public Task RejectAsync(RequestId request, CancellationToken token)
+        {
+            Calls.Add($"reject:{request.Value}");
+            return Wait?.Invoke() ?? Task.CompletedTask;
+        }
+        public Task CancelAsync(TransferId transfer, CancellationToken token)
+        {
+            Calls.Add($"cancel:{transfer.Value}");
+            return Cancelling?.Invoke() ?? Wait?.Invoke() ?? Task.CompletedTask;
+        }
+        public async Task<ShareContent> ReadClipboardAsync(CancellationToken token)
+        {
+            ClipboardToken = token;
+            Calls.Add("clipboard");
+            if (Wait is not null)
+                await Wait();
+            return Clipboard;
+        }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     internal sealed class TestFiles : ITransferFiles
@@ -99,16 +151,31 @@ internal sealed class ViewModelFixture : IDisposable
         public int Aborted;
         public Func<CancellationToken, Task<TransientSource>>? Staging;
         public Task<PreparedReceive> CreateReceiveAsync(IncomingOffer offer, string root, CancellationToken token) => Task.FromResult<PreparedReceive>(new Receive());
-        public Task<string> PublishAsync(PreparedReceive receive, CancellationToken token) { Published++; return Task.FromResult(receive.FinalPath); }
-        public Task AbortAsync(PreparedReceive receive) { Aborted++; return Task.CompletedTask; }
+        public Task<string> PublishAsync(PreparedReceive receive, CancellationToken token)
+        {
+            Published++;
+            return Task.FromResult(receive.FinalPath);
+        }
+        public Task AbortAsync(PreparedReceive receive)
+        {
+            Aborted++;
+            return Task.CompletedTask;
+        }
         public Task<TransientDestination> CreateTextDestinationAsync(CancellationToken token) => throw new NotSupportedException();
         public Task<TransientSource> StageClipboardImageAsync(ReadOnlyMemory<byte> bytes, string mime, CancellationToken token) => Staging?.Invoke(token) ?? throw new NotSupportedException();
         internal sealed record StagedImage() : TransientSource(new ShareSource("private-stage", "clipboard.png", "image/png", 2))
         {
             public int Disposals;
-            public override ValueTask DisposeAsync() { Disposals++; return ValueTask.CompletedTask; }
+            public override ValueTask DisposeAsync()
+            {
+                Disposals++;
+                return ValueTask.CompletedTask;
+            }
         }
-        private sealed record Receive() : PreparedReceive("staging", "received") { public override ValueTask DisposeAsync() => ValueTask.CompletedTask; }
+        private sealed record Receive() : PreparedReceive("staging", "received")
+        {
+            public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
     internal sealed class SettingsStore : ISettingsStore
     {
@@ -120,8 +187,10 @@ internal sealed class ViewModelFixture : IDisposable
         public async Task SaveAsync(AppSettings settings, CancellationToken token)
         {
             Saves++;
-            if (Saving is not null) await Saving(settings);
-            Value = settings; Saved.Add(settings);
+            if (Saving is not null)
+                await Saving(settings);
+            Value = settings;
+            Saved.Add(settings);
         }
     }
     internal sealed class UiServices : IViewModelFiles
@@ -131,14 +200,21 @@ internal sealed class ViewModelFixture : IDisposable
         public Func<string?, Task<bool>>? Validation;
         public List<string> Opened { get; } = [];
         public bool FileExists(string path) => Exists;
-        public Task OpenAsync(string path, bool location, CancellationToken token) { Opened.Add(path); return Task.CompletedTask; }
+        public Task OpenAsync(string path, bool location, CancellationToken token)
+        {
+            Opened.Add(path);
+            return Task.CompletedTask;
+        }
         public Task<bool> ValidateReceiveDirectoryAsync(string? path, CancellationToken token) => Validation?.Invoke(path) ?? Task.FromResult(Writable);
     }
     internal sealed class QueuedDispatcher : IViewModelDispatcher
     {
         public bool Queue;
         public bool HoldCompletions;
-        public bool IsDispatching { get; private set; }
+        public bool IsDispatching
+        {
+            get; private set;
+        }
         private readonly object gate = new();
         private readonly Queue<Action> actions = new();
         private readonly List<(int Count, TaskCompletionSource Completion)> queueWaiters = [];
@@ -152,16 +228,23 @@ internal sealed class ViewModelFixture : IDisposable
                     actions.Enqueue(action);
                     foreach (var waiter in queueWaiters.Where(waiter => actions.Count >= waiter.Count).ToArray())
                     {
-                        waiter.Completion.SetResult(); queueWaiters.Remove(waiter);
+                        waiter.Completion.SetResult();
+                        queueWaiters.Remove(waiter);
                     }
                 }
-                else Run(action);
+                else
+                    Run(action);
             }
         }
         private void Run(Action action)
         {
-            var previous = IsDispatching; IsDispatching = true;
-            try { action(); } finally { IsDispatching = previous; }
+            var previous = IsDispatching;
+            IsDispatching = true;
+            try
+            {
+                action();
+            }
+            finally { IsDispatching = previous; }
         }
         public Task InvokeAsync(Action action)
         {
@@ -171,25 +254,42 @@ internal sealed class ViewModelFixture : IDisposable
                 try
                 {
                     action();
-                    if (HoldCompletions) completions.Add(completion); else completion.SetResult();
+                    if (HoldCompletions)
+                        completions.Add(completion);
+                    else
+                        completion.SetResult();
                 }
                 catch (Exception error) { completion.SetException(error); }
             });
             return completion.Task;
         }
-        public void Drain() { lock (gate) { while (actions.TryDequeue(out var action)) Run(action); } }
+        public void Drain()
+        {
+            lock (gate)
+            {
+                while (actions.TryDequeue(out var action))
+                    Run(action);
+            }
+        }
         public Task WaitForQueuedActionsAsync(int count)
         {
             lock (gate)
             {
-                if (actions.Count >= count) return Task.CompletedTask;
+                if (actions.Count >= count)
+                    return Task.CompletedTask;
                 var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                queueWaiters.Add((count, completion)); return completion.Task;
+                queueWaiters.Add((count, completion));
+                return completion.Task;
             }
         }
         public void ReleaseCompletions()
         {
-            lock (gate) { foreach (var completion in completions) completion.SetResult(); completions.Clear(); }
+            lock (gate)
+            {
+                foreach (var completion in completions)
+                    completion.SetResult();
+                completions.Clear();
+            }
         }
     }
 }

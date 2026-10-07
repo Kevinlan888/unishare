@@ -8,7 +8,8 @@ internal abstract class SafeNativeHandle : SafeHandle
 {
     protected SafeNativeHandle(ulong token) : base(0, ownsHandle: true)
     {
-        if (IntPtr.Size != 8) throw new PlatformNotSupportedException("UniShare native interop requires x64.");
+        if (IntPtr.Size != 8)
+            throw new PlatformNotSupportedException("UniShare native interop requires x64.");
         SetHandle(unchecked((nint)token));
     }
 

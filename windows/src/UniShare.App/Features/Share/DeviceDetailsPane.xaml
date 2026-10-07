@@ -1,17 +1,237 @@
-<UserControl x:Class="UniShare.App.Features.Share.DeviceDetailsPane"  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:UniShare.App">
-<ScrollViewer HorizontalScrollBarVisibility="Disabled"><StackPanel Padding="16,24,16,16" Spacing="14">
-<StackPanel Spacing="14" HorizontalAlignment="Center" Margin="0,0,0,12"><FontIcon Glyph="{Binding SelectedDevice.Glyph}" FontSize="94" Margin="0,8,0,8"/><TextBlock Text="{Binding SelectedDevice.Name}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8"><Ellipse x:Name="HeroOnlineDot" Width="10" Height="10" Fill="{ThemeResource OnlineBrush}"/><TextBlock x:Name="DeviceStatus"/></StackPanel></StackPanel>
-<Button x:Uid="ConnectPair" Command="{Binding ConnectCommand}" IsEnabled="{Binding CanPair}" HorizontalAlignment="Stretch"/>
-<Button x:Uid="ForgetDevice" Command="{Binding ForgetCommand}" HorizontalAlignment="Stretch"/>
-<Grid ColumnSpacing="12" RowSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-<Button x:Uid="FileShortcut" Command="{Binding SendFileCommand}" HorizontalAlignment="Stretch"><StackPanel Spacing="8"><FontIcon Glyph="&#xE8A5;" FontSize="26" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/><TextBlock x:Uid="FileShortcutLabel" TextAlignment="Center" TextWrapping="Wrap"/></StackPanel></Button>
-<Button Grid.Column="1" x:Uid="PhotoShortcut" Command="{Binding SendPhotoCommand}" HorizontalAlignment="Stretch"><StackPanel Spacing="8"><FontIcon Glyph="&#xEB9F;" FontSize="26" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/><TextBlock x:Uid="PhotoShortcutLabel" TextAlignment="Center" TextWrapping="Wrap"/></StackPanel></Button>
-<Button Grid.Row="1" x:Uid="TextShortcut" Click="TextClick" IsEnabled="{Binding CanSend}" HorizontalAlignment="Stretch"><StackPanel Spacing="8"><FontIcon Glyph="&#xE8F2;" FontSize="26" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/><TextBlock x:Uid="TextShortcutLabel" TextAlignment="Center" TextWrapping="Wrap"/></StackPanel></Button>
-<Button Grid.Row="1" Grid.Column="1" x:Uid="ClipboardShortcut" Command="{Binding SendClipboardCommand}" HorizontalAlignment="Stretch"><StackPanel Spacing="8"><FontIcon Glyph="&#xE77F;" FontSize="26" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/><TextBlock x:Uid="ClipboardShortcutLabel" TextAlignment="Center" TextWrapping="Wrap"/></StackPanel></Button>
-</Grid>
-<Border Style="{StaticResource CardStyle}"><StackPanel Spacing="12"><TextBlock x:Uid="DeviceInfoHeading" Style="{StaticResource PaneHeading}"/><Grid ColumnSpacing="12" RowSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><TextBlock x:Uid="PlatformLabel" Style="{StaticResource SecondaryText}"/><TextBlock Grid.Column="1" Text="{Binding SelectedDevice.Platform}" Style="{StaticResource SecondaryText}"/><TextBlock Grid.Row="1" x:Uid="TrustedLabel" Style="{StaticResource SecondaryText}"/><TextBlock x:Name="TrustValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource SecondaryText}"/><TextBlock Grid.Row="2" x:Uid="LastSeenLabel" Style="{StaticResource SecondaryText}"/><TextBlock x:Uid="NowLabel" Grid.Row="2" Grid.Column="1" Style="{StaticResource SecondaryText}"/></Grid></StackPanel></Border>
-<Border Style="{StaticResource CardStyle}"><StackPanel Spacing="18"><TextBlock x:Uid="SharedFilesHeading" Style="{StaticResource PaneHeading}"/>
-<TextBlock x:Name="NoSharedFiles" x:Uid="NoSharedFiles" Style="{StaticResource SecondaryText}"/>
-<ItemsControl ItemsSource="{Binding SharedFiles}"><ItemsControl.ItemTemplate><DataTemplate><Grid ColumnSpacing="12" Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><FontIcon Glyph="&#xE8A5;" FontSize="32"/><StackPanel Grid.Column="1" Spacing="6"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Text="{Binding StatusText}" Style="{StaticResource SecondaryText}"/><TextBlock Text="{Binding Time}" Style="{StaticResource SecondaryText}"/></StackPanel></StackPanel></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-</StackPanel></Border>
-</StackPanel></ScrollViewer></UserControl>
+<UserControl
+  x:Class="UniShare.App.Features.Share.DeviceDetailsPane"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:local="using:UniShare.App">
+  <ScrollViewer
+    HorizontalScrollBarVisibility="Disabled">
+    <StackPanel
+      Padding="16,24,16,16"
+      Spacing="14">
+      <StackPanel
+        Spacing="14"
+        HorizontalAlignment="Center"
+        Margin="0,0,0,12">
+        <FontIcon
+          Glyph="{Binding SelectedDevice.Glyph}"
+          FontSize="94"
+          Margin="0,8,0,8" />
+        <TextBlock
+          Text="{Binding SelectedDevice.Name}"
+          FontSize="20"
+          FontWeight="SemiBold"
+          TextWrapping="Wrap"
+          TextAlignment="Center" />
+        <StackPanel
+          Orientation="Horizontal"
+          HorizontalAlignment="Center"
+          Spacing="8">
+          <Ellipse
+            x:Name="HeroOnlineDot"
+            Width="10"
+            Height="10"
+            Fill="{ThemeResource OnlineBrush}" />
+          <TextBlock
+            x:Name="DeviceStatus" />
+        </StackPanel>
+      </StackPanel>
+      <Button
+        x:Uid="ConnectPair"
+        Command="{Binding ConnectCommand}"
+        IsEnabled="{Binding CanPair}"
+        HorizontalAlignment="Stretch" />
+      <Button
+        x:Uid="ForgetDevice"
+        Command="{Binding ForgetCommand}"
+        HorizontalAlignment="Stretch" />
+      <Grid
+        ColumnSpacing="12"
+        RowSpacing="10">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition
+            Width="*" />
+          <ColumnDefinition
+            Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition
+            Height="Auto" />
+          <RowDefinition
+            Height="Auto" />
+        </Grid.RowDefinitions>
+        <Button
+          x:Uid="FileShortcut"
+          Command="{Binding SendFileCommand}"
+          HorizontalAlignment="Stretch">
+          <StackPanel
+            Spacing="8">
+            <FontIcon
+              Glyph="&#xE8A5;"
+              FontSize="26"
+              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+            <TextBlock
+              x:Uid="FileShortcutLabel"
+              TextAlignment="Center"
+              TextWrapping="Wrap" />
+          </StackPanel>
+        </Button>
+        <Button
+          Grid.Column="1"
+          x:Uid="PhotoShortcut"
+          Command="{Binding SendPhotoCommand}"
+          HorizontalAlignment="Stretch">
+          <StackPanel
+            Spacing="8">
+            <FontIcon
+              Glyph="&#xEB9F;"
+              FontSize="26"
+              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+            <TextBlock
+              x:Uid="PhotoShortcutLabel"
+              TextAlignment="Center"
+              TextWrapping="Wrap" />
+          </StackPanel>
+        </Button>
+        <Button
+          Grid.Row="1"
+          x:Uid="TextShortcut"
+          Click="TextClick"
+          IsEnabled="{Binding CanSend}"
+          HorizontalAlignment="Stretch">
+          <StackPanel
+            Spacing="8">
+            <FontIcon
+              Glyph="&#xE8F2;"
+              FontSize="26"
+              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+            <TextBlock
+              x:Uid="TextShortcutLabel"
+              TextAlignment="Center"
+              TextWrapping="Wrap" />
+          </StackPanel>
+        </Button>
+        <Button
+          Grid.Row="1"
+          Grid.Column="1"
+          x:Uid="ClipboardShortcut"
+          Command="{Binding SendClipboardCommand}"
+          HorizontalAlignment="Stretch">
+          <StackPanel
+            Spacing="8">
+            <FontIcon
+              Glyph="&#xE77F;"
+              FontSize="26"
+              Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+            <TextBlock
+              x:Uid="ClipboardShortcutLabel"
+              TextAlignment="Center"
+              TextWrapping="Wrap" />
+          </StackPanel>
+        </Button>
+      </Grid>
+      <Border
+        Style="{StaticResource CardStyle}">
+        <StackPanel
+          Spacing="12">
+          <TextBlock
+            x:Uid="DeviceInfoHeading"
+            Style="{StaticResource PaneHeading}" />
+          <Grid
+            ColumnSpacing="12"
+            RowSpacing="10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition
+                Width="*" />
+              <ColumnDefinition
+                Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition
+                Height="Auto" />
+              <RowDefinition
+                Height="Auto" />
+              <RowDefinition
+                Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock
+              x:Uid="PlatformLabel"
+              Style="{StaticResource SecondaryText}" />
+            <TextBlock
+              Grid.Column="1"
+              Text="{Binding SelectedDevice.Platform}"
+              Style="{StaticResource SecondaryText}" />
+            <TextBlock
+              Grid.Row="1"
+              x:Uid="TrustedLabel"
+              Style="{StaticResource SecondaryText}" />
+            <TextBlock
+              x:Name="TrustValue"
+              Grid.Row="1"
+              Grid.Column="1"
+              Style="{StaticResource SecondaryText}" />
+            <TextBlock
+              Grid.Row="2"
+              x:Uid="LastSeenLabel"
+              Style="{StaticResource SecondaryText}" />
+            <TextBlock
+              x:Uid="NowLabel"
+              Grid.Row="2"
+              Grid.Column="1"
+              Style="{StaticResource SecondaryText}" />
+          </Grid>
+        </StackPanel>
+      </Border>
+      <Border
+        Style="{StaticResource CardStyle}">
+        <StackPanel
+          Spacing="18">
+          <TextBlock
+            x:Uid="SharedFilesHeading"
+            Style="{StaticResource PaneHeading}" />
+          <TextBlock
+            x:Name="NoSharedFiles"
+            x:Uid="NoSharedFiles"
+            Style="{StaticResource SecondaryText}" />
+          <ItemsControl
+            ItemsSource="{Binding SharedFiles}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid
+                  ColumnSpacing="12"
+                  Margin="0,0,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition
+                      Width="44" />
+                    <ColumnDefinition
+                      Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <FontIcon
+                    Glyph="&#xE8A5;"
+                    FontSize="32" />
+                  <StackPanel
+                    Grid.Column="1"
+                    Spacing="6">
+                    <TextBlock
+                      Text="{Binding Name}"
+                      FontWeight="SemiBold"
+                      TextTrimming="CharacterEllipsis" />
+                    <StackPanel
+                      Orientation="Horizontal"
+                      Spacing="6">
+                      <TextBlock
+                        Text="{Binding StatusText}"
+                        Style="{StaticResource SecondaryText}" />
+                      <TextBlock
+                        Text="{Binding Time}"
+                        Style="{StaticResource SecondaryText}" />
+                    </StackPanel>
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

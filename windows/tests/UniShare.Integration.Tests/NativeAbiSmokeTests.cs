@@ -1,5 +1,5 @@
-using System.Runtime.InteropServices;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using UniShare.Native.Interop;
@@ -90,12 +90,15 @@ public sealed class NativeAbiSmokeTests
             Assert.AreEqual(0u, Export<SetDiagnosticHandler>("usdk_set_diagnostic_handler")(sdk, null, 0).Code);
             Assert.AreEqual(0u, Export<Release>("usdk_destroy")(sdk).Code);
             sdk = 0; // Destroy is the callback quiescence barrier, not a timing delay.
-            foreach (var count in counts) Assert.AreEqual(1, count());
+            foreach (var count in counts)
+                Assert.AreEqual(1, count());
         }
         finally
         {
-            if (sdk != 0) Marshal.GetDelegateForFunctionPointer<Release>(NativeLibrary.GetExport(library, "usdk_destroy"))(sdk);
-            if (platform != 0) Marshal.GetDelegateForFunctionPointer<Release>(NativeLibrary.GetExport(library, "usdk_platform_release"))(platform);
+            if (sdk != 0)
+                Marshal.GetDelegateForFunctionPointer<Release>(NativeLibrary.GetExport(library, "usdk_destroy"))(sdk);
+            if (platform != 0)
+                Marshal.GetDelegateForFunctionPointer<Release>(NativeLibrary.GetExport(library, "usdk_platform_release"))(platform);
             GC.KeepAlive(roots);
             Marshal.FreeCoTaskMem(deviceName);
             NativeLibrary.Free(library);

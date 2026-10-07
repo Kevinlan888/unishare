@@ -97,7 +97,10 @@ public sealed class PrivacyDiagnosticSink
     private void Write(LogLevel level, string line)
     {
         gate.Wait();
-        try { logger.Log(level, line); }
+        try
+        {
+            logger.Log(level, line);
+        }
         finally { gate.Release(); }
     }
 }

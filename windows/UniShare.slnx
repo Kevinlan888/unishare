@@ -1,18 +1,38 @@
 <Solution>
   <Configurations>
+    <BuildType Name="Debug" />
+    <BuildType Name="Release" />
     <Platform Name="x64" />
   </Configurations>
   <Folder Name="/src/">
-    <Project Path="src/UniShare.App/UniShare.App.csproj" />
-    <Project Path="src/UniShare.Application/UniShare.Application.csproj" />
-    <Project Path="src/UniShare.Infrastructure/UniShare.Infrastructure.csproj" />
-    <Project Path="src/UniShare.Native/UniShare.Native.csproj" />
+    <Project Path="src/UniShare.App/UniShare.App.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/UniShare.Application/UniShare.Application.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/UniShare.Infrastructure/UniShare.Infrastructure.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/UniShare.Native/UniShare.Native.csproj">
+      <Platform Project="x64" />
+    </Project>
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/UniShare.App.Tests/UniShare.App.Tests.csproj" />
-    <Project Path="tests/UniShare.Application.Tests/UniShare.Application.Tests.csproj" />
-    <Project Path="tests/UniShare.Infrastructure.Tests/UniShare.Infrastructure.Tests.csproj" />
-    <Project Path="tests/UniShare.Native.Tests/UniShare.Native.Tests.csproj" />
-    <Project Path="tests/UniShare.Integration.Tests/UniShare.Integration.Tests.csproj" />
+    <Project Path="tests/UniShare.App.Tests/UniShare.App.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/UniShare.Application.Tests/UniShare.Application.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/UniShare.Infrastructure.Tests/UniShare.Infrastructure.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/UniShare.Native.Tests/UniShare.Native.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/UniShare.Integration.Tests/UniShare.Integration.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
   </Folder>
 </Solution>

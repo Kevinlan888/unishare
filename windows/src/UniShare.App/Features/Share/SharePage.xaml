@@ -1,12 +1,87 @@
-<UserControl x:Class="UniShare.App.Features.Share.SharePage" x:Uid="SharePage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:UniShare.App">
-<Grid x:Name="Layout" Background="{ThemeResource ShellBackground}">
-<VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="WidthStates">
-<VisualState x:Name="Compact"><VisualState.Setters><Setter Target="DetailsHost.Visibility" Value="Collapsed"/><Setter Target="LeftColumn.Width" Value="80"/></VisualState.Setters></VisualState>
-<VisualState x:Name="Medium"><VisualState.Setters><Setter Target="DetailsHost.Visibility" Value="Collapsed"/><Setter Target="LeftColumn.Width" Value="280"/></VisualState.Setters></VisualState>
-<VisualState x:Name="Wide"><VisualState.Setters><Setter Target="DetailsHost.Visibility" Value="Visible"/><Setter Target="LeftColumn.Width" Value="320"/><Setter Target="DetailsHost.Width" Value="320"/></VisualState.Setters></VisualState>
-</VisualStateGroup></VisualStateManager.VisualStateGroups>
-<Grid.ColumnDefinitions><ColumnDefinition x:Name="LeftColumn" Width="300"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-<Border Background="{ThemeResource PaneBackground}" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,1,1,0"><ContentControl x:Name="LeftHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/></Border>
-<ContentControl x:Name="CenterHost" Grid.Column="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
-<Border x:Name="DetailsHost" Grid.Column="2" Width="300" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="1,1,0,0" Background="{ThemeResource PaneBackground}"><ContentControl x:Name="RightHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/></Border>
-</Grid></UserControl>
+<UserControl
+  x:Class="UniShare.App.Features.Share.SharePage"
+  x:Uid="SharePage"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:local="using:UniShare.App">
+  <Grid
+    x:Name="Layout"
+    Background="{ThemeResource ShellBackground}">
+    <VisualStateManager.VisualStateGroups>
+      <VisualStateGroup
+        x:Name="WidthStates">
+        <VisualState
+          x:Name="Compact">
+          <VisualState.Setters>
+            <Setter
+              Target="DetailsHost.Visibility"
+              Value="Collapsed" />
+            <Setter
+              Target="LeftColumn.Width"
+              Value="80" />
+          </VisualState.Setters>
+        </VisualState>
+        <VisualState
+          x:Name="Medium">
+          <VisualState.Setters>
+            <Setter
+              Target="DetailsHost.Visibility"
+              Value="Collapsed" />
+            <Setter
+              Target="LeftColumn.Width"
+              Value="280" />
+          </VisualState.Setters>
+        </VisualState>
+        <VisualState
+          x:Name="Wide">
+          <VisualState.Setters>
+            <Setter
+              Target="DetailsHost.Visibility"
+              Value="Visible" />
+            <Setter
+              Target="LeftColumn.Width"
+              Value="320" />
+            <Setter
+              Target="DetailsHost.Width"
+              Value="320" />
+          </VisualState.Setters>
+        </VisualState>
+      </VisualStateGroup>
+    </VisualStateManager.VisualStateGroups>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition
+        x:Name="LeftColumn"
+        Width="300" />
+      <ColumnDefinition
+        Width="*" />
+      <ColumnDefinition
+        Width="Auto" />
+    </Grid.ColumnDefinitions>
+    <Border
+      Background="{ThemeResource PaneBackground}"
+      BorderBrush="{ThemeResource DividerBrush}"
+      BorderThickness="0,1,1,0">
+      <ContentControl
+        x:Name="LeftHost"
+        HorizontalContentAlignment="Stretch"
+        VerticalContentAlignment="Stretch" />
+    </Border>
+    <ContentControl
+      x:Name="CenterHost"
+      Grid.Column="1"
+      HorizontalContentAlignment="Stretch"
+      VerticalContentAlignment="Stretch" />
+    <Border
+      x:Name="DetailsHost"
+      Grid.Column="2"
+      Width="300"
+      BorderBrush="{ThemeResource DividerBrush}"
+      BorderThickness="1,1,0,0"
+      Background="{ThemeResource PaneBackground}">
+      <ContentControl
+        x:Name="RightHost"
+        HorizontalContentAlignment="Stretch"
+        VerticalContentAlignment="Stretch" />
+    </Border>
+  </Grid>
+</UserControl>

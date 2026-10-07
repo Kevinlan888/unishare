@@ -4,7 +4,10 @@ namespace UniShare.Application.Abstractions;
 
 public interface ITransferDrain
 {
-    bool HasActiveTransfers { get; }
+    bool HasActiveTransfers
+    {
+        get;
+    }
     void BlockNewTransfers();
     void AllowNewTransfers();
     Task WaitForIdleAsync(CancellationToken cancellationToken);

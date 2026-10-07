@@ -22,7 +22,11 @@ public sealed class DeviceStoreTests
         sdk.Emit(new ShareSdkEvent.DeviceOnline(device));
         var entry = store.Devices.Single();
         store.SelectedDevice = entry;
-        var updated = device with { Name = "Renamed", LastSeen = device.LastSeen.AddMinutes(1) };
+        var updated = device with
+        {
+            Name = "Renamed",
+            LastSeen = device.LastSeen.AddMinutes(1)
+        };
         sdk.Emit(new ShareSdkEvent.DeviceUpdated(updated));
         sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
         Assert.AreSame(entry, store.Devices.Single());
@@ -167,7 +171,10 @@ public sealed class DeviceStoreTests
         Assert.IsFalse(entry.Snapshot!.IsTrusted);
 
         // A new pairing has persisted trust before its completion is delivered.
-        sdk.Emit(new ShareSdkEvent.PairingRequested(new(2), device with { IsTrusted = false }, "123456"));
+        sdk.Emit(new ShareSdkEvent.PairingRequested(new(2), device with
+        {
+            IsTrusted = false
+        }, "123456"));
         sdk.Trusted = new HashSet<DeviceId> { device.Id };
         sdk.Emit(new ShareSdkEvent.PairingCompleted(new(2), device.Id, null));
         Assert.IsTrue(entry.IsTrusted);

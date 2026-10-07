@@ -23,6 +23,8 @@
     <Content Include="Assets\*.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="licenses\NLog-LICENSE.txt" Link="licenses\NLog-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Remove="Assets\**" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('$(NativeStageRoot)\bin\unishare.dll')">
     <Content Include="$(NativeStageRoot)\bin\unishare.dll;$(NativeStageRoot)\bin\libcrypto-3*.dll;$(NativeStageRoot)\bin\libssl-3*.dll"
              Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(NativeStageRoot)\licenses\*.txt" Link="licenses\%(Filename)%(Extension)"

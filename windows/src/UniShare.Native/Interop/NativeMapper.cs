@@ -12,7 +12,8 @@ internal static class NativeMapper
 
     internal static void RequireAbiVersion(uint version)
     {
-        if (version != 1) throw new NotSupportedException("Only UniShare ABI v1 is supported.");
+        if (version != 1)
+            throw new NotSupportedException("Only UniShare ABI v1 is supported.");
     }
 
     internal static Guid ReadUuid(byte[] bytes) => new(bytes, bigEndian: true);
@@ -27,9 +28,12 @@ internal static class NativeMapper
 
     internal static byte[] CopyBytes(nint pointer, ulong length)
     {
-        if (length > MaximumSpanBytes) throw new ArgumentOutOfRangeException(nameof(length));
-        if (length == 0) return [];
-        if (pointer == 0) throw new ArgumentException("A nonempty native span requires storage.", nameof(pointer));
+        if (length > MaximumSpanBytes)
+            throw new ArgumentOutOfRangeException(nameof(length));
+        if (length == 0)
+            return [];
+        if (pointer == 0)
+            throw new ArgumentException("A nonempty native span requires storage.", nameof(pointer));
         var bytes = new byte[(int)length];
         Marshal.Copy(pointer, bytes, 0, bytes.Length);
         return bytes;
@@ -49,13 +53,16 @@ internal static class NativeMapper
 
     internal static void ValidateArray(nint pointer, ulong count)
     {
-        if (count > MaximumArrayItems) throw new ArgumentOutOfRangeException(nameof(count));
-        if (pointer == 0 && count != 0) throw new ArgumentException("A nonempty native array requires storage.", nameof(pointer));
+        if (count > MaximumArrayItems)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        if (pointer == 0 && count != 0)
+            throw new ArgumentException("A nonempty native array requires storage.", nameof(pointer));
     }
 
     internal static ShareFailure? MapError(uint code, bool hasPlatformError, long platformError)
     {
-        if (code == 0) return null;
+        if (code == 0)
+            return null;
         var kind = code <= 14 ? (ShareErrorKind)code : ShareErrorKind.Unknown;
         // Fixed metadata-only message: never expose borrowed native payloads in diagnostics.
         return new ShareFailure(kind, kind == ShareErrorKind.Unknown ? "Unknown native error." : $"UniShare error: {kind}.", hasPlatformError ? platformError : null);

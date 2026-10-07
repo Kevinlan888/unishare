@@ -18,9 +18,12 @@ public sealed class NativeGateReviewTests
             foreach (string mutation in new[] { "removed", "renamed", "duplicate" })
             {
                 var names = NativeGateFixture.Names.ToList();
-                if (mutation == "removed") names.RemoveAt(0);
-                else if (mutation == "renamed") names[0] = "different_native_test";
-                else names[0] = names[1];
+                if (mutation == "removed")
+                    names.RemoveAt(0);
+                else if (mutation == "renamed")
+                    names[0] = "different_native_test";
+                else
+                    names[0] = names[1];
                 fixture.Write(mutateInventory ? names : NativeGateFixture.Names, mutateInventory ? NativeGateFixture.Names : names);
                 var rejected = fixture.Validate();
                 Assert.AreNotEqual(0, rejected.Exit, $"Accepted {mutation}, inventory={mutateInventory}: {rejected.Text}");
@@ -53,10 +56,17 @@ internal sealed class NativeGateFixture : IDisposable
     private readonly string directory = Path.Combine(Path.GetTempPath(), "unishare-native-gate-" + Guid.NewGuid());
     internal string Report => Path.Combine(directory, "results.xml");
     private string Inventory => Path.Combine(directory, "inventory.json");
-    internal NativeGateFixture() { Directory.CreateDirectory(directory); Write(Names, Names); }
+    internal NativeGateFixture()
+    {
+        Directory.CreateDirectory(directory);
+        Write(Names, Names);
+    }
     internal void Write(IEnumerable<string> inventory, IEnumerable<string> report, bool skipped = false)
     {
-        File.WriteAllText(Inventory, JsonSerializer.Serialize(new { tests = inventory.Select(name => new { name }) }));
+        File.WriteAllText(Inventory, JsonSerializer.Serialize(new
+        {
+            tests = inventory.Select(name => new { name })
+        }));
         File.WriteAllText(Report, new XElement("testsuite", report.Select((name, index) => new XElement("testcase", new XAttribute("name", name), new XAttribute("status", skipped && index == 0 ? "notrun" : "run"), skipped && index == 0 ? new XElement("skipped") : null))).ToString());
     }
     internal (int Exit, string Text) Validate() => VerificationScriptTests.Run("validate-native-tests.ps1", "-Inventory", Inventory, "-Report", Report);

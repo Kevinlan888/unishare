@@ -1,14 +1,15 @@
-using Microsoft.UI.Xaml;
+using System.ComponentModel;
 using Microsoft.UI.Windowing;
+using Microsoft.UI.Xaml;
+using UniShare.App.Features.Pairing;
 using UniShare.App.Features.Shell;
-using Windows.Graphics;
 using UniShare.App.Services;
 using UniShare.Application.Models;
 using UniShare.Application.Services;
 using UniShare.Application.ViewModels;
-using UniShare.App.Features.Pairing;
-using System.ComponentModel;
+using Windows.Graphics;
 namespace UniShare.App;
+
 public sealed partial class MainWindow : Window, IWindowPlatform
 {
     private readonly ShellProjection model;
@@ -30,36 +31,61 @@ public sealed partial class MainWindow : Window, IWindowPlatform
     }
     public void RefreshLanguage()
     {
-        Title = Strings.Get("AppTitle"); WindowTitleText.Text = Strings.Get("AppTitle"); RebuildShell();
+        Title = Strings.Get("AppTitle");
+        WindowTitleText.Text = Strings.Get("AppTitle");
+        RebuildShell();
     }
     public void AttachLifecycle(AppLifecycleCoordinator lifecycle, PairingViewModel pairing)
     {
-        this.lifecycle = lifecycle; this.pairing = pairing;
+        this.lifecycle = lifecycle;
+        this.pairing = pairing;
         pairing.PropertyChanged += OnPairingChanged;
     }
     private async void OnPairingChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName != nameof(PairingViewModel.PendingRequest) || pairing?.PendingRequest is null || pairingDialog is not null || shuttingDown) return;
+        if (args.PropertyName != nameof(PairingViewModel.PendingRequest) || pairing?.PendingRequest is null || pairingDialog is not null || shuttingDown)
+            return;
         await lifecycle!.ActivateAsync();
-        if (Root.XamlRoot is null) await rootReady.Task;
-        if (pairingDialog is not null || pairing?.PendingRequest is null || shuttingDown) return;
+        if (Root.XamlRoot is null)
+            await rootReady.Task;
+        if (pairingDialog is not null || pairing?.PendingRequest is null || shuttingDown)
+            return;
         using var dialog = new PairingDialog(pairing) { XamlRoot = Root.XamlRoot };
         pairingDialog = dialog;
-        try { await dialog.ShowAsync(); }
+        try
+        {
+            await dialog.ShowAsync();
+        }
         finally { pairingDialog = null; }
     }
     public void Show(DeviceId? device)
     {
-        if (shuttingDown) return;
-        if (device is { } id) { model.Runtime?.SelectDevice(id); (ShellHost.Content as ShellPage)?.ShowDeviceSession(); }
-        AppWindow.Show(); Activate();
+        if (shuttingDown)
+            return;
+        if (device is { } id)
+        {
+            model.Runtime?.SelectDevice(id);
+            (ShellHost.Content as ShellPage)?.ShowDeviceSession();
+        }
+        AppWindow.Show();
+        Activate();
     }
-    public void Hide() { if (!shuttingDown) AppWindow.Hide(); }
+    public void Hide()
+    {
+        if (!shuttingDown)
+            AppWindow.Hide();
+    }
     public void Dispose()
     {
-        if (shuttingDown) return; shuttingDown = true;
-        if (pairing is not null) pairing.PropertyChanged -= OnPairingChanged;
-        pairingDialog?.Hide(); (ShellHost.Content as IDisposable)?.Dispose(); ShellHost.Content = null; Close();
+        if (shuttingDown)
+            return;
+        shuttingDown = true;
+        if (pairing is not null)
+            pairing.PropertyChanged -= OnPairingChanged;
+        pairingDialog?.Hide();
+        (ShellHost.Content as IDisposable)?.Dispose();
+        ShellHost.Content = null;
+        Close();
     }
     public MainWindow(ShellProjection model)
     {
@@ -76,8 +102,10 @@ public sealed partial class MainWindow : Window, IWindowPlatform
         }
         AppWindow.Resize(new SizeInt32(1440, 900));
         var args = Environment.GetCommandLineArgs();
-        if (args.Contains("--compact")) AppWindow.Resize(new SizeInt32(960, 640));
-        if (args.Contains("--capture-size")) AppWindow.Resize(new SizeInt32(1536, 1024));
+        if (args.Contains("--compact"))
+            AppWindow.Resize(new SizeInt32(960, 640));
+        if (args.Contains("--capture-size"))
+            AppWindow.Resize(new SizeInt32(1536, 1024));
         Root.RequestedTheme = args.Contains("--dark") ? ElementTheme.Dark : args.Contains("--light") ? ElementTheme.Light : ElementTheme.Default;
         ShellHost.Content = new ShellPage(model);
         AppWindow.Closing += (_, args) => { if (!shuttingDown) { args.Cancel = true; lifecycle?.OnWindowCloseRequested(); } };
@@ -89,7 +117,10 @@ public sealed partial class MainWindow : Window, IWindowPlatform
             timer.IsRepeating = false;
             timer.Tick += async (_, _) =>
             {
-                try { await DemoSnapshotService.CaptureAsync(Root, args[snapshotIndex + 1]); }
+                try
+                {
+                    await DemoSnapshotService.CaptureAsync(Root, args[snapshotIndex + 1]);
+                }
                 catch (Exception error)
                 {
                     // Capture diagnostics contain no activity text or file payload.

@@ -10,7 +10,8 @@ internal sealed class OutgoingTransferRegistry
 
     internal void Register(OperationId operation)
     {
-        if (operation.Value == 0) throw new ArgumentOutOfRangeException(nameof(operation));
+        if (operation.Value == 0)
+            throw new ArgumentOutOfRangeException(nameof(operation));
         pending.AddLast(operation);
     }
 
@@ -18,7 +19,8 @@ internal sealed class OutgoingTransferRegistry
 
     internal ShareSdkEvent.OutgoingTransferRegistered? ObserveProgress(TransferId transfer)
     {
-        if (!known.Add(transfer) || pending.First is not { } first) return null;
+        if (!known.Add(transfer) || pending.First is not { } first)
+            return null;
         pending.RemoveFirst();
         return new(first.Value, transfer);
     }
@@ -27,8 +29,13 @@ internal sealed class OutgoingTransferRegistry
     {
         pending.Remove(operation);
         // Retain terminal IDs until Stop so delayed progress cannot steal the next send.
-        if (transfer is { } id) known.Add(id);
+        if (transfer is { } id)
+            known.Add(id);
     }
 
-    internal void Clear() { pending.Clear(); known.Clear(); }
+    internal void Clear()
+    {
+        pending.Clear();
+        known.Clear();
+    }
 }

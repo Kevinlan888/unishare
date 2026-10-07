@@ -21,7 +21,8 @@ internal static class DemoSnapshotService
     {
         var nativeDllLoaded = System.Diagnostics.Process.GetCurrentProcess().Modules.Cast<System.Diagnostics.ProcessModule>()
             .Any(module => string.Equals(module.ModuleName, "unishare.dll", StringComparison.OrdinalIgnoreCase));
-        if (nativeDllLoaded) throw new InvalidOperationException("Demo capture must not load unishare.dll.");
+        if (nativeDllLoaded)
+            throw new InvalidOperationException("Demo capture must not load unishare.dll.");
         root.UpdateLayout();
         var bitmap = new RenderTargetBitmap();
         await bitmap.RenderAsync(root);

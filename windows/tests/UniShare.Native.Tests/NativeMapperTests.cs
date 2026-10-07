@@ -14,8 +14,14 @@ public sealed class NativeMapperTests
     public void DiagnosticMapsKnownAndUnknownFixedValues()
     {
         var known = NativeMapper.Diagnostic(new NativeDiagnosticEvent
-        { Stage = 12, Outcome = 3, Direction = 1, ContentType = 3, Sequence = 42,
-          Error = new NativeError { Code = 11, HasPlatformError = 1, PlatformError = -5 } });
+        {
+            Stage = 12,
+            Outcome = 3,
+            Direction = 1,
+            ContentType = 3,
+            Sequence = 42,
+            Error = new NativeError { Code = 11, HasPlatformError = 1, PlatformError = -5 }
+        });
         Assert.AreEqual(NativeDiagnosticStage.Offer, known.Stage);
         Assert.AreEqual(NativeDiagnosticOutcome.Failed, known.Outcome);
         Assert.AreEqual(DiagnosticDirection.Send, known.Direction);
@@ -23,12 +29,22 @@ public sealed class NativeMapperTests
         Assert.AreEqual(ShareErrorKind.StorageFailed, known.Category);
         Assert.AreEqual(-5L, known.PlatformCode);
         var disconnected = NativeMapper.Diagnostic(new NativeDiagnosticEvent
-        { Stage = 19, Outcome = 3, Direction = 1, Sequence = 7,
-          Error = new NativeError { Code = 3 } });
+        {
+            Stage = 19,
+            Outcome = 3,
+            Direction = 1,
+            Sequence = 7,
+            Error = new NativeError { Code = 3 }
+        });
         Assert.AreEqual(NativeDiagnosticStage.Disconnect, disconnected.Stage);
         var unknown = NativeMapper.Diagnostic(new NativeDiagnosticEvent
-        { Stage = uint.MaxValue, Outcome = uint.MaxValue, Direction = uint.MaxValue,
-          ContentType = uint.MaxValue, Error = new NativeError { Code = uint.MaxValue } });
+        {
+            Stage = uint.MaxValue,
+            Outcome = uint.MaxValue,
+            Direction = uint.MaxValue,
+            ContentType = uint.MaxValue,
+            Error = new NativeError { Code = uint.MaxValue }
+        });
         Assert.AreEqual(NativeDiagnosticStage.Unknown, unknown.Stage);
         Assert.AreEqual(NativeDiagnosticOutcome.Unknown, unknown.Outcome);
         Assert.AreEqual(DiagnosticDirection.Unknown, unknown.Direction);
@@ -41,9 +57,15 @@ public sealed class NativeMapperTests
         Assert.IsNotNull(type, "Missing copy-before-return mapper");
         var target = type.GetMethod(method, BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
         Assert.IsNotNull(target);
-        try { return target.Invoke(null, arguments); }
+        try
+        {
+            return target.Invoke(null, arguments);
+        }
         catch (TargetInvocationException exception) when (exception.InnerException is not null)
-        { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exception.InnerException).Throw(); throw; }
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
+            throw;
+        }
     }
 
     [TestMethod]
@@ -180,9 +202,15 @@ public sealed class NativeMapperTests
             snapshot = NativeMapper.Device(new NativeDevice
             {
                 Id = NativeMapper.ToNativeUuid(Guid.Parse("00112233-4455-6677-8899-aabbccddeeff")),
-                Name = new() { Data = data, Length = 9 }, Platform = 2,
-                ProtocolMajor = 1, ProtocolMinor = 2, Port = 54321, Paired = 1,
-                LastSeenUnixMs = 1000, Addresses = spans, AddressCount = 1
+                Name = new() { Data = data, Length = 9 },
+                Platform = 2,
+                ProtocolMajor = 1,
+                ProtocolMinor = 2,
+                Port = 54321,
+                Paired = 1,
+                LastSeenUnixMs = 1000,
+                Addresses = spans,
+                AddressCount = 1
             });
             Marshal.Copy(new byte[9], 0, data, 9);
         }

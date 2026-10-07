@@ -9,19 +9,31 @@ public static class ReceiveDirectoryValidator
         try
         {
             var root = path ?? defaultRoot();
-            if (string.IsNullOrWhiteSpace(root)) return Task.FromResult(false);
+            if (string.IsNullOrWhiteSpace(root))
+                return Task.FromResult(false);
             Directory.CreateDirectory(root);
             probe = Path.Combine(root, ".unishare-write-probe-" + Guid.NewGuid().ToString("N"));
             using (var stream = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            { stream.WriteByte(0); stream.Flush(true); }
+            {
+                stream.WriteByte(0);
+                stream.Flush(true);
+            }
             File.Delete(probe);
             return Task.FromResult(true);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        { return Task.FromResult(false); }
+        {
+            return Task.FromResult(false);
+        }
         finally
         {
-            if (probe is not null) try { File.Delete(probe); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            if (probe is not null)
+                try
+                {
+                    File.Delete(probe);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
         }
     }
 }

@@ -73,11 +73,24 @@ public sealed class SqliteActivityRepositoryTests
     {
         using var directory = new TemporaryDirectory();
         var repository = Repository(directory);
-        var expected = Record() with { DisplayName = "a%_' OR 1=1 -- Report.txt", Status = ActivityStatus.Failed, ErrorKind = ShareErrorKind.Timeout };
+        var expected = Record() with
+        {
+            DisplayName = "a%_' OR 1=1 -- Report.txt",
+            Status = ActivityStatus.Failed,
+            ErrorKind = ShareErrorKind.Timeout
+        };
         await repository.UpsertAsync(expected, default);
         await repository.UpsertAsync(Record(), default);
-        await repository.UpsertAsync(expected with { Id = new(Guid.NewGuid()), DeviceId = Other }, default);
-        await repository.UpsertAsync(expected with { Id = new(Guid.NewGuid()), Direction = ShareDirection.Incoming }, default);
+        await repository.UpsertAsync(expected with
+        {
+            Id = new(Guid.NewGuid()),
+            DeviceId = Other
+        }, default);
+        await repository.UpsertAsync(expected with
+        {
+            Id = new(Guid.NewGuid()),
+            Direction = ShareDirection.Incoming
+        }, default);
         var rows = await repository.SearchAsync(new("%_' OR 1=1 -- report", Device, ActivityStatus.Failed, ShareDirection.Outgoing), default);
         Assert.AreEqual(expected, rows.Single());
         Assert.AreEqual(4, (await repository.SearchAsync(new(null, null, null, null), default)).Count);
@@ -88,8 +101,15 @@ public sealed class SqliteActivityRepositoryTests
     {
         using var directory = new TemporaryDirectory();
         var repository = Repository(directory);
-        var record = Record() with { CreatedAt = Now.ToOffset(TimeSpan.FromHours(8)), ErrorKind = ShareErrorKind.NetworkLost };
-        await repository.UpsertAsync(record with { Status = ActivityStatus.Transferring }, default);
+        var record = Record() with
+        {
+            CreatedAt = Now.ToOffset(TimeSpan.FromHours(8)),
+            ErrorKind = ShareErrorKind.NetworkLost
+        };
+        await repository.UpsertAsync(record with
+        {
+            Status = ActivityStatus.Transferring
+        }, default);
         await repository.UpsertAsync(record, default);
         Assert.AreEqual(record, (await Repository(directory).LoadDeviceAsync(Device, default)).Single());
     }
@@ -144,7 +164,11 @@ public sealed class SqliteActivityRepositoryTests
         using var directory = new TemporaryDirectory();
         var repository = Repository(directory);
         var path = "C:\\Downloads\\private-file.txt";
-        var successful = Record() with { Direction = ShareDirection.Incoming, ReceivedFilePath = path };
+        var successful = Record() with
+        {
+            Direction = ShareDirection.Incoming,
+            ReceivedFilePath = path
+        };
         await repository.UpsertAsync(successful, default);
         foreach (var record in new[] {
             successful with { Direction = ShareDirection.Outgoing },
@@ -153,7 +177,11 @@ public sealed class SqliteActivityRepositoryTests
             successful with { Status = ActivityStatus.Failed },
             successful with { Status = ActivityStatus.Transferring },
             successful with { ErrorKind = ShareErrorKind.StorageFailed } })
-            await repository.UpsertAsync(record with { Id = new(Guid.NewGuid()), ReceivedFilePath = "C:\\secret\\payload.txt" }, default);
+            await repository.UpsertAsync(record with
+            {
+                Id = new(Guid.NewGuid()),
+                ReceivedFilePath = "C:\\secret\\payload.txt"
+            }, default);
         var rows = await repository.LoadDeviceAsync(Device, default);
         Assert.AreEqual(path, rows.Single(row => row.Id == successful.Id).ReceivedFilePath);
         Assert.IsTrue(rows.Where(row => row.Id != successful.Id).All(row => row.ReceivedFilePath is null));
@@ -172,7 +200,11 @@ public sealed class SqliteActivityRepositoryTests
     {
         using var directory = new TemporaryDirectory();
         var repository = Repository(directory);
-        var record = Record() with { Direction = ShareDirection.Incoming, ReceivedFilePath = "C:\\Downloads\\report.txt" };
+        var record = Record() with
+        {
+            Direction = ShareDirection.Incoming,
+            ReceivedFilePath = "C:\\Downloads\\report.txt"
+        };
         await repository.UpsertAsync(record, default);
         var tracker = new ActivityTracker(repository, new FixedClock(Now));
         var incoming = tracker.AddIncomingOffer(new(new(1), record.TransferId!.Value, Device, ContentKind.File, "report.txt", "text/plain", 1));
@@ -182,7 +214,10 @@ public sealed class SqliteActivityRepositoryTests
         Assert.AreEqual(record.ReceivedFilePath, tracker.GetDeviceSnapshot(Device).Single().ReceivedFilePath);
     }
 
-    private sealed class FixedClock(DateTimeOffset now) : IClock { public DateTimeOffset UtcNow => now; }
+    private sealed class FixedClock(DateTimeOffset now) : IClock
+    {
+        public DateTimeOffset UtcNow => now;
+    }
 }
 
 internal sealed class TemporaryDirectory : IDisposable

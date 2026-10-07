@@ -10,7 +10,10 @@ public sealed class DeviceEntry
     internal sealed record Metadata(DeviceSnapshot? Snapshot, bool Online, bool Trusted, bool Blocked, bool Connected);
     private Metadata metadata = new(null, false, false, false, false);
     internal DeviceEntry(DeviceId id) => Id = id;
-    internal Metadata Data { get => Volatile.Read(ref metadata); set => Volatile.Write(ref metadata, value); }
+    internal Metadata Data
+    {
+        get => Volatile.Read(ref metadata); set => Volatile.Write(ref metadata, value);
+    }
     public DeviceId Id { get; }
     public DeviceSnapshot? Snapshot
     {
@@ -18,7 +21,10 @@ public sealed class DeviceEntry
         {
             var value = Data;
             return value.Snapshot is { } snapshot && snapshot.IsTrusted != value.Trusted
-                ? snapshot with { IsTrusted = value.Trusted }
+                ? snapshot with
+                {
+                    IsTrusted = value.Trusted
+                }
                 : value.Snapshot;
         }
     }
@@ -27,7 +33,14 @@ public sealed class DeviceEntry
     public bool IsTrusted => Data.Trusted;
     public bool IsBlocked => Data.Blocked;
     public bool IsConnected => Data.Connected;
-    public bool CanTransfer { get { var value = Data; return value.Online && value.Trusted && !value.Blocked; } }
+    public bool CanTransfer
+    {
+        get
+        {
+            var value = Data;
+            return value.Online && value.Trusted && !value.Blocked;
+        }
+    }
 }
 
 public sealed class DeviceStore : IDisposable
@@ -47,12 +60,37 @@ public sealed class DeviceStore : IDisposable
         sdk.EventReceived += OnEvent;
     }
 
-    public IReadOnlyList<DeviceEntry> Devices { get { lock (gate) return SortedEntries().ToArray(); } }
-    public IReadOnlyList<DeviceEntry> TrustedDevices { get { lock (gate) return SortedEntries().Where(value => value.IsTrusted).ToArray(); } }
-    public IReadOnlyList<DeviceEntry> NearbyDevices { get { lock (gate) return SortedEntries().Where(value => !value.IsTrusted).ToArray(); } }
+    public IReadOnlyList<DeviceEntry> Devices
+    {
+        get
+        {
+            lock (gate)
+                return SortedEntries().ToArray();
+        }
+    }
+    public IReadOnlyList<DeviceEntry> TrustedDevices
+    {
+        get
+        {
+            lock (gate)
+                return SortedEntries().Where(value => value.IsTrusted).ToArray();
+        }
+    }
+    public IReadOnlyList<DeviceEntry> NearbyDevices
+    {
+        get
+        {
+            lock (gate)
+                return SortedEntries().Where(value => !value.IsTrusted).ToArray();
+        }
+    }
     public DeviceEntry? SelectedDevice
     {
-        get { lock (gate) return selected is { } id ? entries[id] : null; }
+        get
+        {
+            lock (gate)
+                return selected is { } id ? entries[id] : null;
+        }
         set
         {
             lock (gate)
@@ -73,7 +111,8 @@ public sealed class DeviceStore : IDisposable
 
     private DeviceEntry GetOrAdd(DeviceId id)
     {
-        if (!entries.TryGetValue(id, out var entry)) entries.Add(id, entry = new(id));
+        if (!entries.TryGetValue(id, out var entry))
+            entries.Add(id, entry = new(id));
         return entry;
     }
 
@@ -87,8 +126,10 @@ public sealed class DeviceStore : IDisposable
             var devices = sdk.GetDevices();
             var trusted = sdk.GetTrustedDevices();
             var online = devices.Select(value => value.Id).ToHashSet();
-            foreach (var device in devices) Update(device);
-            foreach (var id in trusted) GetOrAdd(id);
+            foreach (var device in devices)
+                Update(device);
+            foreach (var id in trusted)
+                GetOrAdd(id);
             foreach (var entry in entries.Values)
             {
                 var data = entry.Data;
@@ -122,7 +163,8 @@ public sealed class DeviceStore : IDisposable
         ArgumentNullException.ThrowIfNull(value);
         lock (gate)
         {
-            if (disposed) return;
+            if (disposed)
+                return;
             switch (value)
             {
                 case ShareSdkEvent.DeviceOnline online:
@@ -133,12 +175,20 @@ public sealed class DeviceStore : IDisposable
                     break;
                 case ShareSdkEvent.DeviceOffline offline:
                     if (entries.TryGetValue(offline.Device, out var offlineEntry))
-                        offlineEntry.Data = offlineEntry.Data with { Online = false, Connected = false };
+                        offlineEntry.Data = offlineEntry.Data with
+                        {
+                            Online = false,
+                            Connected = false
+                        };
                     break;
                 case ShareSdkEvent.ConnectionChanged connection:
                     var connectedEntry = GetOrAdd(connection.Device);
-                    connectedEntry.Data = connectedEntry.Data with { Connected = connection.State == ConnectionState.Connected };
-                    if (connection.Failure?.Kind == ShareErrorKind.IdentityChanged) Block(connection.Device);
+                    connectedEntry.Data = connectedEntry.Data with
+                    {
+                        Connected = connection.State == ConnectionState.Connected
+                    };
+                    if (connection.Failure?.Kind == ShareErrorKind.IdentityChanged)
+                        Block(connection.Device);
                     break;
                 case ShareSdkEvent.IdentityChanged changed:
                     Block(changed.Device);
@@ -151,7 +201,10 @@ public sealed class DeviceStore : IDisposable
                     {
                         forgotten.Remove(paired.Device);
                         var pairedEntry = GetOrAdd(paired.Device);
-                        pairedEntry.Data = pairedEntry.Data with { Trusted = true };
+                        pairedEntry.Data = pairedEntry.Data with
+                        {
+                            Trusted = true
+                        };
                     }
                     break;
                 case ShareSdkEvent.PairingCompleted { Failure.Kind: ShareErrorKind.IdentityChanged } failed:
@@ -164,7 +217,11 @@ public sealed class DeviceStore : IDisposable
     private void Block(DeviceId id)
     {
         var entry = GetOrAdd(id);
-        entry.Data = entry.Data with { Blocked = true, Connected = false };
+        entry.Data = entry.Data with
+        {
+            Blocked = true,
+            Connected = false
+        };
         identityVersions[id] = identityVersions.GetValueOrDefault(id) + 1;
     }
 
@@ -174,8 +231,10 @@ public sealed class DeviceStore : IDisposable
         lock (gate)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            if (!entries.ContainsKey(id)) throw new ArgumentException("Device is not known.", nameof(id));
-            if (!forgetting.Add(id)) throw new InvalidOperationException("Device is already being forgotten.");
+            if (!entries.ContainsKey(id))
+                throw new ArgumentException("Device is not known.", nameof(id));
+            if (!forgetting.Add(id))
+                throw new InvalidOperationException("Device is already being forgotten.");
             version = identityVersions.GetValueOrDefault(id);
         }
         try
@@ -203,7 +262,8 @@ public sealed class DeviceStore : IDisposable
     {
         lock (gate)
         {
-            if (disposed) return;
+            if (disposed)
+                return;
             disposed = true;
             sdk.EventReceived -= OnEvent;
         }

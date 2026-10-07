@@ -1,1 +1,47 @@
-<UserControl x:Class="UniShare.App.Features.History.HistoryPage" x:Uid="HistoryPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"><Grid Padding="28"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock x:Uid="HistoryHeading" FontSize="28" FontWeight="SemiBold"/><TextBox x:Name="Query" x:Uid="HistoryQuery" Grid.Row="1" Margin="0,20" TextChanged="QueryChanged"/><ListView x:Name="Results" Grid.Row="2"><ListView.ItemTemplate><DataTemplate><StackPanel Spacing="8" Padding="12"><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding StatusText}"/><TextBlock Text="{Binding Time}" Style="{StaticResource SecondaryText}"/></StackPanel></DataTemplate></ListView.ItemTemplate></ListView></Grid></UserControl>
+<UserControl
+  x:Class="UniShare.App.Features.History.HistoryPage"
+  x:Uid="HistoryPage"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid
+    Padding="28">
+    <Grid.RowDefinitions>
+      <RowDefinition
+        Height="Auto" />
+      <RowDefinition
+        Height="Auto" />
+      <RowDefinition
+        Height="*" />
+    </Grid.RowDefinitions>
+    <TextBlock
+      x:Uid="HistoryHeading"
+      FontSize="28"
+      FontWeight="SemiBold" />
+    <TextBox
+      x:Name="Query"
+      x:Uid="HistoryQuery"
+      Grid.Row="1"
+      Margin="0,20"
+      TextChanged="QueryChanged" />
+    <ListView
+      x:Name="Results"
+      Grid.Row="2">
+      <ListView.ItemTemplate>
+        <DataTemplate>
+          <StackPanel
+            Spacing="8"
+            Padding="12">
+            <TextBlock
+              Text="{Binding Name}"
+              FontWeight="SemiBold" />
+            <TextBlock
+              Text="{Binding StatusText}" />
+            <TextBlock
+              Text="{Binding Time}"
+              Style="{StaticResource SecondaryText}" />
+          </StackPanel>
+        </DataTemplate>
+      </ListView.ItemTemplate>
+    </ListView>
+  </Grid>
+</UserControl>
