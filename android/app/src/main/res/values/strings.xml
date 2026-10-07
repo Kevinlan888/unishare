@@ -5,4 +5,17 @@
     <string name="nav_devices">Devices</string>
     <string name="nav_history">History</string>
     <string name="nav_settings">Settings</string>
+    <string name="notification_channel_receive">Background receiving</string>
+    <string name="notification_channel_receive_description">Keeps nearby sharing available</string>
+    <string name="notification_channel_transfer">Transfers</string>
+    <string name="notification_channel_transfer_description">Shows active transfer progress</string>
+    <string name="notification_receive_title">UniShare is ready</string>
+    <plurals name="notification_receive_content">
+        <item quantity="one">%1$d nearby device online</item>
+        <item quantity="other">%1$d nearby devices online</item>
+    </plurals>
+    <string name="notification_stop_background">Stop background receiving</string>
+    <string name="notification_transfer_title">UniShare transfer</string>
+    <string name="notification_transfer_content">Transfer in progress</string>
+    <string name="notification_cancel_transfer">Cancel transfer</string>
 </resources>

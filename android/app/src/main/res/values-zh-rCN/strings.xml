@@ -5,4 +5,16 @@
     <string name="nav_devices">设备</string>
     <string name="nav_history">历史</string>
     <string name="nav_settings">设置</string>
+    <string name="notification_channel_receive">后台接收</string>
+    <string name="notification_channel_receive_description">保持附近分享可用</string>
+    <string name="notification_channel_transfer">传输</string>
+    <string name="notification_channel_transfer_description">显示正在进行的传输进度</string>
+    <string name="notification_receive_title">UniShare 已准备接收</string>
+    <plurals name="notification_receive_content">
+        <item quantity="other">%1$d 台附近设备在线</item>
+    </plurals>
+    <string name="notification_stop_background">停止后台接收</string>
+    <string name="notification_transfer_title">UniShare 传输</string>
+    <string name="notification_transfer_content">正在传输</string>
+    <string name="notification_cancel_transfer">取消传输</string>
 </resources>
