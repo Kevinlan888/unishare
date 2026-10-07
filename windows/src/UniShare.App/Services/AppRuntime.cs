@@ -143,6 +143,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         var actual = await Startup.SetEnabledAsync(enabled);
         return await UpdateSettingsAsync(value => value with { StartupEnabled = actual });
     }
+    public void ApplyTheme(ThemePolicy theme) => window.ApplyTheme(theme);
     public async Task<SettingsSaveResult> UpdateSettingsAsync(Func<AppSettings, AppSettings> update)
     {
         ArgumentNullException.ThrowIfNull(update);

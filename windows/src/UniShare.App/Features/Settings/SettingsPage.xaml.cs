@@ -75,13 +75,7 @@ public sealed partial class SettingsPage : UserControl
             2 => ThemePolicy.Dark,
             _ => ThemePolicy.System
         };
-        if (XamlRoot?.Content is FrameworkElement root)
-            root.RequestedTheme = theme switch
-            {
-                ThemePolicy.Light => ElementTheme.Light,
-                ThemePolicy.Dark => ElementTheme.Dark,
-                _ => ElementTheme.Default
-            };
+        model.Runtime?.ApplyTheme(theme);
         await SaveAsync(value => value with { Theme = theme });
     }
     private async void LanguageChanged(object sender, SelectionChangedEventArgs e)

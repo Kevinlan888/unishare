@@ -9,6 +9,8 @@ public sealed partial class DeviceListPane : UserControl
     private DataTemplate NearbyDeviceTemplate => (DataTemplate)Resources[nameof(NearbyDeviceTemplate)];
     private DataTemplate CompactDeviceTemplate => (DataTemplate)Resources[nameof(CompactDeviceTemplate)];
     private Style CompactDeviceItemContainerStyle => (Style)Resources[nameof(CompactDeviceItemContainerStyle)];
+    private static Style NavigationButtonStyle => (Style)Microsoft.UI.Xaml.Application.Current.Resources["NavigationButton"];
+    private static Style SelectedNavigationButtonStyle => (Style)Microsoft.UI.Xaml.Application.Current.Resources["SelectedNavigationButton"];
     public event EventHandler<string>? Navigate;
     public event EventHandler? DeviceSelected;
     public DeviceListPane(ShellProjection model)
@@ -25,7 +27,7 @@ public sealed partial class DeviceListPane : UserControl
     {
         var button = (Button)sender;
         foreach (var item in Navigation.Children.OfType<Button>())
-            item.Background = (Microsoft.UI.Xaml.Media.Brush)Microsoft.UI.Xaml.Application.Current.Resources[item == button ? "SelectedBackground" : "SubtleFillColorTransparentBrush"];
+            item.Style = item == button ? SelectedNavigationButtonStyle : NavigationButtonStyle;
         Navigate?.Invoke(this, (string)button.Tag);
     }
     private void SelectDevice(object sender, ItemClickEventArgs e)

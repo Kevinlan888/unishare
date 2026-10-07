@@ -263,6 +263,26 @@ public sealed partial class XamlPolicyTests
     }
 
     [TestMethod]
+    public void SelectedNavigationUsesAThemeAwareBackgroundStyle()
+    {
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var controls = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Resources", "Themes", "Controls.xaml"));
+        var selectedStyle = controls.Descendants().SingleOrDefault(element =>
+            element.Name.LocalName == "Style" && element.Attribute(x + "Key")?.Value == "SelectedNavigationButton");
+
+        Assert.IsNotNull(selectedStyle, "Navigation selection still resolves a brush outside the active element theme.");
+        Assert.AreEqual("{StaticResource NavigationButton}", selectedStyle.Attribute("BasedOn")?.Value);
+        Assert.IsTrue(selectedStyle.Descendants().Any(element =>
+            element.Name.LocalName == "Setter" && element.Attribute("Property")?.Value == "Background" &&
+            element.Attribute("Value")?.Value == "{ThemeResource SelectedBackground}"));
+
+        var pane = XDocument.Load(Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceListPane.xaml"));
+        var share = pane.Descendants().Single(element => element.Attribute("Tag")?.Value == "Share");
+        Assert.AreEqual("{StaticResource SelectedNavigationButton}", share.Attribute("Style")?.Value);
+        Assert.IsNull(share.Attribute("Background"), "A local background value can preserve the wrong theme after navigation.");
+    }
+
+    [TestMethod]
     public void ClipboardMarkerUsesSenderLocalPresentationPolicy()
     {
         var card = File.ReadAllText(Path.Combine(ResourceCoverageTests.AppPath, "Controls", "TextActivityCard.xaml.cs"));

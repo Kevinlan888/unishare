@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using UniShare.App.Features.Pairing;
+using UniShare.App.Presentation;
 using UniShare.App.Features.Shell;
 using UniShare.App.Services;
 using UniShare.Application.Models;
@@ -18,12 +19,23 @@ public sealed partial class MainWindow : Window, IWindowPlatform
     private PairingDialog? pairingDialog;
     private bool shuttingDown;
     private readonly TaskCompletionSource rootReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public void ApplyTheme(ThemePolicy theme) => Root.RequestedTheme = theme switch
+    public void ApplyTheme(ThemePolicy theme)
     {
-        ThemePolicy.Light => ElementTheme.Light,
-        ThemePolicy.Dark => ElementTheme.Dark,
-        _ => ElementTheme.Default
-    };
+        Root.RequestedTheme = theme switch
+        {
+            ThemePolicy.Light => ElementTheme.Light,
+            ThemePolicy.Dark => ElementTheme.Dark,
+            _ => ElementTheme.Default
+        };
+        if (!AppWindowTitleBar.IsCustomizationSupported())
+            return;
+        AppWindow.TitleBar.PreferredTheme = TitleBarThemePolicy.Resolve(theme) switch
+        {
+            TitleBarThemePreference.Light => TitleBarTheme.Light,
+            TitleBarThemePreference.Dark => TitleBarTheme.Dark,
+            _ => TitleBarTheme.UseDefaultAppMode
+        };
+    }
     public void RebuildShell()
     {
         (ShellHost.Content as IDisposable)?.Dispose();
@@ -106,7 +118,7 @@ public sealed partial class MainWindow : Window, IWindowPlatform
             AppWindow.Resize(new SizeInt32(960, 640));
         if (args.Contains("--capture-size"))
             AppWindow.Resize(new SizeInt32(1536, 1024));
-        Root.RequestedTheme = args.Contains("--dark") ? ElementTheme.Dark : args.Contains("--light") ? ElementTheme.Light : ElementTheme.Default;
+        ApplyTheme(args.Contains("--dark") ? ThemePolicy.Dark : args.Contains("--light") ? ThemePolicy.Light : ThemePolicy.System);
         ShellHost.Content = new ShellPage(model);
         AppWindow.Closing += (_, args) => { if (!shuttingDown) { args.Cancel = true; lifecycle?.OnWindowCloseRequested(); } };
         var snapshotIndex = Array.IndexOf(args, "--snapshot");

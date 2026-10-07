@@ -133,13 +133,12 @@
         x:Name="Navigation"
         Spacing="6">
         <Button
-          Style="{StaticResource NavigationButton}"
+          Style="{StaticResource SelectedNavigationButton}"
           x:Uid="NavShare"
           Tag="Share"
           Click="NavigateClick"
           HorizontalAlignment="Stretch"
-          HorizontalContentAlignment="Left"
-          Background="{ThemeResource SelectedBackground}">
+          HorizontalContentAlignment="Left">
           <StackPanel
             Orientation="Horizontal"
             Spacing="16">
