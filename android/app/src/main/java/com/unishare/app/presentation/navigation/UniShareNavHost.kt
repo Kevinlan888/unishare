@@ -63,6 +63,7 @@ fun UniShareNavHost(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
+    sessionContent: (@Composable (DeviceKey, () -> Unit) -> Unit)? = null,
 ) {
     val entry by navController.currentBackStackEntryAsState()
     val currentRoute = entry?.destination?.route ?: AppDestination.Home.route
@@ -139,11 +140,15 @@ fun UniShareNavHost(
                 val encodedId = backStackEntry.arguments?.getString("deviceId").orEmpty()
                 val deviceId = (AppDestination.fromRoute("${AppDestination.SESSION_PREFIX}/$encodedId") as? AppDestination.Session)
                     ?.deviceId ?: DeviceKey("")
-                NestedPlaceholder(
-                    title = stringResource(R.string.screen_session_title),
-                    argument = deviceId.value,
-                    onBack = navController::popBackStack,
-                )
+                if (sessionContent == null) {
+                    NestedPlaceholder(
+                        title = stringResource(R.string.screen_session_title),
+                        argument = deviceId.value,
+                        onBack = navController::popBackStack,
+                    )
+                } else {
+                    sessionContent(deviceId, navController::popBackStack)
+                }
             }
             composable(
                 route = AppDestination.RECEIVE_PATTERN,

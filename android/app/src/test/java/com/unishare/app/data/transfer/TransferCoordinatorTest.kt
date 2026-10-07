@@ -50,6 +50,19 @@ class TransferCoordinatorTest {
     }
 
     @Test
+    fun outgoing_image_keeps_only_a_process_preview_reference_for_the_session_ui() = runTest {
+        val fixture = fixture()
+        val activityId = fixture.coordinator.sendContent(
+            device,
+            selected(ContentKind.IMAGE, "image/jpeg", "photo.jpg"),
+        )
+
+        val preview = fixture.tracker.preview(activityId) as ActivityPreview.Image
+
+        assertEquals("content://test/content", preview.reference)
+    }
+
+    @Test
     fun clipboard_text_and_image_submit_only_after_explicit_read() = runTest {
         val fixture = fixture()
         fixture.gateway.clipboard = ClipboardContent.Text("clip text")

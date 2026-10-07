@@ -342,7 +342,12 @@ class TransferCoordinator internal constructor(
         ownedStaging: TransferKey?,
     ): ActivityKey {
         val activity = outgoingActivity(deviceId, content.kind, origin, content.displayName, content.mimeType, content.byteCount, retryOf)
-        tracker.reserve(activity)
+        tracker.reserve(
+            activity,
+            preview = if (content.kind == ContentKind.IMAGE) {
+                ActivityPreview.Image(content.uri.toString())
+            } else null,
+        )
         synchronized(gate) {
             retryPayloads[activity.id] = RetryPayload.Content(content, origin)
             ownedStaging?.let { outgoingStaging[activity.id] = it }

@@ -13,6 +13,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unishare.app.presentation.home.HomeViewModel
 import com.unishare.app.presentation.navigation.UniShareNavHost
+import com.unishare.app.presentation.session.SessionRoute
+import com.unishare.app.presentation.session.SessionViewModel
 import com.unishare.app.presentation.theme.UniShareTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,6 +33,13 @@ class MainActivity : ComponentActivity() {
                     UniShareNavHost(
                         homeUiState = homeState,
                         onRefresh = homeViewModel::refresh,
+                        sessionContent = { deviceId, onBack ->
+                            val sessionViewModel: SessionViewModel = viewModel(
+                                key = "session-${deviceId.value}",
+                                factory = SessionViewModel.Factory(graph, deviceId),
+                            )
+                            SessionRoute(sessionViewModel, onBack)
+                        },
                     )
                 }
             }

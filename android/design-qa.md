@@ -53,3 +53,66 @@ The normalized `372` px-wide comparison keeps typography, card edges, icons, sep
 - Revisit platform-icon styling only if a future approved icon asset set replaces the required Material icons.
 
 final result: passed
+
+---
+
+# Task 9 Device Session and Share Sheet Design QA
+
+## Evidence
+
+- Source visual truth: `C:\Users\kevin\AppData\Local\Temp\codex-clipboard-PsXme7.png` (`1536 × 1024` px). The device-session target is the second-phone crop at `(394, 12)`, `414 × 1000` px; the share-sheet target is the third-phone crop at `(817, 12)`, `368 × 1000` px.
+- Rendered implementation: `app/build/reports/design-qa/task9-session.png` and `app/build/reports/design-qa/task9-share-sheet.png`, captured from the Compose test activity on `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp).
+- Normalized comparisons: `app/build/reports/design-qa/task9-session-comparison.png` and `app/build/reports/design-qa/task9-share-sheet-comparison.png`. Each implementation capture was proportionally downsampled to its source crop width and placed beside the source: session `414 × 920` beside `414 × 1000`; sheet `368 × 818` beside `368 × 1000`.
+- State: English, light theme, trusted online Windows peer, compact outgoing/incoming text, representative generated landscape image, and an outgoing file at 72% with `42 MB/s` and `14 sec left`; the second capture opens the attachment sheet over that exact session state.
+- Asset evidence: `app/src/main/res/drawable-nodpi/sample_mountain_lake.png` is a purpose-generated `1672 × 941` photo used only by the test/QA fixture as representative preview imagery. Production activity records do not substitute it for transferred content.
+- Interaction evidence: six `SessionScreenTest` cases passed on the API 37 emulator, covering left/right alignment, text/image/file cards, waiting/transferring/completed/failed semantics, 100% progress clamping, cancel/retry actions, the five-entry no-folder sheet, 200% font scale, and both QA captures. The sheet Add action was exercised to reach the captured modal state.
+- Browser console checks: not applicable to this native Android implementation. Instrumentation completed without a process crash or failed test.
+
+## Full-view comparison
+
+The final normalized session comparison reproduces the source hierarchy: platform-owned system bars, back/device/status/overflow header, centered Today chip, content-sized pale-blue outgoing bubbles, compact neutral incoming bubbles, a wide photo card with filename and size, a pale-blue transfer card with progress/rate/ETA, and a fixed add/input/send composer. The modal comparison reproduces the dimmed session, white round-topped sheet, drag handle, bold device-specific title, and softly tinted two-column action tiles.
+
+The source mock uses a taller viewport, so it exposes link and clipboard activities below the file card while the emulator capture ends earlier. The implementation list remains scrollable and deliberately does not compress text or controls to fake the taller source viewport.
+
+## Focused comparison
+
+Separate focused crops were not required: the normalized session comparison remains `844 × 1000` and the sheet comparison `752 × 1000`, keeping header type, card copy, progress details, icons, tile labels, and composer controls readable. The original `1080 × 2400` captures were additionally inspected for raster sharpness, tap-target spacing, system-bar contrast, and modal edge quality.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Android system sans-serif matches the reference's neutral mobile typography. Device name, sheet title, filenames, body copy, metadata, and button labels retain the same weight hierarchy. Text bubbles shrink to content while long input and labels can wrap at 200% font scale without hiding Add or Send.
+- Spacing and layout rhythm: final text bubbles are content-sized; image preview is approximately `1.95:1`; file controls share the existing 48 dp header row rather than adding excess card height. Horizontal margins, 18–20 dp radii, section gaps, sheet start position, two-column tile grid, and composer placement match the reference direction.
+- Colors and tokens: the existing Material theme supplies the low-contrast blue-gray background, white/neutral incoming surfaces, pale-blue outgoing surfaces, blue primary actions, muted slate metadata, green online state, modal scrim, and distinct low-saturation tile colors.
+- Image quality and asset fidelity: the test/QA photo is a sharp generated alpine-lake raster with the same wide crop, snow range, evergreen shore, and reflection art direction as the source. Production code never treats it as hidden transfer payload. Real current-process image URIs use a two-pass, power-of-two sampled thumbnail decoder bounded near the visible preview size rather than full-file byte buffering; inaccessible historical URIs fall back to the official Material image icon. All device, action, content, and state icons come from the official Material icon library; there are no emoji UI icons, handcrafted SVGs, gradients, or placeholder boxes.
+- Copy and content: complete English and Simplified Chinese resources cover the session, sheet, statuses, progress, actions, and stable errors. Folder is intentionally absent per the approved product contract. Link follows the text-send path; clipboard is read only after an explicit foreground click.
+- Accessibility and responsiveness: status is expressed in text as well as color, state cards expose content descriptions, progress clamps to `0..100`, icon actions have labels, core tap targets are at least 48 dp, and the connected test confirms Add/Send remain visible at 200% font scale.
+
+## Comparison history
+
+1. Initial comparison found a P2 density mismatch: every text activity occupied the full card width and the photo preview was taller than the approximately `2:1` source slot. Text surfaces now use intrinsic content width with a bounded minimum/maximum, and the photo uses a `1.95:1` crop. The second capture confirmed compact left/right bubbles and the corrected image proportion.
+2. The second comparison found a P2 vertical-density mismatch: image/file timestamps and transfer actions were placed in a separate bottom row, making the file card roughly 35–40 px taller at normalized width. Image metadata/time now share one row; file actions occupy the existing 48 dp header row and rate/time/percent share the progress-detail row. The final capture shows file-card height and image metadata rhythm aligned with the source while preserving 48 dp cancel/retry targets.
+3. The generic test host initially rendered light status icons on a light surface. The capture host now requests the light-status-bar appearance, matching the real `MainActivity` edge-to-edge behavior already verified in Task 8. The final evidence has readable dark Android-owned status icons.
+4. Final comparison found no remaining actionable P0, P1, or P2 mismatch.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences remain.
+- P3: official Material outline device/content icons are intentionally simpler than the source illustrations, satisfying the requirement to use the platform icon library.
+- P3: the source mock is proportionally taller, so more activities are visible above the fixed composer; the emulator retains scroll and action reachability instead of shrinking content.
+- Expected product deviation: removing Folder leaves five tiles, with Link occupying the final left cell. This is required by the approved scope rather than a fidelity defect.
+
+## Implementation checklist
+
+- [x] Make outgoing/incoming text bubbles content-sized and directionally aligned.
+- [x] Match the landscape preview crop and compact file-card rhythm.
+- [x] Preserve 48 dp cancel/retry/Add/Send targets.
+- [x] Use the five approved sheet actions and omit Folder.
+- [x] Keep Android system chrome platform-owned and readable.
+- [x] Verify normal and 200% text states on the emulator.
+- [x] Compare the same session and modal states side by side after each visual fix.
+
+## Follow-up polish
+
+- Revisit device illustrations only if a future approved icon asset set replaces the required Material icons.
+
+final result: passed
