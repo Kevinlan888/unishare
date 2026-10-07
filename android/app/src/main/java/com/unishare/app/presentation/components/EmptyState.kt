@@ -31,7 +31,7 @@ fun EmptyState(
     ) {
         Icon(
             imageVector = Icons.Outlined.Inbox,
-            contentDescription = title,
+            contentDescription = null,
             modifier = Modifier.size(30.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )

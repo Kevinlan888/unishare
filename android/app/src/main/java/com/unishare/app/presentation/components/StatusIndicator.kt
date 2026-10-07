@@ -35,7 +35,7 @@ fun StatusIndicator(
     ) {
         Icon(
             imageVector = Icons.Filled.Circle,
-            contentDescription = label,
+            contentDescription = null,
             modifier = Modifier.size(9.dp),
             tint = color,
         )

@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import android.os.LocaleList
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -60,6 +61,7 @@ class HomeScreenTest(
         composeRule.onNodeWithText("project.zip · 72%").assertIsDisplayed()
         composeRule.onNodeWithText(copy.nearby).assertIsDisplayed()
         composeRule.onNodeWithText(copy.trustedOnline).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(copy.trustedOnline).assertDoesNotExist()
         composeRule.onNodeWithContentDescription(copy.refresh).assertIsDisplayed()
         composeRule.onNodeWithContentDescription(copy.newShare).assertIsDisplayed()
     }
@@ -99,19 +101,38 @@ class HomeScreenTest(
     }
 
     @Test
-    fun loading_empty_and_error_states_are_explained_with_text() {
-        setHomeContent(
-            state = HomeUiState(
+    fun nearby_loading_error_empty_and_content_states_are_exclusive() {
+        val state = mutableStateOf(
+            HomeUiState(
                 isLoading = true,
                 thisDevice = ThisDeviceUi("Pixel 10", ThisDeviceStatus.STARTING),
                 discoveryError = ShareErrorKind.DISCOVERY_FAILED,
             ),
         )
+        setHomeContent(
+            stateProvider = { state.value },
+        )
 
-        composeRule.onNodeWithText(copy.loading).assertIsDisplayed()
-        composeRule.onNodeWithText(copy.discoveryError).assertIsDisplayed()
-        composeRule.onNodeWithText(copy.noRecent).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(copy.loading).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(copy.discoveryError).assertDoesNotExist()
+        composeRule.onNodeWithText(copy.noNearby).assertDoesNotExist()
+
+        composeRule.runOnIdle { state.value = state.value.copy(isLoading = false) }
+        composeRule.onNodeWithText(copy.discoveryError).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(copy.loading).assertDoesNotExist()
+        composeRule.onNodeWithText(copy.noNearby).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(copy.refresh).assertExists()
+
+        composeRule.runOnIdle { state.value = state.value.copy(discoveryError = null) }
         composeRule.onNodeWithText(copy.noNearby).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(copy.loading).assertDoesNotExist()
+        composeRule.onNodeWithText(copy.discoveryError).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(copy.noNearby).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(copy.noRecent).assertDoesNotExist()
+
+        composeRule.runOnIdle { state.value = state.value.copy(nearby = populatedState().nearby) }
+        composeRule.onNodeWithText("Alice's iPhone").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(copy.noNearby).assertDoesNotExist()
     }
 
     @Test
@@ -157,6 +178,7 @@ class HomeScreenTest(
 
     private fun setHomeContent(
         state: HomeUiState = populatedState(),
+        stateProvider: (() -> HomeUiState)? = null,
         onRefresh: () -> Unit = {},
         fontScale: Float = 1f,
         restoration: StateRestorationTester? = null,
@@ -175,7 +197,7 @@ class HomeScreenTest(
             ) {
                 UniShareTheme(darkTheme = false) {
                     UniShareNavHost(
-                        homeUiState = state,
+                        homeUiState = stateProvider?.invoke() ?: state,
                         onRefresh = onRefresh,
                     )
                 }

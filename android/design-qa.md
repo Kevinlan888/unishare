@@ -3,15 +3,16 @@
 ## Evidence
 
 - Source visual truth: `C:\Users\kevin\AppData\Local\Temp\codex-clipboard-PsXme7.png`, first phone crop at `(11, 12)`, `372 × 1000` px.
-- Rendered implementation: `app/build/reports/task8-home-emulator.png`, captured from `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp).
+- Layout/state capture: `app/build/reports/task8-home-emulator.png`, captured from the Compose test activity on `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp).
+- Production capture: `app/build/reports/task8-review-mainactivity.png`, captured from the installed app's real `MainActivity` on the same emulator. This is the authoritative evidence for edge-to-edge and system-bar appearance; its status icons are dark and readable on the pale background.
 - Normalized comparison: `app/build/reports/task8-home-comparison.png`. The implementation was downsampled to the source crop width (`372 × 827` px) without changing aspect ratio and placed beside the `372 × 1000` source crop.
 - State: English, light theme, online local device, two representative recent transfers, and four nearby devices. The shorter Android viewport deliberately shows two recent rows so the nearby section remains visible; all remaining content is vertically scrollable.
-- Native interaction evidence: 12 parameterized Compose tests passed on the API 37 emulator, covering English and Simplified Chinese, selected bottom navigation, refresh, FAB/tab/device routes, nested device-ID restoration, loading/error/empty states, grouped-row geometry, 48 dp actions, and 200% font scale.
+- Native interaction evidence: 12 parameterized Compose tests passed on the API 37 emulator, covering English and Simplified Chinese, selected bottom navigation, refresh, FAB/tab/device routes, nested device-ID restoration, exclusive loading/error/empty/content states, decorative-icon semantics, grouped-row geometry, 48 dp actions, and 200% font scale.
 - Browser console checks: not applicable to this native Android implementation. The connected instrumentation run completed without a process crash or failed test.
 
 ## Full-view comparison
 
-The normalized side-by-side image confirms the same major composition: pale blue-gray background, bold Share header with search and overflow actions, rounded white self-device card, Recent and Nearby Devices sections with grouped rows and separators, blue circular FAB, and a rounded white four-item bottom bar. Android system bars remain platform-owned and are not recreated as app content.
+The normalized side-by-side image confirms the same major composition: pale blue-gray background, bold Share header with search and overflow actions, rounded white self-device card, Recent and Nearby Devices sections with grouped rows and separators, blue circular FAB, and a rounded white four-item bottom bar. Android system bars remain platform-owned and are not recreated as app content. The production `MainActivity` capture separately confirms the system chooses dark, readable status icons for the pale edge-to-edge surface.
 
 ## Focused comparison
 
@@ -29,6 +30,9 @@ The normalized `372` px-wide comparison keeps typography, card edges, icons, sep
 
 1. Initial capture found a P1 grouped-list defect: sibling rows were overlaid because `Surface` lays out multiple direct children as a box. A failing geometry test reproduced the issue; `GroupedSurface` now places children in a `Column`. The final comparison shows separated rows and dividers.
 2. The post-layout capture found a P2 bottom-navigation mismatch: Material's default selected indicator produced a gray pill and slate selected icon. Navigation colors were changed to blue selected icon/text with a transparent indicator. The final comparison shows the corrected selected state.
+3. A test-activity capture showed white system-bar icons. That image was produced by the generic Compose test host and is not representative of the app window. The production `MainActivity` capture at `app/build/reports/task8-review-mainactivity.png` shows dark status icons with correct contrast, so no production system-bar defect remains.
+4. Review found that loading, discovery error, and empty nearby content could appear together. The nearby section now uses the exclusive priority `loading > error > empty/content`; a parameterized regression drives all four states and asserts the non-selected states are absent.
+5. Review found duplicate spoken labels on the status dot and empty-state illustration. Both icons are now decorative while their adjacent visible text retains the accessible status and explanation.
 
 ## Findings
 
@@ -40,6 +44,8 @@ The normalized `372` px-wide comparison keeps typography, card edges, icons, sep
 - [x] Group repeated card rows vertically with stable dividers.
 - [x] Match blue selected bottom-navigation state.
 - [x] Preserve app-owned content only and use Android insets.
+- [x] Keep loading, error, empty, and content states mutually exclusive.
+- [x] Exclude decorative status/empty icons from the accessibility tree while retaining text semantics.
 - [x] Verify core routes, controls, localization, restoration, large text, and touch targets on an emulator.
 
 ## Follow-up polish

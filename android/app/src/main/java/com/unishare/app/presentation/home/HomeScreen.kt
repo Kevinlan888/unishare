@@ -114,23 +114,21 @@ fun HomeScreen(
                 modifier = Modifier.padding(top = 20.dp),
             )
         }
-        if (state.discoveryError != null) {
-            item { DiscoveryErrorBanner() }
-        }
-        if (state.isLoading) {
-            item { LoadingBanner() }
-        }
         item {
-            GroupedSurface {
-                if (state.nearby.isEmpty()) {
-                    EmptyState(
-                        title = stringResource(R.string.home_no_nearby),
-                        detail = stringResource(R.string.home_no_nearby_detail),
-                    )
-                } else {
-                    state.nearby.forEachIndexed { index, device ->
-                        NearbyDeviceRow(device = device, onClick = { onNearbyClick(device.id) })
-                        if (index != state.nearby.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            when {
+                state.isLoading -> LoadingBanner()
+                state.discoveryError != null -> DiscoveryErrorBanner()
+                else -> GroupedSurface {
+                    if (state.nearby.isEmpty()) {
+                        EmptyState(
+                            title = stringResource(R.string.home_no_nearby),
+                            detail = stringResource(R.string.home_no_nearby_detail),
+                        )
+                    } else {
+                        state.nearby.forEachIndexed { index, device ->
+                            NearbyDeviceRow(device = device, onClick = { onNearbyClick(device.id) })
+                            if (index != state.nearby.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
                     }
                 }
             }
