@@ -224,6 +224,45 @@ public sealed partial class XamlPolicyTests
     }
 
     [TestMethod]
+    public void CompactDeviceRowsUseSmallCenteredIconsAndBothListsSwitchTemplates()
+    {
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var path = Path.Combine(ResourceCoverageTests.AppPath, "Features", "Share", "DeviceListPane.xaml");
+        var page = XDocument.Load(path);
+        var compactTemplate = page.Descendants().SingleOrDefault(element =>
+            element.Name.LocalName == "DataTemplate" && element.Attribute(x + "Key")?.Value == "CompactDeviceTemplate");
+
+        Assert.IsNotNull(compactTemplate, "The narrow device rail does not have a dedicated compact row template.");
+        var hitTarget = compactTemplate.Descendants().Single(element => element.Name.LocalName == "Grid");
+        Assert.AreEqual("44", hitTarget.Attribute("Width")?.Value);
+        Assert.AreEqual("44", hitTarget.Attribute("Height")?.Value);
+        Assert.AreEqual("Center", hitTarget.Attribute("HorizontalAlignment")?.Value);
+        Assert.AreEqual("Center", hitTarget.Attribute("VerticalAlignment")?.Value);
+        Assert.AreEqual("-16,0,16,0", hitTarget.Attribute("Margin")?.Value,
+            "The template must compensate for WinUI's single-selection indicator gutter.");
+        Assert.IsTrue(compactTemplate.Descendants().Any(element =>
+            element.Name.LocalName == "FontIcon" && element.Attribute("FontSize")?.Value == "20"),
+            "Compact device icons should match the navigation icon scale.");
+        Assert.IsTrue(compactTemplate.Descendants().Any(element =>
+            element.Attribute("ToolTipService.ToolTip")?.Value == "{Binding Name}"),
+            "Icon-only device rows must still reveal the device name.");
+        var compactContainerStyle = page.Descendants().SingleOrDefault(element =>
+            element.Name.LocalName == "Style" && element.Attribute(x + "Key")?.Value == "CompactDeviceItemContainerStyle");
+        Assert.IsNotNull(compactContainerStyle, "Compact rows need a container style so ListView selection chrome cannot offset their icons.");
+        Assert.IsTrue(compactContainerStyle.Descendants().Any(element =>
+            element.Attribute("Property")?.Value == "HorizontalAlignment" && element.Attribute("Value")?.Value == "Stretch"));
+        Assert.IsTrue(compactContainerStyle.Descendants().Any(element =>
+            element.Attribute("Property")?.Value == "HorizontalContentAlignment" && element.Attribute("Value")?.Value == "Center"));
+
+        var source = File.ReadAllText(Path.ChangeExtension(path, ".xaml.cs"));
+        StringAssert.Contains(source, "RecentList.ItemTemplate = compact ? CompactDeviceTemplate : RecentDeviceTemplate");
+        StringAssert.Contains(source, "NearbyList.ItemTemplate = compact ? CompactDeviceTemplate : NearbyDeviceTemplate");
+        StringAssert.Contains(source, "RecentList.ItemContainerStyle = compact ? CompactDeviceItemContainerStyle : null");
+        StringAssert.Contains(source, "NearbyList.ItemContainerStyle = compact ? CompactDeviceItemContainerStyle : null");
+        StringAssert.Contains(source, "button.HorizontalContentAlignment = compact ? HorizontalAlignment.Center : HorizontalAlignment.Left");
+    }
+
+    [TestMethod]
     public void ClipboardMarkerUsesSenderLocalPresentationPolicy()
     {
         var card = File.ReadAllText(Path.Combine(ResourceCoverageTests.AppPath, "Controls", "TextActivityCard.xaml.cs"));

@@ -5,6 +5,10 @@ namespace UniShare.App.Features.Share;
 public sealed partial class DeviceListPane : UserControl
 {
     private readonly ShellProjection model;
+    private DataTemplate RecentDeviceTemplate => (DataTemplate)Resources[nameof(RecentDeviceTemplate)];
+    private DataTemplate NearbyDeviceTemplate => (DataTemplate)Resources[nameof(NearbyDeviceTemplate)];
+    private DataTemplate CompactDeviceTemplate => (DataTemplate)Resources[nameof(CompactDeviceTemplate)];
+    private Style CompactDeviceItemContainerStyle => (Style)Resources[nameof(CompactDeviceItemContainerStyle)];
     public event EventHandler<string>? Navigate;
     public event EventHandler? DeviceSelected;
     public DeviceListPane(ShellProjection model)
@@ -37,6 +41,12 @@ public sealed partial class DeviceListPane : UserControl
     {
         foreach (var label in new[] { ShareLabel, DevicesLabel, HistoryLabel, SettingsLabel, RecentHeading, NearbyHeading })
             label.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var button in Navigation.Children.OfType<Button>())
+            button.HorizontalContentAlignment = compact ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+        RecentList.ItemTemplate = compact ? CompactDeviceTemplate : RecentDeviceTemplate;
+        NearbyList.ItemTemplate = compact ? CompactDeviceTemplate : NearbyDeviceTemplate;
+        RecentList.ItemContainerStyle = compact ? CompactDeviceItemContainerStyle : null;
+        NearbyList.ItemContainerStyle = compact ? CompactDeviceItemContainerStyle : null;
         EmptyHint.Visibility = !compact && model.Recent.Count + model.Nearby.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 }

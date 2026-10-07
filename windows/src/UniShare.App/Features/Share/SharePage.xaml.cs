@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using UniShare.App.Features.Devices;
 using UniShare.App.Features.History;
 using UniShare.App.Features.Settings;
+using UniShare.App.Presentation;
 namespace UniShare.App.Features.Share;
 
 public sealed partial class SharePage : UserControl, IDisposable
@@ -11,6 +12,7 @@ public sealed partial class SharePage : UserControl, IDisposable
     private readonly DeviceListPane deviceList;
     private readonly DeviceSessionView session;
     private readonly DeviceDetailsPane details;
+    private readonly ShareWidthStateTracker widthState = new();
     public void ShowDeviceSession() => CenterHost.Content = session;
     public SharePage(ShellProjection model)
     {
@@ -32,7 +34,9 @@ public sealed partial class SharePage : UserControl, IDisposable
         deviceList.DeviceSelected += (_, _) => CenterHost.Content = session;
         SizeChanged += (_, args) =>
         {
-            var state = args.NewSize.Width >= 1240 ? "Wide" : args.NewSize.Width >= 1060 ? "Medium" : "Compact";
+            var state = widthState.ChangeFor(args.NewSize.Width);
+            if (state is null)
+                return;
             VisualStateManager.GoToState(this, state, false);
             deviceList.SetCompact(state == "Compact");
         };
