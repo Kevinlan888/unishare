@@ -49,7 +49,7 @@ public sealed class ResourceCoverageTests
         foreach (var language in new[] { "en-US", "zh-CN" })
         {
             var resources = ReadResources(language);
-            foreach (var key in new[] { "PairingDialog.Title", "PairingInstruction.Text", "PairingCode.AutomationProperties.Name", "PairingDialog.PrimaryButtonText", "PairingDialog.SecondaryButtonText", "Tray.Open", "Tray.Pause", "Tray.Resume", "Tray.Exit", "Tray.Normal", "Tray.Pausing", "Tray.Paused", "Tray.Warning", "Notification.Offer", "Notification.Completed", "Notification.Failed", "Notification.SdkFailure", "Notification.Reject", "Notification.ViewAndAccept" })
+            foreach (var key in new[] { "PairingDialog.Title", "PairingInstruction.Text", "PairingCode.AutomationProperties.Name", "PairingDialog.PrimaryButtonText", "PairingDialog.SecondaryButtonText", "Pairing.WaitingForPeer", "Pairing.Required", "Tray.Open", "Tray.Pause", "Tray.Resume", "Tray.Exit", "Tray.Normal", "Tray.Pausing", "Tray.Paused", "Tray.Warning", "Notification.Offer", "Notification.Completed", "Notification.Failed", "Notification.SdkFailure", "Notification.Reject", "Notification.ViewAndAccept" })
                 Assert.IsTrue(resources.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value), $"Missing {key} in {language}");
             Assert.AreNotEqual(resources["PairingDialog.PrimaryButtonText"], resources["PairingDialog.SecondaryButtonText"]);
         }

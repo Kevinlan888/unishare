@@ -154,6 +154,8 @@
 <data name="Device.ForgetFailed" xml:space="preserve"><value>无法忘记此设备，请重试。</value></data>
 <data name="Device.IdentityChanged" xml:space="preserve"><value>此设备身份已变化。请先忘记设备并重新配对，再进行分享。</value></data>
 <data name="Pairing.ConnectFailed" xml:space="preserve"><value>无法连接此设备。</value></data>
+<data name="Pairing.WaitingForPeer" xml:space="preserve"><value>正在等待对方设备确认配对…</value></data>
+<data name="Pairing.Required" xml:space="preserve"><value>请先连接并配对此设备，再发送内容。</value></data>
 <data name="Pairing.ConfirmFailed" xml:space="preserve"><value>无法确认配对，请重试。</value></data>
 <data name="Pairing.RejectFailed" xml:space="preserve"><value>无法拒绝配对，请重试。</value></data>
 <data name="History.LoadFailed" xml:space="preserve"><value>无法加载最近活动，请重试。</value></data>

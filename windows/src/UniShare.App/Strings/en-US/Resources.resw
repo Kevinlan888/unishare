@@ -154,6 +154,8 @@
 <data name="Device.ForgetFailed" xml:space="preserve"><value>Could not forget this device. Try again.</value></data>
 <data name="Device.IdentityChanged" xml:space="preserve"><value>This device’s identity changed. Forget it and pair again before sharing.</value></data>
 <data name="Pairing.ConnectFailed" xml:space="preserve"><value>Could not connect to this device.</value></data>
+<data name="Pairing.WaitingForPeer" xml:space="preserve"><value>Waiting for the other device to confirm pairing…</value></data>
+<data name="Pairing.Required" xml:space="preserve"><value>Connect and pair this device before sending.</value></data>
 <data name="Pairing.ConfirmFailed" xml:space="preserve"><value>Could not confirm pairing. Try again.</value></data>
 <data name="Pairing.RejectFailed" xml:space="preserve"><value>Could not reject pairing. Try again.</value></data>
 <data name="History.LoadFailed" xml:space="preserve"><value>Could not load recent activity. Try again.</value></data>

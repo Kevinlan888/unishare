@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.ComponentModel;
 using Microsoft.UI.Dispatching;
 using UniShare.App.Presentation;
 using UniShare.Application.Abstractions;
@@ -229,13 +230,19 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     }
     public void SelectionChanged(DeviceProjection? device)
     {
-        if (model.IsDemo || device?.Id is not { } id)
+        if (model.IsDemo)
             return;
+        if (device?.Id is not { } id)
+        {
+            UpdateConnectionNotice(null);
+            return;
+        }
         var entry = Session.Devices.Devices.FirstOrDefault(value => value.Id == id);
         if (entry is null)
             return;
         Session.Devices.SelectedDevice = entry;
         RenderActivities(id);
+        UpdateConnectionNotice(sessionModels.GetValueOrDefault(id));
         _ = tracker.LoadDeviceAsync(id);
     }
     private void RenderActivities(DeviceId device)
@@ -265,8 +272,23 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         if (device is null)
             return null;
         var created = new DeviceSessionViewModel(device, Session.Devices, transfers, tracker, sdk, viewModelFiles, bindingDispatcher);
+        created.PropertyChanged += OnSessionPropertyChanged;
         sessionModels.Add(id, created);
         return created;
+    }
+    private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(DeviceSessionViewModel.IsConnecting) &&
+            sender is DeviceSessionViewModel session && model.SelectedDevice?.Id == session.Device.Id)
+            UpdateConnectionNotice(session);
+    }
+    private void UpdateConnectionNotice(DeviceSessionViewModel? session)
+    {
+        var waiting = Strings.Get("Pairing.WaitingForPeer");
+        if (session?.IsConnecting == true)
+            model.Notice = waiting;
+        else if (model.Notice == waiting)
+            model.Notice = null;
     }
     public Task SendTextAsync(string text) => RunAsync(async vm =>
     {
@@ -331,7 +353,10 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         projection.Dispose();
         sdk.EventReceived -= OnSdkEvent;
         foreach (var vm in sessionModels.Values)
+        {
+            vm.PropertyChanged -= OnSessionPropertyChanged;
             vm.Dispose();
+        }
         sessionModels.Clear();
         bridge.Dispose();
         Pairing.Dispose();

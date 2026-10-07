@@ -20,6 +20,7 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     private long connectionGeneration;
     private IReadOnlyList<ActivityItemViewModel> activities = [];
     private string composerText = string.Empty;
+    private bool isConnecting;
     private volatile bool disposed;
 
     public DeviceSessionViewModel(DeviceEntry device, DeviceStore devices, TransferCoordinator coordinator,
@@ -90,6 +91,11 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     public event EventHandler? DeviceStateChanged;
     public string DeviceName => Device.Name;
     public bool CanSend => Device.CanTransfer;
+    public bool IsConnecting
+    {
+        get => isConnecting;
+        private set => SetProperty(ref isConnecting, value);
+    }
     public bool IdentityChanged => Device.IsBlocked;
     public string? IdentityResourceKey => IdentityChanged ? "Device.IdentityChanged" : null;
     public IReadOnlyList<ActivityItemViewModel> Activities
@@ -202,12 +208,20 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
     {
         if (connectionAvailable || Device.IsConnected)
             return;
-        var generation = Volatile.Read(ref connectionGeneration);
-        await sdk.ConnectAsync(Device.Id, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (Volatile.Read(ref connectionGeneration) != generation)
-            throw new IOException("Connection was lost before sharing started.");
-        connectionAvailable = true;
+        IsConnecting = true;
+        try
+        {
+            var generation = Volatile.Read(ref connectionGeneration);
+            await sdk.ConnectAsync(Device.Id, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Volatile.Read(ref connectionGeneration) != generation)
+                throw new IOException("Connection was lost before sharing started.");
+            connectionAvailable = true;
+        }
+        finally
+        {
+            await Dispatcher.InvokeAsync(() => IsConnecting = false).ConfigureAwait(false);
+        }
     }
 
     private void RevokeSendEligibility()

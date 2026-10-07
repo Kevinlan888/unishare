@@ -131,7 +131,9 @@ public sealed class ShellProjection : ObservableObject
             NotifyCommands();
         }
     }
-    public bool CanSend => SelectedDevice is { Online: true, Blocked: false } && (IsDemo || Runtime?.Session.State == UniShare.Application.Services.SessionState.Running);
+    public bool CanSend => SelectedDevice is { } device && PresentationState.SendAvailable(
+        device.Online, device.Trusted, device.Blocked,
+        IsDemo || Runtime?.Session.State == UniShare.Application.Services.SessionState.Running);
     public bool CanPair => SelectedDevice is { Online: true, Trusted: false, Blocked: false };
     public string ComposerText
     {

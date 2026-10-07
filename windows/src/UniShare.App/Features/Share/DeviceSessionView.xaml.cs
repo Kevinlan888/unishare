@@ -31,8 +31,10 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
     {
         if (disposed)
             return;
-        OnlineStatus.Text = model.SelectedDevice is null ? "" : Strings.Get(model.CanSend ? "Online" : "Offline");
-        StateHint.Text = model.SelectedDevice is null ? Strings.Get("NoSelection") : model.Activities.Count == 0 ? Strings.Get("EmptyActivities") : "";
+        OnlineStatus.Text = model.SelectedDevice?.StatusText ?? "";
+        var hintKey = PresentationState.SessionHintResourceKey(
+            model.SelectedDevice is not null, model.CanPair, model.Activities.Count != 0);
+        StateHint.Text = hintKey is null ? "" : Strings.Get(hintKey);
         StateHint.Visibility = string.IsNullOrEmpty(StateHint.Text) ? Visibility.Collapsed : Visibility.Visible;
         NoticeBar.Message = model.Notice ?? (model.SelectedDevice is { Online: false } ? Strings.Get("Offline") : "");
         NoticeBar.IsOpen = !string.IsNullOrEmpty(NoticeBar.Message);

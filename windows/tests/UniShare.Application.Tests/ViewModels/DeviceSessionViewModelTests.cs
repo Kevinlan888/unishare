@@ -7,6 +7,42 @@ namespace UniShare.Application.Tests.ViewModels;
 public sealed class DeviceSessionViewModelTests
 {
     [TestMethod]
+    public async Task ReconnectExposesWaitingStateUntilThePeerFinishesPairing()
+    {
+        using var f = new ViewModelFixture();
+        var device = f.Online(connected: false);
+        using var vm = f.Session(device);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Sdk.Wait = () => release.Task;
+        vm.ComposerText = "wait for peer";
+
+        var sending = vm.SendTextCommand.ExecuteAsync(null);
+
+        Assert.IsTrue(vm.IsConnecting);
+        Assert.AreEqual(0, vm.Activities.Count, "No transfer activity exists before the authenticated connection is ready.");
+        release.SetResult();
+        await sending;
+        Assert.IsFalse(vm.IsConnecting);
+        CollectionAssert.AreEqual(new[] { "connect", "text:wait for peer" }, f.Sdk.Calls,
+            "Peer approval must continue the original send without another click.");
+    }
+
+    [TestMethod]
+    public async Task ReconnectFailureClearsWaitingStateAndReportsSubmissionFailure()
+    {
+        using var f = new ViewModelFixture();
+        using var vm = f.Session(f.Online(connected: false));
+        f.Sdk.Wait = () => Task.FromException(new IOException("peer rejected or timed out"));
+        vm.ComposerText = "will fail";
+
+        await vm.SendTextCommand.ExecuteAsync(null);
+
+        Assert.IsFalse(vm.IsConnecting);
+        Assert.AreEqual("Transfer.SubmissionFailed", vm.ErrorResourceKey);
+        Assert.AreEqual(0, vm.Activities.Count);
+    }
+
+    [TestMethod]
     public async Task TrustedDisconnectedDeviceReconnectsBeforeSendingText()
     {
         using var f = new ViewModelFixture();
