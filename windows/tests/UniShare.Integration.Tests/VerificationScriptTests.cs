@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -97,6 +99,58 @@ public sealed class VerificationScriptTests
     }
 
     [TestMethod]
+    public void SigningCertificateResolutionRequiresCurrentUserPrivateKey()
+    {
+        string temporary = Path.Combine(Path.GetTempPath(), "unishare-signing-certificate-" + Guid.NewGuid());
+        Directory.CreateDirectory(temporary);
+        string thumbprintPath = Path.Combine(temporary, "thumbprint.txt");
+        string certificatePath = Path.Combine(temporary, "public.cer");
+        string? thumbprint = null;
+        try
+        {
+            using var key = RSA.Create(2048);
+            var request = new CertificateRequest("CN=UniShare", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: true));
+            using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
+            const string password = "UniShare integration test";
+            using var privateCertificate = X509CertificateLoader.LoadPkcs12(
+                generated.Export(X509ContentType.Pfx, password),
+                password,
+                X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
+            thumbprint = privateCertificate.Thumbprint;
+            File.WriteAllText(thumbprintPath, thumbprint);
+            File.WriteAllBytes(certificatePath, privateCertificate.Export(X509ContentType.Cert));
+            using (var store = new X509Store(StoreName.My, StoreLocation.CurrentUser))
+            {
+                store.Open(OpenFlags.ReadWrite);
+                store.Add(privateCertificate);
+            }
+
+            var resolved = Run("resolve-signing-certificate.ps1", "-ThumbprintPath", thumbprintPath);
+            Assert.AreEqual(0, resolved.Exit, resolved.Text);
+            StringAssert.Contains(resolved.Text, thumbprint);
+
+            RemoveCertificate(thumbprint);
+            using var publicCertificate = X509CertificateLoader.LoadCertificateFromFile(certificatePath);
+            using (var store = new X509Store(StoreName.My, StoreLocation.CurrentUser))
+            {
+                store.Open(OpenFlags.ReadWrite);
+                store.Add(publicCertificate);
+            }
+
+            var publicOnly = Run("resolve-signing-certificate.ps1", "-ThumbprintPath", thumbprintPath);
+            Assert.AreNotEqual(0, publicOnly.Exit, publicOnly.Text);
+            StringAssert.Contains(publicOnly.Text, "private key");
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(thumbprint))
+                RemoveCertificate(thumbprint);
+            Directory.Delete(temporary, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void PackageInspectionRejectsPrivateFilesAndChangedNativeDll()
     {
         string temporary = Path.Combine(Path.GetTempPath(), "unishare-package-policy-" + Guid.NewGuid());
@@ -192,5 +246,13 @@ public sealed class VerificationScriptTests
         var stderr = process.StandardError.ReadToEndAsync();
         Assert.IsTrue(process.WaitForExit(60000), "Script exceeded one minute.");
         return (process.ExitCode, stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
+    }
+
+    private static void RemoveCertificate(string thumbprint)
+    {
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadWrite);
+        foreach (var certificate in store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false))
+            store.Remove(certificate);
     }
 }

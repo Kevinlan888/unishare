@@ -1,9 +1,15 @@
 [CmdletBinding()]
 param([ValidateSet('Release')][string]$Configuration='Release', [ValidateSet('x64')][string]$Platform='x64',
-      [switch]$Unsigned, [string]$CertificatePath, [string]$CertificatePassword)
+      [switch]$Unsigned, [string]$CertificatePath, [string]$CertificatePassword,
+      [string]$CertificateThumbprintPath=(Join-Path $PSScriptRoot '..\signing\package-signing-thumbprint.txt'))
 . (Join-Path $PSScriptRoot 'tools.ps1')
-if (!$Unsigned -and (!$CertificatePath -or !(Test-Path -LiteralPath $CertificatePath))) { throw 'Distribution requires an external trusted signing certificate; use -Unsigned for CI.' }
 if ($Unsigned -and $CertificatePath) { throw 'Unsigned CI mode must not use a signing certificate.' }
+if ($CertificatePassword -and !$CertificatePath) { throw 'CertificatePassword can only be used with CertificatePath.' }
+if ($CertificatePath -and !(Test-Path -LiteralPath $CertificatePath -PathType Leaf)) { throw "Signing certificate was not found: $CertificatePath" }
+$certificateThumbprint = $null
+if (!$Unsigned -and !$CertificatePath) {
+    $certificateThumbprint = (& (Join-Path $PSScriptRoot 'resolve-signing-certificate.ps1') -ThumbprintPath $CertificateThumbprintPath).Trim()
+}
 $native = Join-Path $WindowsRoot 'artifacts\native\bin'
 foreach ($pattern in @('unishare.dll','libcrypto-3*.dll','libssl-3*.dll')) {
     $dlls = @(Get-ChildItem -LiteralPath $native -Filter $pattern -File)
@@ -44,8 +50,13 @@ $contentList | Set-Content -LiteralPath (Join-Path $packageDirectory 'contents.t
 if (!$?) { throw 'Package content inspection failed.' }
 if (!$Unsigned) {
     $signtool = Get-SdkTool 'signtool'
-    $signArguments = @('sign','/fd','SHA256','/f',$CertificatePath)
-    if ($CertificatePassword) { $signArguments += @('/p',$CertificatePassword) }
+    $signArguments = @('sign','/fd','SHA256')
+    if ($CertificatePath) {
+        $signArguments += @('/f',$CertificatePath)
+        if ($CertificatePassword) { $signArguments += @('/p',$CertificatePassword) }
+    } else {
+        $signArguments += @('/s','My','/sha1',$certificateThumbprint)
+    }
     Invoke-Checked $signtool ($signArguments + @($package))
     Invoke-Checked $signtool @('verify','/pa',$package)
 }
