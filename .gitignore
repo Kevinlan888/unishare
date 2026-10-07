@@ -2,3 +2,4 @@
 .superpowers/
 build/
 build-*/
+.vs/
