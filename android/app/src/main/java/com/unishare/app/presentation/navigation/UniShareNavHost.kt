@@ -24,6 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.NavType
 import com.unishare.app.R
+import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.presentation.home.HomeScreen
 import com.unishare.app.presentation.home.HomeUiState
@@ -64,10 +66,22 @@ fun UniShareNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     sessionContent: (@Composable (DeviceKey, () -> Unit) -> Unit)? = null,
+    receiveContent: (@Composable (ActivityKey, () -> Unit) -> Unit)? = null,
+    pendingReceiveActivityId: ActivityKey? = null,
+    onReceiveActivityConsumed: () -> Unit = {},
 ) {
     val entry by navController.currentBackStackEntryAsState()
     val currentRoute = entry?.destination?.route ?: AppDestination.Home.route
     val showBottomNavigation = currentRoute in AppDestination.topLevel.map { it.route }
+
+    LaunchedEffect(pendingReceiveActivityId?.value) {
+        pendingReceiveActivityId?.let { activityId ->
+            navController.navigate(AppDestination.Receive(activityId).route) {
+                launchSingleTop = true
+            }
+            onReceiveActivityConsumed()
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -152,13 +166,20 @@ fun UniShareNavHost(
             }
             composable(
                 route = AppDestination.RECEIVE_PATTERN,
-                arguments = listOf(navArgument("requestId") { type = NavType.LongType }),
+                arguments = listOf(navArgument("activityId") { type = NavType.StringType }),
             ) { backStackEntry ->
-                NestedPlaceholder(
-                    title = stringResource(R.string.screen_receive_title),
-                    argument = backStackEntry.arguments?.getLong("requestId")?.toString().orEmpty(),
-                    onBack = navController::popBackStack,
-                )
+                val encodedId = backStackEntry.arguments?.getString("activityId").orEmpty()
+                val activityId = (AppDestination.fromRoute("${AppDestination.RECEIVE_PREFIX}/$encodedId") as? AppDestination.Receive)
+                    ?.activityId
+                if (activityId == null || receiveContent == null) {
+                    NestedPlaceholder(
+                        title = stringResource(R.string.screen_receive_title),
+                        argument = activityId?.value.orEmpty(),
+                        onBack = navController::popBackStack,
+                    )
+                } else {
+                    receiveContent(activityId, navController::popBackStack)
+                }
             }
         }
     }

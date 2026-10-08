@@ -56,6 +56,74 @@ final result: passed
 
 ---
 
+# Task 10 Pairing and Receive Consent Design QA
+
+## Evidence
+
+- Source visual truth: `C:\Users\kevin\AppData\Local\Temp\codex-clipboard-PsXme7.png` (`1536 × 1024` px), fourth-phone receive crop at `(1193, 12)`, `333 × 1000` px.
+- Rendered receive implementation: `app/build/reports/design-qa/task10-receive-final.png`, captured from the Compose test activity on `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp).
+- Rendered pairing implementation: `app/build/reports/design-qa/task10-pairing-final.png`, captured in the same emulator and theme. The supplied reference does not contain a pairing dialog, so this state is evaluated against the approved UniShare Material design system and six-digit consent specification rather than an invented source frame.
+- Normalized receive comparison: `app/build/reports/design-qa/task10-receive-comparison-final.png`. The implementation was proportionally downsampled to the source crop width (`333 × 740` px) and placed directly beside the `333 × 1000` source crop.
+- State: English, light theme, pending `IMG_3281.jpg` image offer from an online Windows device, `8.4 MB · JPEG`, default Download destination, and pairing code `000042`.
+- Asset evidence: `app/src/androidTest/res/drawable-nodpi/sample_mountain_lake.png` is used only by the instrumentation visual fixture. It is never packaged in the production APK and is never read from private receive staging. Production pending content uses the generic safe preview; successful content exposes Open only after final-URI readability verification.
+- Interaction evidence: seven `PairingAndReceiveUiTest` cases passed on the API 37 emulator, covering visible metadata, source status, side-by-side mutually exclusive decisions, expired requests, directory recovery, readable final-content Open, ActivityKey notification deep links without direct-accept actions, six-digit accessibility semantics, identity-change recovery, 48 dp pairing actions, and both screenshots. Thirteen focused JVM state tests also passed before full-suite verification.
+- Browser console checks: not applicable to this native Android implementation. Instrumentation completed without a process crash or failed test.
+
+## Full-view comparison
+
+The final side-by-side comparison preserves the source hierarchy: Android-owned status/navigation bars, back action and bold title, large rounded center-cropped mountain preview, filename and localized size/type, From label, platform device icon with a textual green online state, neutral Reject and blue Accept pills, and a divider-led destination footer with folder icon, Download, and blue Change action. The shorter emulator viewport is proportionally normalized without stretching; all content remains scrollable on smaller or enlarged-text configurations.
+
+The persistent “Always accept files from this device” switch shown in the source is intentionally absent. This is an approved security-policy deviation: image and file offers always require per-transfer consent, while trusted-text auto-accept remains a domain policy with no file/image UI override.
+
+## Focused comparison
+
+The `666 × 1000` normalized comparison keeps title weight, preview crop, metadata, device row, button treatments, divider, folder row, and system chrome readable, so no additional receive-region crop was necessary. The original `1080 × 2400` receive and pairing captures were inspected separately for raster sharpness, rounded edges, six individual code digits, touch-target size, icon quality, and dialog scrim contrast.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Android system sans-serif closely matches the neutral reference typography. The bold page title, filename, source device name, muted metadata, status, destination, and button labels retain the same hierarchy. The pairing title, instruction, and spaced six-digit code are optically distinct, and TalkBack receives every digit including leading zeros.
+- Spacing and layout rhythm: final horizontal margins, preview proportion, 24 dp corner treatment, content gaps, 64 dp pill actions, device-row scale, and divider-led destination section match the reference direction. The source is proportionally taller, so its omitted auto-accept block creates additional vertical space; the implementation does not invent an empty placeholder for that prohibited control.
+- Colors and visual tokens: the existing UniShare Material theme provides the white receive surface, blue primary action, low-contrast neutral Reject fill, slate secondary text/icons, green online state, subtle divider, white rounded dialog, and modal scrim. Status never depends on color alone.
+- Image quality and asset fidelity: the instrumentation-only alpine-lake raster is sharp and center-cropped to the same snowy-range, evergreen-shore, blue-lake composition. Production does not substitute this fixture for received content and does not decode private staging. Standard device, file, folder, back, and pairing graphics use the official Material icon library; no emoji, handcrafted SVG, gradient, CSS/div art, or placeholder box is used.
+- Copy and content: English and Simplified Chinese resources cover pairing, receive metadata, pending/receiving/rejected/failed/expired/completed states, destination recovery, and notification copy. ActivityKey deep links disclose no SDK request ID and resolve only an offer that remains pending.
+- Accessibility and responsiveness: all icon actions are labeled, online state includes text, pairing code semantics read all six digits separately, decision actions become disabled after the first choice, and pairing buttons measure at least 48 dp. The content scrolls rather than clipping critical Accept, Reject, Open, Change, or retry actions.
+
+## Comparison history
+
+1. The round-one comparison found a P2 Reject-control mismatch: the implementation used a white outlined button while the source used a soft neutral fill. Reject now uses the low-contrast surface token with dark text, while Accept remains the blue emphasized action. The final comparison confirms the corrected hierarchy.
+2. The round-one comparison found a P2 destination mismatch: the implementation wrapped the save location in a large rounded gray card, while the source uses a separated bottom section. The card was removed and replaced with a subtle top divider, aligned folder row, and blue Change action. The final comparison confirms the corrected structure.
+3. The first connected run exposed an accessibility P2: Material dialog buttons measured 40 dp high. Both pairing choices and identity-change actions now have explicit 48 dp minimum height; the final connected run verifies the bound.
+4. The first interaction run found that changing the Accept label to “Receiving…” removed the stable disabled action node after the first choice. The original Accept/Reject labels now remain present and disabled during submission, making exclusivity visible and testable.
+5. The round-one test-host capture rendered light status icons on the white surface. The fixture now requests Android's light-status-bar appearance; final evidence shows dark platform-owned status icons. Production continues to use edge-to-edge system chrome rather than recreating it in app content.
+6. The screenshot fixture initially attempted two `setContent` calls in one activity. It now switches receive and pairing states inside one Compose tree, producing deterministic captures without altering product behavior.
+7. The final comparison and post-fix pairing capture found no remaining actionable P0, P1, or P2 issue.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences remain.
+- P3: official Material outline device/folder icons are intentionally simpler than the source illustrations, satisfying the approved icon-library constraint.
+- Expected product deviation: the persistent file/image auto-accept switch is deliberately omitted; trusted automatic acceptance applies only to text in the domain policy.
+- Expected security deviation: before publication, production shows a generic safe content icon rather than decoding private staging. The mountain image appears only in the isolated instrumentation fixture so visual fidelity can be assessed without weakening the receive boundary.
+
+## Implementation checklist
+
+- [x] Match the receive screen hierarchy, image crop, pill actions, source row, and destination footer.
+- [x] Omit persistent image/file auto-accept UI.
+- [x] Keep Accept and Reject mutually exclusive and visibly disabled after the first choice.
+- [x] Expose expired-request and directory-recovery states.
+- [x] Replace decisions with Open only for a readable published final URI.
+- [x] Serialize pairing prompts and expose all six code digits to accessibility services.
+- [x] Route identity changes through forget and re-pair.
+- [x] Verify the exact UI class on `emulator-5554` and compare the final receive state side by side.
+
+## Follow-up polish
+
+- Revisit platform illustrations only if a future approved asset set replaces the required Material icons.
+
+final result: passed
+
+---
+
 # Task 9 Device Session and Share Sheet Design QA
 
 ## Evidence

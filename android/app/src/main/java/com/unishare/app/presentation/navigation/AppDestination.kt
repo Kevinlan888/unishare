@@ -1,5 +1,6 @@
 package com.unishare.app.presentation.navigation
 
+import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.DeviceKey
 import java.nio.charset.StandardCharsets
 import java.util.Base64
@@ -18,8 +19,8 @@ sealed interface AppDestination {
         override val isTopLevel = false
     }
 
-    data class Receive(val requestId: Long) : AppDestination {
-        override val route: String = "$RECEIVE_PREFIX/$requestId"
+    data class Receive(val activityId: ActivityKey) : AppDestination {
+        override val route: String = "$RECEIVE_PREFIX/${activityId.value.encodeRoutePart()}"
         override val isTopLevel = false
     }
 
@@ -46,7 +47,7 @@ sealed interface AppDestination {
         const val SESSION_PREFIX = "session"
         const val RECEIVE_PREFIX = "receive"
         const val SESSION_PATTERN = "$SESSION_PREFIX/{deviceId}"
-        const val RECEIVE_PATTERN = "$RECEIVE_PREFIX/{requestId}"
+        const val RECEIVE_PATTERN = "$RECEIVE_PREFIX/{activityId}"
 
         val topLevel = listOf(Home, Devices, History, Settings)
 
@@ -68,7 +69,9 @@ sealed interface AppDestination {
             val argument = route.substring(separator + 1)
             return when (prefix) {
                 SESSION_PREFIX -> argument.decodeRoutePart()?.let { Session(DeviceKey(it)) }
-                RECEIVE_PREFIX -> argument.toLongOrNull()?.let(::Receive)
+                RECEIVE_PREFIX -> argument.decodeRoutePart()
+                    ?.takeIf(String::isNotEmpty)
+                    ?.let { Receive(ActivityKey(it)) }
                 else -> null
             }
         }

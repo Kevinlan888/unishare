@@ -9,6 +9,7 @@ import android.content.Intent
 import android.graphics.drawable.Icon
 import com.unishare.app.MainActivity
 import com.unishare.app.R
+import com.unishare.app.domain.ActivityKey
 
 /** Notification copy is intentionally generic: payload, peer and path data never enter it. */
 class ShareNotificationFactory(context: Context) {
@@ -72,6 +73,27 @@ class ShareNotificationFactory(context: Context) {
                 ),
             ).build())
             .build()
+
+    /** A consent-only notification; accepting or rejecting always happens in the app. */
+    fun incomingOffer(activityId: ActivityKey): Notification =
+        baseBuilder(TRANSFER_CHANNEL_ID)
+            .setContentTitle(application.getString(R.string.notification_receive_request_title))
+            .setContentText(application.getString(R.string.notification_receive_request_content))
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setContentIntent(PendingIntent.getActivity(
+                application,
+                activityId.value.hashCode(),
+                incomingOfferIntent(activityId),
+                immutableUpdateCurrent,
+            ))
+            .build()
+
+    /** The destination resolves [activityId] against current pending offers before rendering. */
+    fun incomingOfferIntent(activityId: ActivityKey): Intent =
+        Intent(application, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID, activityId.value)
 
     private fun baseBuilder(channel: String): Notification.Builder =
         Notification.Builder(application, channel)
