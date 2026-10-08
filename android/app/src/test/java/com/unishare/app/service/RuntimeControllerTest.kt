@@ -327,7 +327,7 @@ class RuntimeControllerTest {
         var stopCount = 0
         val controller = ForegroundServiceController(
             activeTransferCount = active,
-            startService = { },
+            startService = { _, _ -> },
             stopService = { stopCount++ },
         )
         val stopping = backgroundScope.launch { controller.stopWhenIdle() }
@@ -336,6 +336,82 @@ class RuntimeControllerTest {
         assertEquals(0, stopCount)
 
         active.value = 0
+        stopping.join()
+        assertEquals(1, stopCount)
+    }
+
+    @Test
+    fun `foreground service stop cannot overtake pending foreground promotion`() = runTest {
+        val active = MutableStateFlow(0)
+        var requestId: Long? = null
+        var stopCount = 0
+        val controller = ForegroundServiceController(
+            activeTransferCount = active,
+            startService = { _, id -> requestId = id },
+            stopService = { stopCount++ },
+        )
+
+        val starting = backgroundScope.launch { controller.start(ServiceReason.ACTIVE_TRANSFER) }
+        runCurrent()
+        assertFalse(starting.isCompleted)
+        val stopping = backgroundScope.launch { controller.stopWhenIdle() }
+        runCurrent()
+
+        assertFalse(stopping.isCompleted)
+        assertEquals(0, stopCount)
+        controller.onForegroundStarted(requireNotNull(requestId))
+        starting.join()
+        stopping.join()
+        assertEquals(1, stopCount)
+    }
+
+    @Test
+    fun `cancelled start waiting for lifecycle lock never starts the service later`() = runTest {
+        val requestIds = mutableListOf<Long>()
+        val controller = ForegroundServiceController(
+            activeTransferCount = MutableStateFlow(0),
+            startService = { _, id -> requestIds += id },
+            stopService = { },
+        )
+        val first = backgroundScope.launch { controller.start(ServiceReason.ACTIVE_TRANSFER) }
+        runCurrent()
+        val cancelled = backgroundScope.launch { controller.start(ServiceReason.BACKGROUND_RECEIVE) }
+        runCurrent()
+        cancelled.cancel()
+
+        controller.onForegroundStarted(requestIds.single())
+        runCurrent()
+        val requestsAfterCancellation = requestIds.size
+        requestIds.drop(1).forEach(controller::onForegroundStarted)
+        first.join()
+        cancelled.join()
+
+        assertEquals(1, requestsAfterCancellation)
+    }
+
+    @Test
+    fun `foreground service stop rechecks idle state after pending promotion`() = runTest {
+        val active = MutableStateFlow(0)
+        var requestId: Long? = null
+        var stopCount = 0
+        val controller = ForegroundServiceController(
+            activeTransferCount = active,
+            startService = { _, id -> requestId = id },
+            stopService = { stopCount++ },
+        )
+        val starting = backgroundScope.launch { controller.start(ServiceReason.ACTIVE_TRANSFER) }
+        runCurrent()
+        val stopping = backgroundScope.launch { controller.stopWhenIdle() }
+        runCurrent()
+        active.value = 1
+
+        controller.onForegroundStarted(requireNotNull(requestId))
+        runCurrent()
+
+        assertEquals(0, stopCount)
+        assertFalse(stopping.isCompleted)
+        active.value = 0
+        starting.join()
         stopping.join()
         assertEquals(1, stopCount)
     }
@@ -459,7 +535,7 @@ class RuntimeControllerTest {
         var startFailure: RuntimeException? = null
         var stopFailure: RuntimeException? = null
 
-        override fun start(reason: ServiceReason) {
+        override suspend fun start(reason: ServiceReason) {
             startFailure?.let { throw it }
             starts += reason
             events += "service:start:$reason"

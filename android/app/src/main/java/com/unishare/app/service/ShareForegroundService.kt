@@ -61,6 +61,11 @@ class ShareForegroundService : Service() {
         showForegroundNotification()
 
         val graph = (application as UniShareApplication).graph
+        if (intent?.hasExtra(EXTRA_START_REQUEST_ID) == true) {
+            graph.foregroundServiceController.onForegroundStarted(
+                intent.getLongExtra(EXTRA_START_REQUEST_ID, Long.MIN_VALUE),
+            )
+        }
         val handler = ShareServiceActionHandler(
             setBackgroundReceive = { enabled ->
                 graph.runtimeController.setBackgroundReceive(enabled)
@@ -119,6 +124,7 @@ class ShareForegroundService : Service() {
         const val ACTION_STOP_BACKGROUND_RECEIVE = "com.unishare.app.action.STOP_BACKGROUND_RECEIVE"
         const val ACTION_CANCEL_TRANSFER = "com.unishare.app.action.CANCEL_TRANSFER"
         const val EXTRA_REASON = "com.unishare.app.extra.SERVICE_REASON"
+        const val EXTRA_START_REQUEST_ID = "com.unishare.app.extra.SERVICE_START_REQUEST_ID"
         const val EXTRA_ACTIVITY_ID = "com.unishare.app.extra.CANCEL_ACTIVITY_ID"
         const val RESTART_MODE = START_STICKY
         private const val NOTIFICATION_ID = 1001

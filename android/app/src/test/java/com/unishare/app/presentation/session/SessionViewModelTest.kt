@@ -73,7 +73,7 @@ class SessionViewModelTest {
             override suspend fun setTheme(theme: com.unishare.app.data.settings.AppTheme) = Unit
         }
         val service = object : com.unishare.app.service.ForegroundServiceGateway {
-            override fun start(reason: com.unishare.app.service.ServiceReason) = Unit
+            override suspend fun start(reason: com.unishare.app.service.ServiceReason) = Unit
             override suspend fun stopWhenIdle() = Unit
         }
         val runtime = com.unishare.app.service.RuntimeController(settings, com.unishare.app.service.ShareSessionRuntime(session),
