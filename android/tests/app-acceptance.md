@@ -50,25 +50,53 @@ and missing evidence visible; do not infer PASS from unit tests or historic SDK 
 
 ## Automated evidence
 
-Measured 2026-10-08 on `emulator-5554`, `sdk_gphone64_x86_64`, API37. App source
-commits `e466027` and `6818582`. XML counts parsed; HTML summaries inspected.
+Task13 measurements on 2026-10-08, `emulator-5554`, `sdk_gphone64_x86_64`, API37.
+Audit baseline `795ad53`; candidate changes are committed as
+`fix(android): resolve release audit findings`. XML testcase/failure/error/skipped
+nodes were counted independently. Full JVM evidence is preserved before focused
+tests overwrite the default report directory.
 
 | Check | Measured result |
 | --- | --- |
-| App JVM | 210 tests, 0 failures/errors/skipped; 25 XML suites |
+| App JVM | 211 tests, 0 failures/errors/skipped; 25 XML suites, including the new ABI contract |
 | App lint | 0 errors, 22 warnings |
-| App full connected | 91 tests, 0 failures/errors/skipped; API37 emulator |
+| App full connected | Post-ABI-fix 91 tests, 0 failures/errors/skipped; API37 emulator, XML UTC 08:08:55 |
 | SDK host unit | NO-SOURCE; no passed SDK JVM count |
-| SDK PublicApiTests | **FAIL: 7 executed, 1 failure, 0 errors/skipped**; focusedClipboard Text-to-Image ClassCastException; eighth acceptance case unrun |
-| Complete selected-device test-app | **exit1** at SDK gate; not all-green |
-| VerifyOnly without device | exit0 for existing contracts/artifacts/unit/lint; connected SKIP |
-| VerifyOnly with emulator selected | **exit1**, rejects SDK failed XML |
-| Extra SDK lint diagnostic | 8 errors/15 warnings, not passed; debt outside Task12 app gate |
-| Standalone build/default reruns | Sandbox exit1 at Gradle network Permission denied; retries interrupted pending approval, not passed |
+| SDK PublicApiTests | Post-ABI-fix 10 tests, 0 failures/errors/skipped; XML UTC 08:22:29; all original eight cases plus clipboard-replacement/NSD-dispatch regressions |
+| Focused Activity/Transfer/RuntimeController/ResourceParity JVM | 91 tests, 0 failures/errors/skipped, 6 suites; also included in the final full 211 |
+| Verification-script fixtures | 27 cases, 0 failures; malformed/failed/skipped fixtures correctly exit1 |
+| SDK lint | 0 errors, 15 warnings; seven NewApi errors resolved without suppression; ignored local SDK property normalized, never committed |
+| Default and selected-device test-app wrappers | Both attempted, exit1 at inventory with sandbox network Permission denied; selected wrapper confirmed emulator-5554 online/API37 |
+| Equivalent direct Gradle gates | Actual task inventory, complete host/lint/debug build, serial app then SDK connected, and both release assembles passed using the approved prefix |
+| VerifyOnly / standalone build-app | Not rerun for this final candidate; no new passing wrapper claim |
+| Release package inspection | API26/target36, non-exported providers/services, connectedDevice only, no boot/test provider; APK/AAR ABI set agrees; no packaged user/test content |
 
-Successfully assembled APK from the measured app workflow:
-`D:\cs\unishare\.worktrees\android-client\android\app\build\outputs\apk\debug\app-debug.apk`.
-**48,339,370 bytes**, SHA-256
-`05A75984A2553056657E2631CB7B165E057F558AB455818E8C92DF4DFC5D2AFC`.
-The standalone build script is not claimed passed. Task13 must fix and re-run the
-SDK clipboard blocker. These automated results close no blocked physical/API gate.
+The original SDK image-roundtrip failure was a real external emulator overwrite:
+platform `text/plain`, label `host clipboard`, no URI, Activity still focused.
+The test now observes clipboard publication events and verifies MIME, URI bytes
+and SDK reads under a strict deadline, rebuilding only after an observed host
+overwrite. Production reads still return current clipboard content, never a cache.
+SDK lint uses real runtime API guards and legacy NSD fallback on older Android.
+
+An initial final-gate app run stalled at 41/91 and the emulator went offline; it
+was terminated, not counted passed. Restarting the same AVD without wiping yielded
+91/91. A later attempt failed before tests due to a stale UTP logcat file lock;
+stopping residual daemons released the lock and the post-ABI 91/91 run passed.
+The emulator interruption's underlying cause is not established.
+
+Release inspection also found dependency-only x86 native libraries without an
+x86 SDK library. A test-first fix filters all app dependency ABIs to the SDK's
+debug two/release three supported ABIs. The corrected release APK has nine native
+libraries across arm64-v8a, armeabi-v7a and x86_64; the AAR has the matching three
+SDK libraries. Required JNI exports and system-only dynamic dependencies passed
+independent ELF inspection. No database/log/identity/sample/test fixture is bundled.
+
+| Artifact | Bytes | SHA-256 |
+| --- | --- | --- |
+| `android/app/build/outputs/apk/release/app-release-unsigned.apk` | 37,521,020 | `377F197EFF7634538B204DB5D721ECF1D6986272A8E4479746568F4B910958FB` |
+| `android/share-sdk/build/outputs/aar/share-sdk-release.aar` | 9,072,941 | `1BA5C5F35AEE755CC4AB13F34EE8C0EACD9C1FAA1A3AECD09D68D007AE460753` |
+| `android/app/build/outputs/apk/debug/app-debug.apk` | 47,739,107 | `5AC7F167B969FFFB12294799B93713C476BC7A93A6DE398BD0C97E3079590B22` |
+
+Release APK is unsigned; assembly and inspection are not signed-package/device
+acceptance. These automated results close no blocked physical/API gate, and do
+not resolve the API26–28 Downloads or generic SAF publication limitations.

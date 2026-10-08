@@ -32,7 +32,12 @@ android {
     }
     testOptions.unitTests.isIncludeAndroidResources = true
     buildTypes {
+        getByName("debug") {
+            // Filter dependency JNI libraries too, not just the SDK's native build.
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        }
         release {
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

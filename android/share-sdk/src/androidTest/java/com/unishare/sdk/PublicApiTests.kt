@@ -53,7 +53,7 @@ class PublicApiTests : Instrumentation() {
             check(source.readBytes().contentEquals(byteArrayOf(1, 2, 3)), "failed sends preserve source data"); source.delete()
             check(sdk.clipboard.writeContent(ShareContent.Text("public 世界\u0000")).result.get(5, TimeUnit.SECONDS).isSuccess, "clipboard write JNI")
             val read = sdk.clipboard.readShareableContent().result.get(5, TimeUnit.SECONDS)
-            if (read.isSuccess) check((read.content as ShareContent.Text).text == "public 世界\u0000", "clipboard UTF-8 borrowed copy")
+            if (read.isSuccess) check(read.content is ShareContent.Text && read.content.text == "public 世界\u0000", "clipboard UTF-8 borrowed copy")
             else check(read.error?.category in listOf(ErrorCategory.INVALID_INPUT, ErrorCategory.PERMISSION_DENIED), "clipboard platform failure category")
             check(sdk.clipboard.writeContent(ShareContent.Image("image/png", byteArrayOf())).result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.INVALID_INPUT, "invalid clipboard image JNI")
             check(sdk.stop().result.get(15, TimeUnit.SECONDS).isSuccess, "stop")
@@ -91,6 +91,75 @@ class PublicApiTests : Instrumentation() {
             check(sdk.state == SdkState.INITIALIZED, "retry initialized state")
         } finally { sdk.close() }
     }
+    /** The emulator's host bridge is an external clipboard writer, even with Activity focus. */
+    private fun clipboardRoundtrip(sdk: ShareSdk, expected: ShareContent) {
+        val manager = targetContext.getSystemService(android.content.ClipboardManager::class.java)
+        val changes = java.util.concurrent.LinkedBlockingQueue<android.content.ClipData>()
+        val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+            manager.primaryClip?.let(changes::offer)
+        }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        fun remaining(): Long = (deadline - System.nanoTime()).also { check(it > 0, "clipboard fixture deadline exceeded") }
+        fun host(clip: android.content.ClipData?) = clip?.description?.label == "host clipboard"
+        fun published(clip: android.content.ClipData): Boolean {
+            check(clip.itemCount == 1, "SDK must publish one clipboard item")
+            val item = clip.getItemAt(0)
+            return when (expected) {
+                is ShareContent.Text -> clip.description.label == "UniShare" &&
+                    clip.description.hasMimeType("text/plain") && item.text?.toString() == expected.text
+                is ShareContent.Image -> clip.description.label == "UniShare image" &&
+                    clip.description.hasMimeType(expected.mimeType) && item.uri != null
+            }
+        }
+        fun matches(content: ShareContent?) = when (expected) {
+            is ShareContent.Text -> content is ShareContent.Text && content.text == expected.text
+            is ShareContent.Image -> content is ShareContent.Image && content.mimeType == expected.mimeType &&
+                content.bytes.contentEquals(expected.bytes)
+        }
+        runOnMainSync { manager.addPrimaryClipChangedListener(listener) }
+        try {
+            while (true) {
+                remaining()
+                changes.clear()
+                check(sdk.clipboard.writeContent(expected).result.get(remaining(), TimeUnit.NANOSECONDS).isSuccess, "focused clipboard write")
+                val event = changes.poll(remaining(), TimeUnit.NANOSECONDS)
+                check(event != null, "SDK write did not publish a clipboard change")
+                if (host(event)) continue // Only a proven external write permits rebuilding the fixture.
+                check(published(event!!), "SDK clipboard publication has wrong MIME/item")
+                if (expected is ShareContent.Image) {
+                    val uri = event.getItemAt(0).uri
+                    check(targetContext.contentResolver.getType(uri!!) == expected.mimeType, "published image MIME")
+                    val actual = targetContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    check(actual != null && actual.contentEquals(expected.bytes), "published image URI bytes")
+                }
+                val read = sdk.clipboard.readShareableContent().result.get(remaining(), TimeUnit.NANOSECONDS)
+                if (read.isSuccess && matches(read.content)) return
+                var current: android.content.ClipData? = null
+                runOnMainSync { current = manager.primaryClip }
+                val interveningHost = host(current) || changes.any(::host)
+                check(interveningHost, "SDK read disagrees with its current publication: ${read.content?.javaClass?.simpleName}, error=${read.error?.category}")
+            }
+        } finally { runOnMainSync { manager.removePrimaryClipChangedListener(listener) } }
+    }
+
+    private fun clearClipboard(sdk: ShareSdk) {
+        val manager = targetContext.getSystemService(android.content.ClipboardManager::class.java)
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        do {
+            check(System.nanoTime() < deadline, "clipboard clear deadline exceeded")
+            runOnMainSync {
+                if (android.os.Build.VERSION.SDK_INT >= 28) manager.clearPrimaryClip()
+                else manager.setPrimaryClip(android.content.ClipData.newIntent("empty API26 fixture", android.content.Intent("fixture")))
+            }
+            val remaining = deadline - System.nanoTime()
+            check(remaining > 0, "clipboard clear deadline exceeded")
+            val read = sdk.clipboard.readShareableContent().result.get(remaining, TimeUnit.NANOSECONDS)
+            if (read.error?.category == ErrorCategory.INVALID_INPUT) return
+            var clip: android.content.ClipData? = null
+            runOnMainSync { clip = manager.primaryClip }
+            check(clip?.description?.label == "host clipboard", "clear must yield InvalidInput unless an external host write replaced it")
+        } while (true)
+    }
     private fun focusedClipboard() {
         ClipboardHostActivity.focused = java.util.concurrent.CountDownLatch(1)
         val activity = startActivitySync(android.content.Intent(targetContext, ClipboardHostActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -98,16 +167,13 @@ class PublicApiTests : Instrumentation() {
             check(ClipboardHostActivity.focused.await(10, TimeUnit.SECONDS), "clipboard test host focus unavailable")
             ShareSdk(targetContext, "clipboard-${UUID.randomUUID()}").use { sdk ->
                 check(sdk.initialize(SdkConfig("clipboard")).result.get(15, TimeUnit.SECONDS).isSuccess, "clipboard initialize")
-                val text = "explicit 世界"
-                check(sdk.clipboard.writeContent(ShareContent.Text(text)).result.get(5, TimeUnit.SECONDS).isSuccess, "focused text write")
-                val readText = sdk.clipboard.readShareableContent().result.get(5, TimeUnit.SECONDS)
-                check(readText.isSuccess && (readText.content as ShareContent.Text).text == text, "focused ClipboardManager text roundtrip: $readText")
+                clipboardRoundtrip(sdk, ShareContent.Text("explicit 世界"))
                 val bytes = android.util.Base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9GQAAAAASUVORK5CYII=", android.util.Base64.DEFAULT)
-                check(sdk.clipboard.writeContent(ShareContent.Image("image/png", bytes)).result.get(5, TimeUnit.SECONDS).isSuccess, "focused image write")
-                val readImage = sdk.clipboard.readShareableContent().result.get(5, TimeUnit.SECONDS)
-                check(readImage.isSuccess && (readImage.content as ShareContent.Image).bytes.contentEquals(bytes), "focused ClipboardManager image/ContentResolver roundtrip")
+                clipboardRoundtrip(sdk, ShareContent.Image("image/png", bytes))
+                clearClipboard(sdk)
                 runOnMainSync { targetContext.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newIntent("unsupported", android.content.Intent("fixture"))) }
                 check(sdk.clipboard.readShareableContent().result.get(5, TimeUnit.SECONDS).error?.category == ErrorCategory.INVALID_INPUT, "actual unsupported clipboard InvalidInput")
+                check(activity.hasWindowFocus(), "clipboard host lost focus")
             }
         } finally { runOnMainSync { activity.finish() } }
     }
@@ -119,7 +185,9 @@ class PublicApiTests : Instrumentation() {
                 "apiContract" to ApiContractCases::run, "stopDuringUri" to ApiContractCases::stopDuringUri,
                 "identityAcceptance" to { com.unishare.sdk.internal.IdentityAcceptance.run(targetContext) },
                 "focusedClipboard" to ::focusedClipboard,
-                "acceptance" to { AcceptanceCases.run(targetContext) })) {
+                "acceptance" to { AcceptanceCases.run(targetContext) },
+                "clipboardReplacement" to { com.unishare.sdk.internal.ReleaseAuditCases.clipboardReplacement(targetContext) },
+                "nsdVersionDispatch" to { com.unishare.sdk.internal.ReleaseAuditCases.nsdVersionDispatch() })) {
                 if (selectedCase != null && selectedCase != name) continue
                 val status = Bundle(); status.putString("class", javaClass.name); status.putString("test", name)
                 sendStatus(1, status); test(); sendStatus(0, status)

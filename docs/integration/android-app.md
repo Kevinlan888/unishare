@@ -11,9 +11,12 @@ and measured evidence separate from historical SDK-host interoperability.
 Use Windows PowerShell 5.1+ or PowerShell 7, JDK 21, Gradle wrapper 9.4.1,
 Android platform 36, Build Tools 36.0.0, NDK 28.2.13676358 and CMake 3.22.1.
 Configure `JAVA_HOME`/PATH and the SDK through `android/local.properties` (`sdk.dir`)
-or the SDK environment. Provision ABI-matched static OpenSSL in worktree-local
+or the SDK environment. In a Properties file escape a Windows drive colon, for
+example `sdk.dir=C\:/path/to/Android/Sdk`; keep that machine-local file ignored.
+Provision ABI-matched static OpenSSL in worktree-local
 ignored `build-deps` as described in the [SDK guide](android.md). CMake downloads
-no dependencies. Debug includes arm64-v8a and x86_64. A fresh machine may need
+no dependencies. App dependency ABI filters match the SDK: debug includes
+arm64-v8a and x86_64; release also includes armeabi-v7a, not x86. A fresh machine may need
 network access for Gradle's distribution/dependencies. Do not commit keys,
 identities, reports, build output or received content.
 
@@ -30,6 +33,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File android/scripts/test-app.ps1
 
 powershell -NoProfile -ExecutionPolicy Bypass -File android/scripts/build-app.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File android/scripts/test-app.ps1 -VerifyOnly
+# Release-candidate assembly/inspection is a separate gate; APK is unsigned.
+.\android\gradlew.bat -p android :app:assembleRelease :share-sdk:assembleRelease
 git diff --check
 ```
 
@@ -72,6 +77,8 @@ verify missing-output failure without deleting real outputs.
 | --- | --- |
 | Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` |
 | Debug SDK AAR | `android/share-sdk/build/outputs/aar/share-sdk-debug.aar` |
+| Unsigned release APK | `android/app/build/outputs/apk/release/app-release-unsigned.apk` |
+| Release SDK AAR | `android/share-sdk/build/outputs/aar/share-sdk-release.aar` |
 | App unit XML/HTML | `android/app/build/test-results/testDebugUnitTest/TEST-*.xml`, `android/app/build/reports/tests/testDebugUnitTest/index.html` |
 | App lint XML/HTML | `android/app/build/reports/lint-results-debug.{xml,html}` |
 | Connected XML/HTML | `android/{app,share-sdk}/build/outputs/androidTest-results/connected/debug/TEST-*.xml`, `android/{app,share-sdk}/build/reports/androidTests/connected/debug/index.html` |
@@ -99,17 +106,30 @@ requirements. The API guard prevents unsupported pending-Downloads recovery; it
 does not implement the missing publication path. Keep storage acceptance blocked
 until implementation and device/operator evidence satisfy the design.
 
-An additional `:share-sdk:lintDebug` diagnostic run on 2026-10-08 failed with
-8 errors and 15 warnings (7 NewApi findings in AndroidNsd and one local.properties
-PropertyEscape). SDK lint is visible debt for Task 13 assessment; it is not a
-required Task 12 app gate and has not passed. Task 12 requires app lint plus SDK
-assembly/public contracts. No SDK lint finding was suppressed or fixed here.
+Task13 resolved the SDK automated blocker. The image clipboard had actually been
+overwritten by the emulator host as `text/plain` with label `host clipboard`,
+despite Activity focus. The event-driven test verifies the SDK's publication
+MIME/URI/bytes and current snapshot read, rebuilding only for an observed host
+overwrite within a strict deadline. No production cache or fake read was added.
+All original eight public cases now run, plus two current-content/NSD regressions:
+10/10 passed. SDK lint moved from 8 errors/15 warnings to 0 errors/15 warnings:
+seven NewApi errors were fixed with actual runtime guards and legacy fallback;
+the sole remaining machine-local PropertyEscape was corrected only in the ignored
+local file. No suppression or minSdk increase was used.
 
-The complete selected-emulator workflow currently exits1: app unit210/0, full
-app connected91/0 and app lint0 errors/22 warnings passed. SDK PublicApiTests
-ran7 cases with1 failure: focusedClipboard read Text after image write and threw
-ClassCastException casting to Image; eighth acceptance case was not run. Emulator
-was Awake, without lock screen, and its clipboard host had focus. This required
-SDK gate remains unsuppressed; Task13 must fix/re-run it. Standalone build/default
-reruns were blocked by sandbox network access and interrupted pending approval,
-so they are not claimed passed. Package identity is in the measured acceptance.
+Final automated evidence: app JVM211/0, app connected91/0, SDK connected10/0,
+focused JVM91/0, verifier fixtures27/0, app lint0 errors/22 warnings and SDK lint0
+errors/15 warnings. Direct Gradle task inventory, debug builds and both release
+assemblies passed. Default/selected test-app wrappers were attempted but exited1
+at inventory with sandbox network Permission denied; the selected attempt did
+confirm emulator-5554 online/API37. Equivalent approved direct Gradle commands
+supplied the gate evidence, with app/SDK connected strictly serial. These are not
+passing wrapper or standalone build-app claims. No final VerifyOnly rerun is claimed.
+
+Release audit removed dependency-only x86 libraries unsupported by the SDK using
+test-first app ABI filters. Actual package manifest/content/ELF inspections passed;
+the unsigned release APK and AAR hashes/sizes are recorded in
+[acceptance](../../android/tests/app-acceptance.md). One earlier app run stalled at
+41/91 before the emulator went offline; it was not counted passed. A no-wipe AVD
+restart and a later stale-daemon lock cleanup preceded successful full reruns.
+Keep those environment failures visible; the emulator crash cause is unproven.

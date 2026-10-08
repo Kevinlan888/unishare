@@ -47,6 +47,26 @@ class BuildContractTest {
         assertNotEquals(DarkColorScheme.primary, DarkColorScheme.onPrimary)
     }
 
+    @Test
+    fun app_variants_filter_dependency_abis_to_the_native_sdk_abis() {
+        fun filters(script: File, variant: String): Set<String> {
+            val block = Regex(
+                "(?s)(?:getByName\\(\"$variant\"\\)|\\b$variant)\\s*\\{.*?ndk\\s*\\{\\s*abiFilters\\s*\\+=\\s*listOf\\(([^)]*)\\)",
+            ).find(script.readText())
+            return block?.groupValues?.get(1)?.let { values ->
+                Regex("\"([^\"]+)\"").findAll(values).map { it.groupValues[1] }.toSet()
+            }.orEmpty()
+        }
+        val expected = mapOf(
+            "debug" to setOf("arm64-v8a", "x86_64"),
+            "release" to setOf("arm64-v8a", "armeabi-v7a", "x86_64"),
+        )
+        for ((variant, abis) in expected) {
+            assertEquals("SDK $variant ABIs", abis, filters(File("../share-sdk/build.gradle.kts"), variant))
+            assertEquals("App $variant must not package dependency-only ABIs", abis, filters(File("build.gradle.kts"), variant))
+        }
+    }
+
     private fun parseXml(file: File) = DocumentBuilderFactory.newInstance().apply {
         setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
     }.newDocumentBuilder().parse(file)
