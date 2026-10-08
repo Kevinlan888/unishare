@@ -107,19 +107,11 @@ class AndroidContentUriPermissionRetainer internal constructor(
             } catch (_: RuntimeException) {
                 throw ContentPermissionException(ShareErrorKind.STORAGE_FAILED)
             }
-            val alreadyPersisted = try {
-                platformCall { access.hasPersistedRead(uri) }
-            } catch (failure: ContentPermissionException) {
-                forgetJournalEntry(key)
-                throw failure
-            }
+            // Once recorded, an acquisition failure is indeterminate: the platform may
+            // already own the grant. Keep the journal for next-process cleanup.
+            val alreadyPersisted = platformCall { access.hasPersistedRead(uri) }
             if (!alreadyPersisted) {
-                try {
-                    platformCall { access.takePersistableRead(uri) }
-                } catch (failure: ContentPermissionException) {
-                    forgetJournalEntry(key)
-                    throw failure
-                }
+                platformCall { access.takePersistableRead(uri) }
             }
             // Persisted URI grants are app-scoped. Adopt a grant left by an earlier
             // process so this lease can deterministically retire it instead of leaking it.

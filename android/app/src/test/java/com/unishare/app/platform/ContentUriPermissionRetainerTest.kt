@@ -158,6 +158,79 @@ class ContentUriPermissionRetainerTest {
     }
 
     @Test
+    fun retain_query_failure_keeps_the_journal_until_a_healthy_process_releases_the_orphan() {
+        val uri = fakeUri()
+        val journal = FakeContentUriGrantJournal(setOf(uri.toString()))
+        val access = FakePersistableUriPermissionAccess().apply {
+            existing += uri.toString()
+            hasFailure = SecurityException("system grant query temporarily unavailable")
+        }
+        val retainer = AndroidContentUriPermissionRetainer(access, journal)
+
+        val failure = runCatching { retainer.retain(uri) }.exceptionOrNull()
+
+        assertTrue(failure is ContentPermissionException)
+        assertEquals(ShareErrorKind.PERMISSION_DENIED, (failure as ContentPermissionException).errorKind)
+        assertEquals(setOf(uri.toString()), journal.entries)
+        assertTrue(access.taken.isEmpty())
+        assertTrue(access.releasedStrings.isEmpty())
+
+        access.hasFailure = null
+        AndroidContentUriPermissionRetainer(access, journal)
+
+        assertTrue(access.existing.isEmpty())
+        assertEquals(listOf(uri.toString()), access.releasedStrings)
+        assertTrue(journal.entries.isEmpty())
+    }
+
+    @Test
+    fun retain_take_failure_after_platform_effect_keeps_the_journal_for_startup_cleanup() {
+        val uri = fakeUri()
+        val journal = FakeContentUriGrantJournal()
+        val access = FakePersistableUriPermissionAccess().apply {
+            takeFailureAfterGrant = SecurityException("provider failed after persisting access")
+        }
+        val retainer = AndroidContentUriPermissionRetainer(access, journal)
+
+        val failure = runCatching { retainer.retain(uri) }.exceptionOrNull()
+
+        assertTrue(failure is ContentPermissionException)
+        assertEquals(ShareErrorKind.PERMISSION_DENIED, (failure as ContentPermissionException).errorKind)
+        assertEquals(setOf(uri.toString()), access.existing)
+        assertEquals(setOf(uri.toString()), journal.entries)
+
+        access.takeFailureAfterGrant = null
+        AndroidContentUriPermissionRetainer(access, journal)
+
+        assertTrue(access.existing.isEmpty())
+        assertEquals(listOf(uri.toString()), access.releasedStrings)
+        assertTrue(journal.entries.isEmpty())
+    }
+
+    @Test
+    fun failed_retain_does_not_install_an_in_memory_grant() {
+        val uri = fakeUri()
+        val access = FakePersistableUriPermissionAccess().apply {
+            takeFailureAfterGrant = SecurityException("provider failed after persisting access")
+        }
+        val retainer = AndroidContentUriPermissionRetainer(access, FakeContentUriGrantJournal())
+
+        val failure = runCatching { retainer.retain(uri) }.exceptionOrNull()
+
+        assertTrue(failure is ContentPermissionException)
+        var recoveryQueries = 0
+        access.takeFailureAfterGrant = null
+        access.onHas = { recoveryQueries++ }
+
+        val recovered = retainer.retain(uri)
+
+        assertEquals("retry must query the platform rather than reuse an in-memory grant", 1, recoveryQueries)
+        assertEquals("the already-persisted grant must not be taken twice", 1, access.taken.size)
+        recovered.lease.close()
+        assertTrue(access.existing.isEmpty())
+    }
+
+    @Test
     fun startup_cleanup_is_idempotent_when_release_completed_before_journal_removal() {
         val uri = fakeUri()
         val journal = FakeContentUriGrantJournal(setOf(uri.toString()))
@@ -213,7 +286,9 @@ private class FakePersistableUriPermissionAccess(
     val released = mutableListOf<Uri>()
     val releasedStrings = mutableListOf<String>()
     val existing = mutableSetOf<String>()
+    var hasFailure: RuntimeException? = null
     var takeFailure: RuntimeException? = null
+    var takeFailureAfterGrant: RuntimeException? = null
     var releaseFailure: RuntimeException? = null
     var onHas: (() -> Unit)? = null
     var onRelease: (() -> Unit)? = null
@@ -221,11 +296,13 @@ private class FakePersistableUriPermissionAccess(
     override fun hasPersistedRead(uri: Uri): Boolean {
         events?.add("access:has")
         onHas?.invoke()
+        hasFailure?.let { throw it }
         return uri.toString() in existing
     }
 
     override fun hasPersistedRead(rawUri: String): Boolean {
         events?.add("access:has")
+        hasFailure?.let { throw it }
         return rawUri in existing
     }
 
@@ -234,6 +311,7 @@ private class FakePersistableUriPermissionAccess(
         takeFailure?.let { throw it }
         taken += uri
         existing += uri.toString()
+        takeFailureAfterGrant?.let { throw it }
     }
 
     override fun releasePersistableRead(uri: Uri) {
