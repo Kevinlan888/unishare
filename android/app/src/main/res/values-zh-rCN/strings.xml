@@ -115,11 +115,13 @@
     <string name="receive_title">接收文件</string>
     <string name="receive_text_title">接收文本</string>
     <string name="receive_unknown_file">传入文件</string>
+    <string name="receive_unknown_text">传入文本</string>
     <string name="receive_metadata">%1$s · %2$s</string>
     <string name="receive_from">来自</string>
     <string name="receive_source_device_icon">来源设备</string>
     <string name="receive_image_preview">%1$s 的预览</string>
     <string name="receive_safe_preview">安全文件预览</string>
+    <string name="receive_safe_text_preview">接受后显示文本预览</string>
     <string name="receive_reject">拒绝</string>
     <string name="receive_accept">接受</string>
     <string name="receive_receiving">正在接收…</string>
@@ -128,6 +130,7 @@
     <string name="receive_open_failed">没有可打开此文件的应用。</string>
     <string name="receive_expired">此接收请求已失效。</string>
     <string name="receive_rejected">已拒绝此文件。</string>
+    <string name="receive_text_rejected">已拒绝此文本请求。</string>
     <string name="receive_failed">无法完成传输。</string>
     <string name="receive_saved_to">文件将保存到：</string>
     <string name="receive_destination_download">下载</string>

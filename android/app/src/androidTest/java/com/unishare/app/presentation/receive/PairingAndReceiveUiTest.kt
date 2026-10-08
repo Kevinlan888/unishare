@@ -165,6 +165,35 @@ class PairingAndReceiveUiTest {
     }
 
     @Test
+    fun text_offer_uses_text_specific_pending_and_rejected_copy() {
+        val state = mutableStateOf(
+            receiveState().copy(
+                kind = ContentKind.TEXT,
+                displayName = "",
+                mimeType = "text/plain",
+                byteCount = 17,
+            ),
+        )
+        setEnglishContent {
+            ReceiveScreen(
+                state = state.value,
+                onBack = {},
+                onAccept = {},
+                onReject = {},
+                onChangeDestination = {},
+                onRetryPublication = {},
+                onOpen = {},
+            )
+        }
+
+        composeRule.onNodeWithText("Incoming text").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Text preview hidden until accepted").assertIsDisplayed()
+        composeRule.runOnIdle { state.value = state.value.copy(phase = ReceivePhase.REJECTED) }
+        composeRule.onNodeWithText("This text request was rejected.").assertIsDisplayed()
+        composeRule.onNodeWithText("This file was rejected.").assertDoesNotExist()
+    }
+
+    @Test
     fun completed_receive_replaces_decisions_with_open_only_when_readable() {
         val state = receiveState().copy(
             phase = ReceivePhase.COMPLETED,

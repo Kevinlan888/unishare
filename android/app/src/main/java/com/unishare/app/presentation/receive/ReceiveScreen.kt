@@ -78,7 +78,12 @@ fun ReceiveScreen(
             ReceivePreview(state, verifiedPreview)
             Spacer(Modifier.height(16.dp))
             Text(
-                text = state.displayName.ifBlank { stringResource(R.string.receive_unknown_file) },
+                text = state.displayName.ifBlank {
+                    stringResource(
+                        if (state.kind == ContentKind.TEXT) R.string.receive_unknown_text
+                        else R.string.receive_unknown_file,
+                    )
+                },
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -175,7 +180,10 @@ private fun ReceivePreview(state: ReceiveUiState, preview: ImageBitmap?) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = if (state.kind == ContentKind.IMAGE) Icons.Outlined.Image else Icons.AutoMirrored.Outlined.InsertDriveFile,
-                    contentDescription = stringResource(R.string.receive_safe_preview),
+                    contentDescription = stringResource(
+                        if (state.kind == ContentKind.TEXT) R.string.receive_safe_text_preview
+                        else R.string.receive_safe_preview,
+                    ),
                     modifier = Modifier.size(72.dp),
                     tint = MaterialTheme.colorScheme.primary,
                 )
@@ -277,7 +285,13 @@ private fun DecisionActions(
             text = stringResource(R.string.receive_expired),
             error = true,
         )
-        ReceivePhase.REJECTED -> ReceiveMessage(stringResource(R.string.receive_rejected), error = false)
+        ReceivePhase.REJECTED -> ReceiveMessage(
+            stringResource(
+                if (state.kind == ContentKind.TEXT) R.string.receive_text_rejected
+                else R.string.receive_rejected,
+            ),
+            error = false,
+        )
         ReceivePhase.FAILED -> ReceiveMessage(stringResource(R.string.receive_failed), error = true)
         ReceivePhase.DIRECTORY_ERROR -> Unit
     }

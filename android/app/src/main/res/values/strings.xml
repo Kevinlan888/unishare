@@ -116,11 +116,13 @@
     <string name="receive_title">Receive File</string>
     <string name="receive_text_title">Receive Text</string>
     <string name="receive_unknown_file">Incoming file</string>
+    <string name="receive_unknown_text">Incoming text</string>
     <string name="receive_metadata">%1$s · %2$s</string>
     <string name="receive_from">From</string>
     <string name="receive_source_device_icon">Source device</string>
     <string name="receive_image_preview">Preview of %1$s</string>
     <string name="receive_safe_preview">Safe file preview</string>
+    <string name="receive_safe_text_preview">Text preview hidden until accepted</string>
     <string name="receive_reject">Reject</string>
     <string name="receive_accept">Accept</string>
     <string name="receive_receiving">Receiving…</string>
@@ -129,6 +131,7 @@
     <string name="receive_open_failed">No app can open this file.</string>
     <string name="receive_expired">This receive request is no longer available.</string>
     <string name="receive_rejected">This file was rejected.</string>
+    <string name="receive_text_rejected">This text request was rejected.</string>
     <string name="receive_failed">The transfer couldn’t be completed.</string>
     <string name="receive_saved_to">Files will be saved to:</string>
     <string name="receive_destination_download">Download</string>
