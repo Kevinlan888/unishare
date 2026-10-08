@@ -20,7 +20,10 @@ data class PreparedStaging(
 
 /** Opaque, process-owned destinations. Transfer identifiers are never used as paths. */
 class StagingStore(context: Context) {
-    private val directory = File(context.filesDir, "receive-staging")
+    // Android's legitimate /data/user/0 filesDir alias can canonicalize to
+    // /data/data. Resolve that trusted root once; never relax child confinement.
+    private val privateRoot = context.filesDir.canonicalFile
+    private val directory = File(privateRoot, "receive-staging")
     private val authority = "${context.packageName}.staging"
     private val owner = directory.absolutePath
 
@@ -55,6 +58,7 @@ class StagingStore(context: Context) {
 
     /** The exact ten-minute boundary expires; payload writes cannot extend it. */
     fun cleanupOrphans(nowMillis: Long) = synchronized(lock) {
+        ensureDirectory()
         directory.listFiles().orEmpty().forEach { file ->
             val token = file.name.removeSuffix(".data").removeSuffix(".meta")
             val createdAt = readCreatedAt(token)
@@ -73,6 +77,7 @@ class StagingStore(context: Context) {
 
     /** Called once by the provider when a new process starts; old transfers cannot resume. */
     fun cleanupAfterRestart() = synchronized(lock) {
+        ensureDirectory()
         directory.listFiles().orEmpty().forEach { it.delete() }
         active.entries.removeAll { it.key.first == owner }
         Unit
@@ -102,7 +107,9 @@ class StagingStore(context: Context) {
     }
 
     private fun ensureDirectory() {
-        if ((!directory.isDirectory && !directory.mkdirs()) || directory.canonicalFile != directory.absoluteFile) {
+        if (!privateRoot.isDirectory || directory.parentFile != privateRoot ||
+            (!directory.isDirectory && !directory.mkdirs()) ||
+            directory.canonicalFile != directory.absoluteFile || directory.canonicalFile.parentFile != privateRoot) {
             throw IOException("Private destination unavailable")
         }
     }

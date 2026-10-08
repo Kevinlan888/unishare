@@ -79,7 +79,7 @@ class PairingAndReceiveUiTest {
         listOf(
             "Receive File",
             "IMG_3281.jpg",
-            "8.4 MB · JPEG",
+            "8 MiB · JPEG",
             "From",
             "Kevin's Windows PC",
             "Online",
