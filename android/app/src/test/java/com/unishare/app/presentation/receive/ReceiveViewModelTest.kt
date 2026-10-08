@@ -17,9 +17,11 @@ import com.unishare.app.domain.ShareOrigin
 import com.unishare.app.domain.TransferKey
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -59,6 +61,33 @@ class ReceiveViewModelTest {
         assertNull(fixture.viewModel.uiState.value.destinationDisplayName)
         assertTrue(fixture.viewModel.uiState.value.showUnsupportedDestinationNotice)
         assertEquals(listOf(null to null), fixture.settings.directoryWrites)
+    }
+
+    @Test
+    fun retry_waits_for_downloads_restore_before_using_publication_recovery() = runTest {
+        val writeGate = CompletableDeferred<Unit>()
+        val fixture = fixture(
+            immediateBackgroundScope(),
+            destination = "Pictures / UniShare",
+            settingsWriteGate = writeGate,
+        )
+        fixture.viewModel.accept()
+        advanceUntilIdle()
+        fixture.operations.publish(
+            activity(status = ActivityStatus.FAILED, error = ShareErrorKind.STORAGE_FAILED),
+        )
+        advanceUntilIdle()
+
+        fixture.viewModel.restoreDownloadsDestination()
+        fixture.viewModel.retryPublication()
+        runCurrent()
+
+        assertFalse(fixture.operations.calls.any { it.startsWith("retry:") })
+        writeGate.complete(Unit)
+        advanceUntilIdle()
+
+        assertNull(fixture.settings.current.receiveTreeUri)
+        assertEquals("retry:activity-1", fixture.operations.calls.last())
     }
 
     @Test
@@ -255,6 +284,7 @@ class ReceiveViewModelTest {
         scope: CoroutineScope,
         destination: String? = null,
         readable: Boolean = true,
+        settingsWriteGate: CompletableDeferred<Unit>? = null,
     ): Fixture {
         val offer = offer()
         val operations = FakeReceiveOperations(offer)
@@ -272,6 +302,7 @@ class ReceiveViewModelTest {
                 receiveTreeUri = destination?.let { "content://destination/tree" },
                 receiveDirectoryDisplayName = destination,
             ),
+            settingsWriteGate,
         )
         val viewModel = ReceiveViewModel(
             ACTIVITY_ID,
@@ -377,13 +408,17 @@ private class FakeReceiveDevices(vararg summaries: DeviceSummary) : DeviceReposi
     override suspend fun forget(deviceId: DeviceKey) = Unit
 }
 
-private class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRepository {
+private class FakeSettingsRepository(
+    initial: AppSettings = AppSettings(),
+    private val directoryWriteGate: CompletableDeferred<Unit>? = null,
+) : SettingsRepository {
     private val mutable = MutableStateFlow(initial)
     val current: AppSettings get() = mutable.value
     val directoryWrites = mutableListOf<Pair<String?, String?>>()
     override val settings: Flow<AppSettings> = mutable
     override suspend fun setDeviceName(name: String) = Unit
     override suspend fun setReceiveDirectory(treeUri: String?, displayName: String?) {
+        directoryWriteGate?.await()
         directoryWrites += treeUri to displayName
         mutable.value = mutable.value.copy(
             receiveTreeUri = treeUri,

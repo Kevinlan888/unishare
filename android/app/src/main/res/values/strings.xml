@@ -130,7 +130,7 @@
     <string name="receive_failed">The transfer couldn’t be completed.</string>
     <string name="receive_saved_to">Files will be saved to:</string>
     <string name="receive_destination_download">Download</string>
-    <string name="receive_change_destination">Change</string>
+    <string name="receive_destination_info">Why Downloads?</string>
     <string name="receive_restore_downloads">Use Downloads</string>
     <string name="receive_custom_destination_unavailable">Custom folders aren’t available because they can’t guarantee private publication. Files remain in Downloads.</string>
     <string name="receive_directory_error">Couldn’t save this file. Restore Downloads, then try again.</string>

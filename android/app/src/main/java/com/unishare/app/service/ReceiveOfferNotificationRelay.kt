@@ -18,7 +18,11 @@ internal class ReceiveOfferNotificationRelay(
     init {
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             pendingActivityIds.collect { activityId ->
-                if (isPending(activityId)) notify(activityId)
+                if (isPending(activityId)) {
+                    notify(activityId)
+                    // A decision may race between the first check and the synchronous post.
+                    if (!isPending(activityId)) cancel(activityId)
+                }
             }
         }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {

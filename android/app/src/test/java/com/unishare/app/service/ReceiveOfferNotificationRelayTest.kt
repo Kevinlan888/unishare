@@ -36,4 +36,32 @@ class ReceiveOfferNotificationRelayTest {
         assertEquals(listOf(pending), notifications)
         assertEquals(listOf(pending), cancellations)
     }
+
+    @Test
+    fun decision_during_post_is_cancelled_after_the_post() = runTest {
+        val events = MutableSharedFlow<ActivityKey>(extraBufferCapacity = 1)
+        val dismissals = MutableSharedFlow<ActivityKey>(extraBufferCapacity = 1)
+        val activityId = ActivityKey("decision-during-post")
+        var pending = true
+        val notifications = mutableListOf<ActivityKey>()
+        val cancellations = mutableListOf<ActivityKey>()
+
+        ReceiveOfferNotificationRelay(
+            pendingActivityIds = events,
+            dismissedActivityIds = dismissals,
+            isPending = { pending },
+            notify = {
+                notifications += it
+                pending = false
+            },
+            cancel = cancellations::add,
+            scope = backgroundScope,
+        )
+
+        events.emit(activityId)
+        runCurrent()
+
+        assertEquals(listOf(activityId), notifications)
+        assertEquals(listOf(activityId), cancellations)
+    }
 }

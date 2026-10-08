@@ -308,7 +308,7 @@ private fun DestinationSection(
                 TextButton(onClick = onChangeDestination, modifier = Modifier.height(48.dp)) {
                     Text(stringResource(
                         if (state.showDestinationRecovery) R.string.receive_restore_downloads
-                        else R.string.receive_change_destination,
+                        else R.string.receive_destination_info,
                     ))
                 }
             }

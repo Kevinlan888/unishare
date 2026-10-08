@@ -87,7 +87,7 @@ class PairingAndReceiveUiTest {
             "Accept",
             "Files will be saved to:",
             "Download",
-            "Change",
+            "Why Downloads?",
         ).forEach { composeRule.onNodeWithText(it).assertIsDisplayed() }
         composeRule.onNodeWithText("Always accept files from this device").assertDoesNotExist()
         composeRule.onNodeWithText("Always accept").assertDoesNotExist()

@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 interface ReceiveOperations {
     fun pendingOffer(activityId: ActivityKey): IncomingOffer?
@@ -60,8 +62,10 @@ class ReceiveViewModel internal constructor(
 ) : ViewModel() {
     private val workerScope = providedScope ?: viewModelScope
     private val gate = Any()
+    private val destinationGate = Mutex()
     private var decisionClaimed = false
     private var observedActivityId = originalActivityId
+    private var downloadsDestinationConfirmed = false
     private val offer = operations.pendingOffer(originalActivityId)
 
     private val mutableUiState = MutableStateFlow(
@@ -129,6 +133,11 @@ class ReceiveViewModel internal constructor(
             mutableUiState.value = mutableUiState.value.copy(phase = ReceivePhase.RECEIVING)
         }
         workerScope.launch {
+            if (!ensureDownloadsDestination()) {
+                synchronized(gate) { decisionClaimed = false }
+                mutableUiState.value = mutableUiState.value.copy(phase = ReceivePhase.DIRECTORY_ERROR)
+                return@launch
+            }
             val retrySourceId = synchronized(gate) { observedActivityId }
             try {
                 val retryId = operations.retry(retrySourceId)
@@ -150,11 +159,19 @@ class ReceiveViewModel internal constructor(
     fun restoreDownloadsDestination() {
         mutableUiState.value = mutableUiState.value.copy(showUnsupportedDestinationNotice = true)
         workerScope.launch {
-            try {
-                settings.setReceiveDirectory(treeUri = null, displayName = null)
-            } catch (_: Exception) {
-                // The existing destination remains visible when persistence itself is unavailable.
-            }
+            ensureDownloadsDestination()
+        }
+    }
+
+    private suspend fun ensureDownloadsDestination(): Boolean = destinationGate.withLock {
+        if (downloadsDestinationConfirmed) return@withLock true
+        try {
+            settings.setReceiveDirectory(treeUri = null, displayName = null)
+            downloadsDestinationConfirmed = true
+            true
+        } catch (_: Exception) {
+            // Never retry publication against a destination we could not safely reset.
+            false
         }
     }
 
