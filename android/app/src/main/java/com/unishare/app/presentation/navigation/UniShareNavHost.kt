@@ -47,6 +47,12 @@ import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.presentation.home.HomeScreen
 import com.unishare.app.presentation.home.HomeUiState
+import com.unishare.app.presentation.devices.DevicesScreen
+import com.unishare.app.presentation.devices.DevicesUiState
+import com.unishare.app.presentation.history.HistoryScreen
+import com.unishare.app.presentation.history.HistoryUiState
+import com.unishare.app.presentation.settings.SettingsScreen
+import com.unishare.app.presentation.settings.SettingsUiState
 
 private enum class TopLevelItem(
     val destination: AppDestination,
@@ -69,6 +75,9 @@ fun UniShareNavHost(
     receiveContent: (@Composable (ActivityKey, () -> Unit) -> Unit)? = null,
     pendingReceiveActivityId: ActivityKey? = null,
     onReceiveActivityConsumed: () -> Unit = {},
+    devicesContent: (@Composable ((DeviceKey) -> Unit) -> Unit)? = null,
+    historyContent: (@Composable () -> Unit)? = null,
+    settingsContent: (@Composable () -> Unit)? = null,
 ) {
     val entry by navController.currentBackStackEntryAsState()
     val currentRoute = entry?.destination?.route ?: AppDestination.Home.route
@@ -130,22 +139,17 @@ fun UniShareNavHost(
                 )
             }
             composable(AppDestination.Devices.route) {
-                TopLevelPlaceholder(
-                    title = stringResource(R.string.screen_devices_title),
-                    detail = stringResource(R.string.screen_placeholder_detail),
-                )
+                val open: (DeviceKey) -> Unit = { navController.navigate(AppDestination.Session(it).route) }
+                if (devicesContent != null) devicesContent(open)
+                else DevicesScreen(DevicesUiState(), {}, {}, {}, {}, open)
             }
             composable(AppDestination.History.route) {
-                TopLevelPlaceholder(
-                    title = stringResource(R.string.screen_history_title),
-                    detail = stringResource(R.string.screen_placeholder_detail),
-                )
+                if (historyContent != null) historyContent()
+                else HistoryScreen(HistoryUiState(), {}, {})
             }
             composable(AppDestination.Settings.route) {
-                TopLevelPlaceholder(
-                    title = stringResource(R.string.screen_settings_title),
-                    detail = stringResource(R.string.screen_placeholder_detail),
-                )
+                if (settingsContent != null) settingsContent()
+                else SettingsScreen(SettingsUiState(), {}, {}, {}, {}, {}, {})
             }
             composable(
                 route = AppDestination.SESSION_PATTERN,

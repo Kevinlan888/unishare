@@ -198,3 +198,36 @@ Separate focused crops were not required: the normalized session comparison rema
 - Revisit device illustrations only if a future approved icon asset set replaces the required Material icons.
 
 final result: passed
+
+---
+
+## Task 11 — management, settings, localization and accessibility
+
+Task 11 extends the Task 8–10 Material 3 navigation and visual language; the earlier comparison evidence above is unchanged. The management pages use the existing blue-gray background, neutral rounded cards, blue primary actions, system typography, official Material icons and 48 dp controls. No separate mockup or new asset direction was introduced.
+
+### Capture evidence
+
+The serial `AppAccessibilityTest` run captures the following full emulator views in `android/app/build/reports/` (generated evidence, not production assets):
+
+- `task11-devices.png`: English light theme, trusted / nearby / offline sections, explicit trust/online text, connect and labeled forget controls, and the established four-destination navigation.
+- `task11-history.png`: English light theme, search plus device/direction/type/status filters, localized binary size/date, and a completed file whose unavailable content explains the disabled Open action.
+- `task11-settings.png`: English light theme, device-name card, truthful Downloads-only destination policy, background/notification switches and scrollable language/theme settings.
+- `task11-main-theme-menu-zh.png`: actual repository-backed MainActivity after selecting Simplified Chinese; the theme popup labels are also Chinese.
+- `task11-main-settings-zh-dark.png`: actual MainActivity after selecting the dark theme; localized controls and bottom navigation retain readable contrast, including Android-owned light status icons.
+
+### Comparison and corrections
+
+Full-view inspection confirmed consistent spacing, rounded surface hierarchy, icon weight, status text, readable filename/metadata and the same bottom-navigation structure as Task 8–10. Settings remains scrollable rather than shrinking controls to fit one viewport. Devices retains three distinct sections even when empty; History uses explicit filter labels rather than color-only chips. The unsupported generic SAF destination is not presented as a working selector.
+
+1. The real Activity locale test exposed an Android Popup composition using the original Activity resources despite the page's selected locale. Choice labels are now resolved before entering the popup. The final Chinese capture confirms all three theme choices are localized.
+2. The 200% session test exposed missing Button roles on custom Add/Send surfaces. Explicit roles now accompany their existing labels and 48 dp bounds.
+3. The first dark-theme capture showed dark system-status icons on the dark application surface. A failing MainActivity assertion reproduced the stale appearance flags; the final theme side effect updates both system-bar appearance flags, and the final capture confirms readable light status icons.
+4. Terminal transfer cards now announce a polite live region; ordinary progress-byte changes do not create live regions. Devices headings and cards expose traversal indices matching their vertical visual order.
+
+### Executable accessibility evidence and limits
+
+`AppAccessibilityTest` executes 13 tests on `emulator-5554`, API 37: actual management navigation and selected locale/theme, Room filters/sanitized search, missing-content disabling, notification-denial recovery, labeled Button/Switch roles, textual status, at least 48 dp critical controls, traversal metadata/geometry, terminal-only announcements, localized binary/date formatting, and portrait/landscape at 200% Compose font scale. The large-text checks verify Settings save/background/destination, Receive Accept/Reject, and Session Back/More/Add/Send/Cancel remain visible or scroll-reachable.
+
+Traversal indices and geometry are an executable proxy for focus ordering, not a claim of physical TalkBack speech testing. Live-region semantics verify announcement eligibility, not recorded audio. The run is API 37 evidence and does not substitute for future physical-device or Android-to-Windows acceptance.
+
+Task 11 final visual result: passed; no remaining actionable P0/P1/P2 visual mismatch in the captured states.

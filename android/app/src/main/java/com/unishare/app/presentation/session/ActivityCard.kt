@@ -1,7 +1,7 @@
 package com.unishare.app.presentation.session
 
 import android.text.format.DateFormat
-import android.text.format.Formatter
+import com.unishare.app.presentation.format.DisplayFormatters
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +42,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,7 +76,10 @@ fun ActivityCard(
     ) {
         Surface(
             modifier = cardModifier
-                .semantics { contentDescription = stateDescription },
+                .semantics {
+                    contentDescription = stateDescription
+                    if (activity.status.isTerminal) liveRegion = LiveRegionMode.Polite
+                },
             shape = RoundedCornerShape(18.dp),
             color = if (outgoing) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -381,7 +386,7 @@ private fun activityStatusDescription(status: ActivityStatus): String = stringRe
 )
 
 @Composable
-private fun formatBytes(bytes: Long): String = Formatter.formatShortFileSize(LocalContext.current, bytes.coerceAtLeast(0L))
+private fun formatBytes(bytes: Long): String = DisplayFormatters.bytes(LocalContext.current, bytes)
 
 @Composable
 private fun activityTime(activity: SessionActivityUi): String =

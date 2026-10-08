@@ -1,6 +1,6 @@
 package com.unishare.app.presentation.receive
 
-import android.text.format.Formatter
+import com.unishare.app.presentation.format.DisplayFormatters
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -387,7 +387,7 @@ private fun DestinationSection(
 
 @Composable
 private fun receiveMetadata(state: ReceiveUiState): String {
-    val size = Formatter.formatShortFileSize(LocalContext.current, state.byteCount.coerceAtLeast(0))
+    val size = DisplayFormatters.bytes(LocalContext.current, state.byteCount)
     val type = state.mimeType.substringAfterLast('/').ifBlank {
         state.kind.name
     }.uppercase()

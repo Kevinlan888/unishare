@@ -7,6 +7,16 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ActivityDao {
+    @Query("""
+        SELECT * FROM activities
+        WHERE (:deviceId IS NULL OR deviceId = :deviceId)
+          AND (:direction IS NULL OR direction = :direction)
+          AND (:kind IS NULL OR kind = :kind)
+          AND (:status IS NULL OR status = :status)
+        ORDER BY updatedAt DESC, id DESC
+    """)
+    fun observeFiltered(deviceId: String?, direction: String?, kind: String?, status: String?): Flow<List<ActivityEntity>>
+
     @Query("SELECT * FROM activities ORDER BY updatedAt DESC, id DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<ActivityEntity>>
 
