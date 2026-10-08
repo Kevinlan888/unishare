@@ -9,7 +9,9 @@ import com.unishare.app.data.sdk.IncomingOffer
 import com.unishare.app.data.settings.SettingsRepository
 import com.unishare.app.data.transfer.TransferCoordinator
 import com.unishare.app.domain.ActivityKey
+import com.unishare.app.domain.ActivityPreview
 import com.unishare.app.domain.ActivityStatus
+import com.unishare.app.domain.ContentKind
 import com.unishare.app.domain.ActivityTracker
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareActivity
@@ -30,6 +32,7 @@ interface ReceiveOperations {
     fun hasPublicationRecovery(activityId: ActivityKey): Boolean
     fun observeActivities(deviceId: DeviceKey): Flow<List<ShareActivity>>
     fun findActivity(activityId: ActivityKey): ShareActivity?
+    fun preview(activityId: ActivityKey): ActivityPreview?
     suspend fun accept(activityId: ActivityKey): Boolean
     suspend fun reject(activityId: ActivityKey): Boolean
     suspend fun retry(activityId: ActivityKey): ActivityKey
@@ -47,6 +50,7 @@ private class AppReceiveOperations(
     override fun hasPublicationRecovery(activityId: ActivityKey) = coordinator.hasPublicationRecovery(activityId)
     override fun observeActivities(deviceId: DeviceKey): Flow<List<ShareActivity>> = tracker.activities(deviceId)
     override fun findActivity(activityId: ActivityKey) = tracker.find(activityId)
+    override fun preview(activityId: ActivityKey) = tracker.preview(activityId)
     override suspend fun accept(activityId: ActivityKey) = coordinator.accept(activityId)
     override suspend fun reject(activityId: ActivityKey) = coordinator.reject(activityId)
     override suspend fun retry(activityId: ActivityKey) = coordinator.retry(activityId)
@@ -214,12 +218,18 @@ class ReceiveViewModel internal constructor(
             }
         }
         val finalUri = activity.finalContentUri.takeIf { nextPhase == ReceivePhase.COMPLETED }
+        val receivedText = if (nextPhase == ReceivePhase.COMPLETED && activity.kind == ContentKind.TEXT) {
+            (operations.preview(activity.id) as? ActivityPreview.Text)?.text
+        } else {
+            null
+        }
         val readable = finalUri != null && !finalUri.isPrivateStagingUri() &&
             try { finalContentReader.canRead(finalUri) } catch (_: Exception) { false }
         if (nextPhase == ReceivePhase.DIRECTORY_ERROR) synchronized(gate) { decisionClaimed = false }
         return copy(
             phase = nextPhase,
             finalContentUri = finalUri,
+            receivedText = receivedText,
             canOpen = readable,
         )
     }

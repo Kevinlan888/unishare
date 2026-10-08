@@ -114,6 +114,7 @@
     <string name="pairing_identity_changed_detail">For your security, forget %1$s and pair again before sharing.</string>
     <string name="pairing_forget_and_repair">Forget &amp; pair again</string>
     <string name="receive_title">Receive File</string>
+    <string name="receive_text_title">Receive Text</string>
     <string name="receive_unknown_file">Incoming file</string>
     <string name="receive_metadata">%1$s · %2$s</string>
     <string name="receive_from">From</string>
@@ -124,6 +125,7 @@
     <string name="receive_accept">Accept</string>
     <string name="receive_receiving">Receiving…</string>
     <string name="receive_open">Open</string>
+    <string name="receive_text_received">Text received</string>
     <string name="receive_open_failed">No app can open this file.</string>
     <string name="receive_expired">This receive request is no longer available.</string>
     <string name="receive_rejected">This file was rejected.</string>

@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -71,7 +73,7 @@ fun ReceiveScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 22.dp, vertical = 8.dp),
         ) {
-            ReceiveTopBar(onBack)
+            ReceiveTopBar(state.kind, onBack)
             Spacer(Modifier.height(24.dp))
             ReceivePreview(state, verifiedPreview)
             Spacer(Modifier.height(16.dp))
@@ -99,14 +101,16 @@ fun ReceiveScreen(
             Spacer(Modifier.height(32.dp))
             DecisionActions(state, onReject, onAccept, onOpen)
             Spacer(Modifier.height(24.dp))
-            DestinationSection(state, onChangeDestination, onRetryPublication)
+            if (state.kind != ContentKind.TEXT) {
+                DestinationSection(state, onChangeDestination, onRetryPublication)
+            }
             Spacer(Modifier.height(24.dp))
         }
     }
 }
 
 @Composable
-private fun ReceiveTopBar(onBack: () -> Unit) {
+private fun ReceiveTopBar(kind: ContentKind, onBack: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -118,7 +122,9 @@ private fun ReceiveTopBar(onBack: () -> Unit) {
             )
         }
         Text(
-            text = stringResource(R.string.receive_title),
+            text = stringResource(
+                if (kind == ContentKind.TEXT) R.string.receive_text_title else R.string.receive_title,
+            ),
             modifier = Modifier.padding(start = 4.dp),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
@@ -130,6 +136,25 @@ private fun ReceiveTopBar(onBack: () -> Unit) {
 @Composable
 private fun ReceivePreview(state: ReceiveUiState, preview: ImageBitmap?) {
     val shape = MaterialTheme.shapes.large
+    if (state.kind == ContentKind.TEXT && state.phase == ReceivePhase.COMPLETED && state.receivedText != null) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 180.dp),
+            shape = shape,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+            SelectionContainer {
+                Text(
+                    text = state.receivedText,
+                    modifier = Modifier.padding(24.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
+        return
+    }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -234,15 +259,19 @@ private fun DecisionActions(
                 )
             }
         }
-        ReceivePhase.COMPLETED -> Button(
-            onClick = onOpen,
-            enabled = state.canOpen,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp),
-            shape = CircleShape,
-        ) {
-            Text(stringResource(R.string.receive_open), fontWeight = FontWeight.SemiBold)
+        ReceivePhase.COMPLETED -> if (state.kind == ContentKind.TEXT) {
+            ReceiveMessage(stringResource(R.string.receive_text_received), error = false)
+        } else {
+            Button(
+                onClick = onOpen,
+                enabled = state.canOpen,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp),
+                shape = CircleShape,
+            ) {
+                Text(stringResource(R.string.receive_open), fontWeight = FontWeight.SemiBold)
+            }
         }
         ReceivePhase.EXPIRED -> ReceiveMessage(
             text = stringResource(R.string.receive_expired),

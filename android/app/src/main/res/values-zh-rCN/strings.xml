@@ -113,6 +113,7 @@
     <string name="pairing_identity_changed_detail">为确保安全，请忘记 %1$s 并重新配对后再分享。</string>
     <string name="pairing_forget_and_repair">忘记并重新配对</string>
     <string name="receive_title">接收文件</string>
+    <string name="receive_text_title">接收文本</string>
     <string name="receive_unknown_file">传入文件</string>
     <string name="receive_metadata">%1$s · %2$s</string>
     <string name="receive_from">来自</string>
@@ -123,6 +124,7 @@
     <string name="receive_accept">接受</string>
     <string name="receive_receiving">正在接收…</string>
     <string name="receive_open">打开</string>
+    <string name="receive_text_received">文本已接收</string>
     <string name="receive_open_failed">没有可打开此文件的应用。</string>
     <string name="receive_expired">此接收请求已失效。</string>
     <string name="receive_rejected">已拒绝此文件。</string>

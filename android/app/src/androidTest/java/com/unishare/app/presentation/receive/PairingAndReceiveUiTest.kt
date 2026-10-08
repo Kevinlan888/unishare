@@ -136,6 +136,35 @@ class PairingAndReceiveUiTest {
     }
 
     @Test
+    fun completed_untrusted_text_is_readable_without_file_only_actions() {
+        setEnglishContent {
+            ReceiveScreen(
+                state = receiveState().copy(
+                    kind = ContentKind.TEXT,
+                    displayName = "Text",
+                    mimeType = "text/plain",
+                    byteCount = 17,
+                    phase = ReceivePhase.COMPLETED,
+                    receivedText = "A private hello",
+                ),
+                onBack = {},
+                onAccept = {},
+                onReject = {},
+                onChangeDestination = {},
+                onRetryPublication = {},
+                onOpen = {},
+            )
+        }
+
+        composeRule.onNodeWithText("Receive Text").assertIsDisplayed()
+        composeRule.onNodeWithText("A private hello").assertIsDisplayed()
+        composeRule.onNodeWithText("Text received").assertIsDisplayed()
+        composeRule.onNodeWithText("Open").assertDoesNotExist()
+        composeRule.onNodeWithText("Files will be saved to:").assertDoesNotExist()
+        composeRule.onNodeWithText("Why Downloads?").assertDoesNotExist()
+    }
+
+    @Test
     fun completed_receive_replaces_decisions_with_open_only_when_readable() {
         val state = receiveState().copy(
             phase = ReceivePhase.COMPLETED,

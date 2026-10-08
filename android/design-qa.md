@@ -66,7 +66,7 @@ final result: passed
 - Normalized receive comparison: `app/build/reports/design-qa/task10-receive-comparison-final.png`. The implementation was proportionally downsampled to the source crop width (`333 × 740` px) and placed directly beside the `333 × 1000` source crop.
 - State: English, light theme, pending `IMG_3281.jpg` image offer from an online Windows device, `8.4 MB · JPEG`, default Download destination, and pairing code `000042`.
 - Asset evidence: `app/src/androidTest/res/drawable-nodpi/sample_mountain_lake.png` is used only by the instrumentation visual fixture. It is never packaged in the production APK and is never read from private receive staging. Production pending content uses the generic safe preview; successful content exposes Open only after final-URI readability verification.
-- Interaction evidence: nine `PairingAndReceiveUiTest` cases passed on the API 37 emulator, covering visible metadata, source status, side-by-side mutually exclusive decisions, expired requests, truthful Downloads recovery, readable final-content Open and unavailable-viewer handling, one-shot ActivityKey intents, privacy-safe ActivityKey notification deep links without direct-accept actions, six-digit accessibility semantics, identity-change recovery, 48 dp pairing actions, and both screenshots. Nineteen focused pairing/receive JVM state tests also passed before full-suite verification.
+- Interaction evidence: ten `PairingAndReceiveUiTest` cases passed on the API 37 emulator, covering visible metadata, source status, side-by-side mutually exclusive decisions, expired requests, truthful Downloads recovery, readable final-content Open and unavailable-viewer handling, readable completed untrusted text without file-only actions, one-shot ActivityKey intents, privacy-safe ActivityKey notification deep links without direct-accept actions, six-digit accessibility semantics, identity-change recovery, 48 dp pairing actions, and both screenshots. Twenty focused pairing/receive JVM state tests also passed before full-suite verification.
 - Browser console checks: not applicable to this native Android implementation. Instrumentation completed without a process crash or failed test.
 
 ## Full-view comparison
@@ -85,7 +85,7 @@ The `666 × 1000` normalized comparison keeps title weight, preview crop, metada
 - Spacing and layout rhythm: final horizontal margins, preview proportion, 24 dp corner treatment, content gaps, 64 dp pill actions, device-row scale, and divider-led destination section match the reference direction. The source is proportionally taller, so its omitted auto-accept block creates additional vertical space; the implementation does not invent an empty placeholder for that prohibited control.
 - Colors and visual tokens: the existing UniShare Material theme provides the white receive surface, blue primary action, low-contrast neutral Reject fill, slate secondary text/icons, green online state, subtle divider, white rounded dialog, and modal scrim. Status never depends on color alone.
 - Image quality and asset fidelity: the instrumentation-only alpine-lake raster is sharp and center-cropped to the same snowy-range, evergreen-shore, blue-lake composition. Production does not substitute this fixture for received content and does not decode private staging. Standard device, file, folder, back, and pairing graphics use the official Material icon library; no emoji, handcrafted SVG, gradient, CSS/div art, or placeholder box is used.
-- Copy and content: English and Simplified Chinese resources cover pairing, receive metadata, pending/receiving/rejected/failed/expired/completed states, destination recovery, and notification copy. ActivityKey deep links disclose no SDK request ID and resolve only an offer that remains pending.
+- Copy and content: English and Simplified Chinese resources cover pairing, file and text receive metadata, pending/receiving/rejected/failed/expired/completed states, destination recovery, and notification copy. Completed untrusted text is selectable on a dedicated Receive Text state and never shows file-only Open or destination controls. ActivityKey deep links disclose no SDK request ID and resolve only an offer that remains pending.
 - Accessibility and responsiveness: all icon actions are labeled, online state includes text, pairing code semantics read all six digits separately, decision actions become disabled after the first choice, and pairing buttons measure at least 48 dp. The content scrolls rather than clipping critical Accept, Reject, Open, destination-information, or retry actions.
 
 ## Comparison history
@@ -100,6 +100,7 @@ The `666 × 1000` normalized comparison keeps title weight, preview crop, metada
 8. Review hardened the non-reference states without altering the pending receive composition: unsupported generic SAF destinations now reset to Downloads with localized explanatory copy, unavailable viewers surface an error, and notifications use payload-neutral text. The exact nine-case connected class recaptured the reference state and found no new visual P0/P1/P2 issue.
 9. Final concurrency review changed the misleading default Change label to Why Downloads? because custom folders are intentionally unavailable. The refreshed full-resolution receive capture confirms the longer localized action fits without clipping or hierarchy regressions; no new P0/P1/P2 issue was introduced.
 10. The final lifecycle fix serializes notification pending/dismissed events and delays the Downloads explanation until correction succeeds. These are state-ordering changes only; the refreshed pending screen remains the reviewed visual baseline with no new P0/P1/P2 issue.
+11. The consent flow now renders completed untrusted text in a selectable, localized Receive Text state and hides file-only Open/destination controls. The connected Compose assertion verifies the state without changing the reference file/image composition; no new P0/P1/P2 issue was introduced.
 
 ## Findings
 
@@ -116,6 +117,7 @@ The `666 × 1000` normalized comparison keeps title weight, preview crop, metada
 - [x] Keep Accept and Reject mutually exclusive and visibly disabled after the first choice.
 - [x] Expose expired-request and directory-recovery states.
 - [x] Replace decisions with Open only for a readable published final URI.
+- [x] Render completed untrusted text as readable/selectable text without file-only actions.
 - [x] Serialize pairing prompts and expose all six code digits to accessibility services.
 - [x] Route identity changes through forget and re-pair.
 - [x] Verify the exact UI class on `emulator-5554` and compare the final receive state side by side.

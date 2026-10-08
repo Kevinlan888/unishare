@@ -7,6 +7,7 @@ import com.unishare.app.data.sdk.IncomingOffer
 import com.unishare.app.data.settings.AppSettings
 import com.unishare.app.data.settings.SettingsRepository
 import com.unishare.app.domain.ActivityKey
+import com.unishare.app.domain.ActivityPreview
 import com.unishare.app.domain.ActivityStatus
 import com.unishare.app.domain.ContentKind
 import com.unishare.app.domain.DeviceKey
@@ -292,6 +293,51 @@ class ReceiveViewModelTest {
         assertNull(fixture.viewModel.openFinalContent())
     }
 
+    @Test
+    fun completed_untrusted_text_is_exposed_for_reading_without_an_open_uri() = runTest {
+        val textOffer = offer().copy(
+            kind = ContentKind.TEXT,
+            displayName = "Text",
+            mimeType = "text/plain",
+            byteCount = 17,
+        )
+        val operations = FakeReceiveOperations(textOffer)
+        val viewModel = ReceiveViewModel(
+            ACTIVITY_ID,
+            operations,
+            FakeReceiveDevices(
+                DeviceSummary(
+                    id = DEVICE_ID,
+                    name = "Kevin's Windows PC",
+                    platform = DevicePlatform.WINDOWS,
+                    online = true,
+                    trusted = false,
+                ),
+            ),
+            FakeSettingsRepository(),
+            FinalContentReader { false },
+            immediateBackgroundScope(),
+        )
+        viewModel.accept()
+        advanceUntilIdle()
+        operations.setPreview(ACTIVITY_ID, ActivityPreview.Text("A private hello"))
+        operations.publish(
+            activity(status = ActivityStatus.COMPLETED).copy(
+                kind = ContentKind.TEXT,
+                displayName = "Text",
+                mimeType = "text/plain",
+                byteCount = 17,
+                finalContentUri = null,
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(ReceivePhase.COMPLETED, viewModel.uiState.value.phase)
+        assertEquals("A private hello", viewModel.uiState.value.receivedText)
+        assertFalse(viewModel.uiState.value.canOpen)
+        assertNull(viewModel.openFinalContent())
+    }
+
     private fun fixture(
         scope: CoroutineScope,
         destination: String? = null,
@@ -380,6 +426,7 @@ private class FakeReceiveOperations(
     private var pending: IncomingOffer?,
 ) : ReceiveOperations {
     private val activities = MutableStateFlow<List<ShareActivity>>(emptyList())
+    private val previews = mutableMapOf<ActivityKey, ActivityPreview>()
     val calls = mutableListOf<String>()
     var acceptResult = true
     var rejectResult = true
@@ -392,6 +439,7 @@ private class FakeReceiveOperations(
     override fun hasPublicationRecovery(activityId: ActivityKey) = publicationRecovery
     override fun observeActivities(deviceId: DeviceKey): Flow<List<ShareActivity>> = activities
     override fun findActivity(activityId: ActivityKey) = activities.value.firstOrNull { it.id == activityId }
+    override fun preview(activityId: ActivityKey) = previews[activityId]
     override suspend fun accept(activityId: ActivityKey): Boolean {
         calls += "accept:${activityId.value}"
         if (acceptResult) pending = null
@@ -409,6 +457,7 @@ private class FakeReceiveOperations(
         return retryResult
     }
     fun publish(activity: ShareActivity) { activities.value = listOf(activity) }
+    fun setPreview(activityId: ActivityKey, preview: ActivityPreview) { previews[activityId] = preview }
 }
 
 private class FakeReceiveDevices(vararg summaries: DeviceSummary) : DeviceRepository {

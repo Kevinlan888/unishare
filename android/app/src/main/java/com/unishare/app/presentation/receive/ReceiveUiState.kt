@@ -32,6 +32,7 @@ data class ReceiveUiState(
     val destinationDisplayName: String? = null,
     val phase: ReceivePhase = ReceivePhase.EXPIRED,
     val finalContentUri: String? = null,
+    val receivedText: String? = null,
     val canOpen: Boolean = false,
     val showUnsupportedDestinationNotice: Boolean = false,
 ) {
