@@ -116,6 +116,7 @@ No native SDK observer or automatic acceptance policy was added.
 | App JVM | 227/227, 28 suites, 0 failures/errors/skipped |
 | Last connection/session focused group | 26/26: repository9 + SessionViewModel17 |
 | Full app connected | 96/96, 11 suites, 0 failures/errors/skipped; emulator-5554/API37; XML timestamp 2026-10-08T11:57:06 |
+| Fresh SDK PublicApiTests | 10/10, 0 failures/errors/skipped; XML timestamp 2026-10-08T12:34:27; focused clipboardReplacement and focusedClipboard each1/1 |
 | App / SDK lint | 0 errors, 22 / 15 warnings; no suppression or minSdk increase |
 | Both modules debug/release assembly | BUILD SUCCESSFUL; release APK unsigned |
 | Verifier fixtures | 27/27, including rejection of dataSync\|connectedDevice |
@@ -143,3 +144,17 @@ These candidate measurements supersede the Task13 artifact hashes above:
 All physical and version/operator rows above remain BLOCKED/NOT RUN. Safe-failure
 limits for API26–28 Downloads and generic SAF remain unchanged; successful
 API29+ atomic publication is the only supported public receive-file path.
+
+The first fresh SDK full run failed at focusedClipboard (7 executed,1 failure):
+an earlier queued host event sent a successful non-Text SDK read through the
+host-Text replacement validator. A controlled regression reproduced the same
+assertion with a byte/MIME-matching Image (1/1 RED). The test-only host-event
+branch now recognizes a successful exact expected Image/Text as a completed
+roundtrip; only mismatches enter the unchanged strict host-replacement policy.
+Controlled cases still reject every SDK error (even with matching content), wrong
+MIME/bytes/text, stale/non-host replacement and expired deadline. No production
+SDK cache or implementation change, sleep, weakened payload check or new observer.
+Controlled and live focused cases each passed1/1, followed by full10/10. UTP
+could not retrieve per-case logcat, but instrumentation returned -1 and complete
+XML has10 actual testcase nodes with no failures/errors/skips. Production package
+hashes above were rechecked and remain identical after this test-only correction.

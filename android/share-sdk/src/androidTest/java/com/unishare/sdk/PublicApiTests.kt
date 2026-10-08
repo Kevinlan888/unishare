@@ -128,7 +128,8 @@ class PublicApiTests : Instrumentation() {
                     val read = sdk.clipboard.readShareableContent().result.get(remaining(), TimeUnit.NANOSECONDS)
                     var current: android.content.ClipData? = null
                     runOnMainSync { current = manager.primaryClip }
-                    ClipboardFixtureRetry.requireReplacement(read, current, listOf(event!!) + changes.toList(), deadline)
+                    if (ClipboardFixtureRetry.completedAfterHostEvent(read, expected, current,
+                        listOf(event!!) + changes.toList(), deadline)) return
                     continue
                 }
                 check(published(event!!), "SDK clipboard publication has wrong MIME/item")

@@ -136,6 +136,7 @@ Keep those environment failures visible; the emulator crash cause is unproven.
 
 The subsequent single final-review fix dispatch against `c75b7b7` now has fresh
 app JVM227/227 (28 suites), app connected96/96 (11 suites, API37 emulator),
+fresh SDK PublicApiTests10/10 (XML UTC2026-10-08T12:34:27),
 fixtures27/27, EN/zh209 identical keys, app lint0 errors/22 warnings and SDK
 lint0/15. Both modules' debug/release assemblies pass. Current candidate hashes
 and final SDK public evidence are recorded in
@@ -155,3 +156,11 @@ Recovery never deletes an already committed Downloads file. Terminal cards show
 localized status/error category, and session history has local date headers.
 All existing storage, physical-peer, signing and version/operator gates remain
 open; this fixes automated findings without converting those gates to PASS.
+
+The fresh SDK gate exposed a test-only event-order case: an earlier queued host
+clipboard event can precede a successful SDK read of the expected image. A
+controlled RED regression now guards the host-event branch's exact-match success
+check, before the unchanged strict replacement validator. SDK errors and incorrect
+MIME/bytes/text still fail immediately; no production SDK change or cache was made.
+Focused controlled/live cases each1/1 and full10/10 passed serially. The final
+production APK/AAR hashes remain byte-for-byte identical to the package audit.

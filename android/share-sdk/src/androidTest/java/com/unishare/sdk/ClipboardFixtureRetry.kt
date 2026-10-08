@@ -50,10 +50,56 @@ internal object ClipboardFixtureRetry {
         requireReplacement(read, current, observed, deadline)
     }
 
+    fun completedAfterHostEvent(
+        read: OperationResult,
+        expected: ShareContent,
+        current: ClipData?,
+        observed: List<ClipData>,
+        deadline: Long,
+    ): Boolean {
+        if (System.nanoTime() >= deadline) throw AssertionError("clipboard fixture deadline exceeded")
+        // Listener events describe an earlier snapshot; the SDK may already read our new write.
+        val content = read.content
+        val matches = when (expected) {
+            is ShareContent.Text -> content is ShareContent.Text && content.text == expected.text
+            is ShareContent.Image -> content is ShareContent.Image && content.mimeType == expected.mimeType &&
+                content.bytes.contentEquals(expected.bytes)
+        }
+        if (read.isSuccess && matches) return true
+        requireReplacement(read, current, observed, deadline)
+        return false
+    }
+
     @JvmStatic
     fun assertContracts() {
         val host = ClipData.newPlainText("host clipboard", "external 世界")
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        val expectedImage = ShareContent.Image("image/png", byteArrayOf(1, 2))
+        // A previously queued host event cannot invalidate a successful current SDK image.
+        check(completedAfterHostEvent(
+            OperationResult(1, content = ShareContent.Image("image/png", byteArrayOf(1, 2))),
+            expectedImage, host, listOf(host), deadline,
+        )) { "matching successful SDK image must complete despite an earlier host event" }
+        check(completedAfterHostEvent(OperationResult(1, content = ShareContent.Text("expected")),
+            ShareContent.Text("expected"), host, listOf(host), deadline))
+        // Even matching content must not turn a failed SDK operation into a successful read.
+        for (category in ErrorCategory.values()) {
+            var rejected = false
+            try {
+                completedAfterHostEvent(OperationResult(1, error = ShareError(category), content = expectedImage),
+                    expectedImage, host, listOf(host), deadline)
+            } catch (_: AssertionError) { rejected = true }
+            check(rejected) { "host event must never hide SDK error $category" }
+        }
+        for (wrong in listOf(ShareContent.Image("image/jpeg", byteArrayOf(1, 2)),
+            ShareContent.Image("image/png", byteArrayOf(9, 9)), ShareContent.Text("unrelated"))) {
+            var rejected = false
+            try { completedAfterHostEvent(OperationResult(1, content = wrong), expectedImage, host, listOf(host), deadline) }
+            catch (_: AssertionError) { rejected = true }
+            check(rejected) { "host event must not hide wrong SDK content" }
+        }
+        check(!completedAfterHostEvent(OperationResult(1, content = ShareContent.Text("external 世界")),
+            expectedImage, host, listOf(host), deadline)) { "genuine host replacement requires rebuilding, not success" }
         fun rejected(read: OperationResult, current: ClipData? = host,
                      observed: List<ClipData> = listOf(host), until: Long = deadline) {
             var failed = false
