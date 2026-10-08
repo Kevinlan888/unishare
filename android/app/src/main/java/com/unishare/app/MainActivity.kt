@@ -59,6 +59,7 @@ import com.unishare.app.domain.ActivityKey
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private var pendingSessionDeviceId by mutableStateOf<com.unishare.app.domain.DeviceKey?>(null)
     private var pendingReceiveActivityId by mutableStateOf<ActivityKey?>(null)
     private lateinit var foregroundReceiveQueue: ForegroundReceiveQueue
 
@@ -70,6 +71,7 @@ class MainActivity : ComponentActivity() {
                 ?.let(::ActivityKey),
         )
         pendingReceiveActivityId = intent.consumeReceiveActivityKey()?.let(foregroundReceiveQueue::open)
+        pendingSessionDeviceId = intent.consumeSessionDeviceKey()
         enableEdgeToEdge()
         setContent {
             val graph = UniShareApplication.graph(this)
@@ -135,6 +137,8 @@ class MainActivity : ComponentActivity() {
                     UniShareNavHost(
                         homeUiState = homeState,
                         onRefresh = homeViewModel::refresh,
+                        pendingSessionDeviceId = pendingSessionDeviceId,
+                        onSessionConsumed = { pendingSessionDeviceId = null },
                         devicesContent = { open -> DevicesScreen(devicesState, devicesViewModel::connect, devicesViewModel::requestForget, devicesViewModel::confirmForget, devicesViewModel::dismissForget, open) },
                         historyContent = {
                             val historyState by historyViewModel.uiState.collectAsStateWithLifecycle()
@@ -201,6 +205,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         pendingReceiveActivityId = intent.consumeReceiveActivityKey()?.let(foregroundReceiveQueue::open)
+        pendingSessionDeviceId = intent.consumeSessionDeviceKey()
         setIntent(intent)
     }
 
@@ -234,6 +239,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_RECEIVE_ACTIVITY_ID = "com.unishare.app.extra.RECEIVE_ACTIVITY_ID"
+        const val EXTRA_SESSION_DEVICE_ID = "com.unishare.app.extra.SESSION_DEVICE_ID"
         private const val STATE_ACTIVE_RECEIVE_ACTIVITY_ID = "active_receive_activity_id"
     }
 }
@@ -242,4 +248,10 @@ internal fun Intent.consumeReceiveActivityKey(): ActivityKey? {
     val value = getStringExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID)
     removeExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID)
     return value?.takeIf(String::isNotBlank)?.let(::ActivityKey)
+}
+
+internal fun Intent.consumeSessionDeviceKey(): com.unishare.app.domain.DeviceKey? {
+    val value = getStringExtra(MainActivity.EXTRA_SESSION_DEVICE_ID)
+    removeExtra(MainActivity.EXTRA_SESSION_DEVICE_ID)
+    return value?.takeIf(String::isNotBlank)?.let { com.unishare.app.domain.DeviceKey(it) }
 }

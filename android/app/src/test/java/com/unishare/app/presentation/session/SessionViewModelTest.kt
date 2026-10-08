@@ -40,6 +40,107 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionViewModelTest {
+    @Test fun outgoing_retry_waits_for_reconnection_after_background_stop() = runTest(dispatcher) {
+        val repository = FakeSessionDeviceRepository(device())
+        repository.connectGate = CompletableDeferred()
+        val operations = FakeSessionOperations()
+        val failed = activity("retry").copy(direction = ShareDirection.OUTGOING, status = ActivityStatus.FAILED)
+        val vm = SessionViewModel(deviceId, repository, MutableStateFlow(listOf(failed)), { null }, operations)
+        runCurrent()
+        vm.retry(failed.id)
+        runCurrent()
+        assertEquals(1, repository.connectCalls)
+        assertTrue(operations.retried.isEmpty())
+        repository.connectGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(failed.id), operations.retried)
+    }
+    @Test fun real_runtime_stop_picker_callback_restart_discovery_and_connect_preserve_selection() = runTest(dispatcher) {
+        val gateway = com.unishare.app.data.sdk.FakeShareSdkGateway().apply {
+            snapshots = listOf(com.unishare.app.data.sdk.DeviceSnapshot(deviceId, "peer", DevicePlatform.WINDOWS))
+            trusted = setOf(deviceId)
+            connectCompletion = CompletableDeferred()
+        }
+        val session = com.unishare.app.data.sdk.ShareSessionManager(gateway, backgroundScope)
+        val devices = com.unishare.app.data.device.DefaultDeviceRepository(session, backgroundScope)
+        val settings = object : com.unishare.app.data.settings.SettingsRepository {
+            override val settings = MutableStateFlow(com.unishare.app.data.settings.AppSettings())
+            override suspend fun setDeviceName(name: String) = Unit
+            override suspend fun setReceiveDirectory(treeUri: String?, displayName: String?) = Unit
+            override suspend fun setBackgroundReceiveEnabled(enabled: Boolean) = Unit
+            override suspend fun setNotificationsEnabled(enabled: Boolean) = Unit
+            override suspend fun setLanguage(language: com.unishare.app.data.settings.AppLanguage) = Unit
+            override suspend fun setTheme(theme: com.unishare.app.data.settings.AppTheme) = Unit
+        }
+        val service = object : com.unishare.app.service.ForegroundServiceGateway {
+            override fun start(reason: com.unishare.app.service.ServiceReason) = Unit
+            override suspend fun stopWhenIdle() = Unit
+        }
+        val runtime = com.unishare.app.service.RuntimeController(settings, com.unishare.app.service.ShareSessionRuntime(session),
+            service, MutableStateFlow(0), com.unishare.app.platform.NotificationPermissionChecker { true }, backgroundScope)
+        runtime.setAppVisible(true); runCurrent()
+        runtime.setAppVisible(false); runCurrent()
+        assertFalse(devices.find(deviceId)!!.online)
+        val operations = FakeSessionOperations()
+        val lease = RecordingSessionContentLease()
+        val vm = SessionViewModel(deviceId, devices, MutableStateFlow(emptyList()), { null }, operations, runtime::awaitForegroundReady)
+        vm.sendPickedContent(RetainedContentUri(fakeUri(), lease), ContentKind.FILE)
+        runCurrent()
+        assertEquals(0, lease.closeCalls)
+        assertEquals(0, operations.pickedContent.size)
+        gateway.snapshots = emptyList()
+        runtime.setAppVisible(true); runCurrent()
+        assertEquals(0, operations.pickedContent.size)
+        gateway.events.emit(com.unishare.app.data.sdk.GatewayEvent.DeviceOnline(
+            com.unishare.app.data.sdk.DeviceSnapshot(deviceId, "peer", DevicePlatform.WINDOWS)))
+        runCurrent()
+        assertEquals(1, gateway.calls.count { it.startsWith("connect:") })
+        assertEquals(0, lease.closeCalls)
+        gateway.snapshots = listOf(com.unishare.app.data.sdk.DeviceSnapshot(deviceId, "peer", DevicePlatform.WINDOWS))
+        gateway.connectCompletion!!.complete(Unit)
+        runCurrent()
+        assertEquals(1, operations.pickedContent.size)
+        assertEquals(1, gateway.calls.count { it == "subscribe" })
+        session.close()
+    }
+    @Test fun send_waits_for_authenticated_connection_and_serializes_pairing() = runTest(dispatcher) {
+        val repository = FakeSessionDeviceRepository(device(trusted = false))
+        repository.connectGate = CompletableDeferred()
+        repository.trustOnConnect = true
+        val operations = FakeSessionOperations()
+        val vm = SessionViewModel(deviceId, repository, MutableStateFlow(emptyList()), { null }, operations)
+        vm.onComposerChanged("hello")
+        vm.sendComposer()
+        runCurrent()
+        assertEquals(1, repository.connectCalls)
+        assertTrue(operations.sentTexts.isEmpty())
+        repository.connectGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("hello"), operations.sentTexts)
+    }
+
+    @Test fun picker_result_before_resume_retains_lease_until_runtime_and_connection_ready() = runTest(dispatcher) {
+        val runtime = CompletableDeferred<Unit>()
+        val repository = FakeSessionDeviceRepository(device(online = false))
+        repository.connectGate = CompletableDeferred()
+        val operations = FakeSessionOperations()
+        val lease = RecordingSessionContentLease()
+        val vm = SessionViewModel(deviceId, repository, MutableStateFlow(emptyList()), { null }, operations,
+            awaitRuntime = { runtime.await() })
+        vm.sendPickedContent(RetainedContentUri(fakeUri(), lease), ContentKind.FILE)
+        runCurrent()
+        assertEquals(0, lease.closeCalls)
+        runtime.complete(Unit)
+        runCurrent()
+        assertTrue(operations.pickedContent.isEmpty())
+        repository.mutableDevices.value = listOf(device())
+        runCurrent()
+        assertEquals(0, lease.closeCalls)
+        repository.connectGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(1, operations.pickedContent.size)
+        assertEquals(0, lease.closeCalls)
+    }
     private val dispatcher = StandardTestDispatcher()
     private val deviceId = DeviceKey("pc-kevin")
 
@@ -343,11 +444,18 @@ private class RecordingSessionContentLease : ContentReadPermissionLease {
 }
 
 private class FakeSessionDeviceRepository(initial: DeviceSummary) : DeviceRepository {
+    var connectGate: CompletableDeferred<Unit>? = null
+    var connectCalls = 0
+    var trustOnConnect = false
     val mutableDevices = MutableStateFlow(listOf(initial))
     override val devices = mutableDevices
     override fun find(deviceId: DeviceKey) = devices.value.firstOrNull { it.id == deviceId }
     override fun isTrusted(deviceId: DeviceKey) = find(deviceId)?.trusted == true
     override fun canSend(deviceId: DeviceKey) = find(deviceId)?.let { it.online && it.trusted && !it.identityChanged } == true
-    override suspend fun connect(deviceId: DeviceKey) = Unit
+    override suspend fun connect(deviceId: DeviceKey) {
+        connectCalls++
+        connectGate?.await()
+        mutableDevices.value = mutableDevices.value.map { it.copy(connected = true, trusted = it.trusted || trustOnConnect) }
+    }
     override suspend fun forget(deviceId: DeviceKey) = Unit
 }

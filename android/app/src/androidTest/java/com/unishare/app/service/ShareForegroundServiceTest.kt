@@ -35,6 +35,28 @@ import com.unishare.app.presentation.settings.SettingsViewModel
 import com.unishare.app.data.transfer.IncomingConsentEvent
 
 class ShareForegroundServiceTest {
+    @Test fun transfer_notifications_keep_distinct_cancel_and_session_intents_with_real_progress() = runBlocking {
+        val graph = UniShareApplication.graph(context)
+        graph.localeResources.language.first { it != null }
+        val factory = ShareNotificationFactory(context)
+        val first = factory.transferProgress(42, ActivityKey("first"), com.unishare.app.domain.DeviceKey("pc-a"))
+        val second = factory.transferProgress(7, ActivityKey("second"), com.unishare.app.domain.DeviceKey("pc-b"))
+        assertEquals(42, first.extras.getInt(Notification.EXTRA_PROGRESS))
+        assertEquals(7, second.extras.getInt(Notification.EXTRA_PROGRESS))
+        org.junit.Assert.assertNotEquals(first.actions.single().actionIntent, second.actions.single().actionIntent)
+        org.junit.Assert.assertNotEquals(first.contentIntent, second.contentIntent)
+        assertTrue(factory.transferProgress(0, canCancel = false).actions.isNullOrEmpty())
+    }
+
+    @Test fun cancel_action_keeps_its_original_target_instead_of_cancelling_remaining_transfer() = runTest {
+        val targets = mutableListOf<ActivityKey>()
+        var oldestCalls = 0
+        val handler = ShareServiceActionHandler({}, { oldestCalls++ }, { targets += it })
+        handler.handle(Intent(ShareForegroundService.ACTION_CANCEL_TRANSFER)
+            .putExtra(ShareForegroundService.EXTRA_ACTIVITY_ID, "already-finished"))
+        assertEquals(listOf(ActivityKey("already-finished")), targets)
+        assertEquals(0, oldestCalls)
+    }
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     @Test fun cold_offer_waits_for_first_policy_then_posts_one_live_localized_android_notification() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

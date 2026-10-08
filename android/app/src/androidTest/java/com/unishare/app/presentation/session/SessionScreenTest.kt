@@ -46,6 +46,21 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SessionScreenTest {
+    @Test fun terminal_failure_and_stable_reason_are_visible_text() {
+        setSessionContent(activities = listOf(activity("failure", ShareDirection.OUTGOING,
+            status = ActivityStatus.FAILED).copy(errorKind = com.unishare.app.domain.ShareErrorKind.NETWORK_LOST)))
+        composeRule.onNodeWithText("Transfer failed").assertIsDisplayed()
+        composeRule.onNodeWithText("Network connection lost").assertIsDisplayed()
+    }
+
+    @Test fun historical_dates_are_not_labeled_today() {
+        val millis = java.time.LocalDate.of(2020, 1, 2).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val label = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM,
+            composeRule.activity.resources.configuration.locales[0]).format(java.util.Date(millis))
+        setSessionContent(activities = listOf(activity("old", ShareDirection.INCOMING).copy(timestampMillis = millis)))
+        composeRule.onNodeWithText(label).assertIsDisplayed()
+        composeRule.onNodeWithText("Today").assertDoesNotExist()
+    }
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
@@ -105,7 +120,7 @@ class SessionScreenTest {
 
         composeRule.onNodeWithContentDescription("Waiting for peer").assertExists()
         composeRule.onNodeWithContentDescription("Transferring").assertExists()
-        composeRule.onNodeWithContentDescription("Transfer failed").assertExists()
+        composeRule.onNodeWithText("Transfer failed").assertExists()
         composeRule.onNodeWithContentDescription("Transfer completed").assertExists()
         composeRule.onAllNodes(hasContentDescription("Cancel transfer") and hasClickAction()).assertCountEquals(2)
         composeRule.onNode(hasContentDescription("Retry transfer") and hasClickAction()).assertExists()

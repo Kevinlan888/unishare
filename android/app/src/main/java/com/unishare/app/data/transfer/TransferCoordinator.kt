@@ -125,6 +125,8 @@ class TransferCoordinator internal constructor(
     private val active = LinkedHashSet<ActivityKey>()
     private val mutableActiveTransferCount = MutableStateFlow(0)
     val activeTransferCount: StateFlow<Int> = mutableActiveTransferCount.asStateFlow()
+    private val mutableActiveActivities = MutableStateFlow<List<ShareActivity>>(emptyList())
+    val activeActivities: StateFlow<List<ShareActivity>> = mutableActiveActivities.asStateFlow()
     private val mutablePendingConsentActivityIds = MutableStateFlow<List<ActivityKey>>(emptyList())
     val pendingConsentActivityIds: StateFlow<List<ActivityKey>> = mutablePendingConsentActivityIds.asStateFlow()
     private val mutableConsentEvents = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 16)
@@ -233,17 +235,26 @@ class TransferCoordinator internal constructor(
             ensureAcceptingLocked()
             offers[activityId]?.takeIf { it.decision == OfferDecision.PENDING }?.also {
                 it.decision = OfferDecision.ACCEPTING
+                addActive(activityId)
                 updatePendingConsentActivityIdsLocked()
             }
         } ?: return false
         dismissConsent(state)
+        // ACCEPTING owns preparation and terminal cleanup, even before a file exists.
+        // The event collector only completes the terminal promise; it never steals this owner.
         val prepared = try {
-            staging.create(state.offer.transferId).also { state.prepared = it }
+            withContext(ioDispatcher) { staging.create(state.offer.transferId) }.also {
+                synchronized(gate) { state.prepared = it }
+            }
         } catch (_: Exception) {
             finishOfferFailure(state, ShareErrorKind.STORAGE_FAILED)
+            removeActive(activityId)
             return true
         }
-        addActive(activityId)
+        if (state.terminal.isCompleted) {
+            completeAcceptedIncoming(state, state.terminal.await())
+            return true
+        }
         val acknowledgement = try {
             session.accept(state.offer.requestId, prepared.uri)
         } catch (failure: Exception) {
@@ -460,6 +471,7 @@ class TransferCoordinator internal constructor(
             is GatewayEvent.TransferCompleted -> handleTerminalEvent(event.terminal)
             else -> Unit
         }
+        synchronized(gate) { publishActiveLocked() }
     }
 
     private suspend fun handleOffer(offer: IncomingOffer) {
@@ -492,7 +504,7 @@ class TransferCoordinator internal constructor(
             }?.let { finishOutgoingTerminal(it.id) }
         } else {
             val accepted = synchronized(gate) {
-                incoming.decision == OfferDecision.ACCEPTING && incoming.prepared != null
+                incoming.decision == OfferDecision.ACCEPTING
             }
             if (accepted) {
                 incoming.terminal.complete(terminal)
@@ -668,10 +680,16 @@ class TransferCoordinator internal constructor(
 
     private fun addActive(activityId: ActivityKey) = synchronized(gate) {
         if (active.add(activityId)) mutableActiveTransferCount.value = active.size
+        publishActiveLocked()
     }
 
     private fun removeActive(activityId: ActivityKey) = synchronized(gate) {
         if (active.remove(activityId)) mutableActiveTransferCount.value = active.size
+        publishActiveLocked()
+    }
+
+    private fun publishActiveLocked() {
+        mutableActiveActivities.value = active.mapNotNull(tracker::find)
     }
 
     private fun finishOutgoingTerminal(activityId: ActivityKey) {

@@ -126,6 +126,20 @@ class AndroidReceivePublisherTest {
         assertTrue(destination.files.isEmpty())
     }
 
+    @Test fun restartAfterCommitPreservesPublicFileWhenJournalStillExists() {
+        destination.dieAfterCommit = true
+        val staging = source()
+        try { publisher.publish(staging, "report.txt", "text/plain", ReceiveDestination.Downloads); fail() }
+        catch (_: SimulatedProcessDeath) { }
+        val uri = destination.files.keys.single()
+        assertEquals(0, destination.pending[uri])
+        assertTrue(journalDirectory.listFiles().orEmpty().isNotEmpty())
+        AndroidReceivePublisher(context, resolver, journalDirectory).cleanupAfterRestart()
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), destination.files[uri]?.readBytes())
+        assertEquals("report.txt", destination.names[uri])
+        assertTrue(journalDirectory.listFiles().orEmpty().isEmpty())
+    }
+
     @Test fun pathLikeDisplayNameCannotEscapeDestination() {
         val uri = publisher.publish(source(), "../folder/report.txt", "text/plain", ReceiveDestination.Downloads)
         assertEquals("report.txt", destination.names[uri])
@@ -149,6 +163,7 @@ private class FileDestinationProvider(private val directory: File) : ContentProv
     var failOpenWithProcessDeath = false
     var failCommit = false
     var dieAfterCreate = false
+    var dieAfterCommit = false
     var appendTemporaryExtension = false
     var unsyncableTarget = false
     var queryCount = 0
@@ -189,10 +204,12 @@ private class FileDestinationProvider(private val directory: File) : ContentProv
         onCommit?.invoke()
         pending[uri] = values!!.getAsInteger(MediaStore.MediaColumns.IS_PENDING)
         values.getAsString(MediaStore.MediaColumns.DISPLAY_NAME)?.let { names[uri] = it }
+        if (dieAfterCommit) throw SimulatedProcessDeath()
         return 1
     }
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
         deleteCount++
+        if (selection == "${MediaStore.MediaColumns.IS_PENDING} = 1" && pending[uri] != 1) return 0
         names.remove(uri); pending.remove(uri)
         return if (files.remove(uri)?.delete() == true) 1 else 0
     }

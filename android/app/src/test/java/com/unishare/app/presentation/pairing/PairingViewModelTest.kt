@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,10 +25,42 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairingViewModelTest {
+    @Test fun background_request_replays_to_recreated_activity_without_a_second_event_subscription() = runTest {
+        val pairing = FakePairingOperations()
+        val owner = PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope())
+        pairing.events.emit(pairingRequest(95, "000042"))
+        val first = PairingViewModel(owner)
+        val recreated = PairingViewModel(owner)
+        assertEquals("000042", (recreated.uiState.value.prompt as PairingPrompt.Verification).code)
+        first.confirmMatch()
+        recreated.rejectMismatch()
+        assertEquals(listOf(PairingCall.Confirm(95, true)), pairing.calls)
+        assertEquals(1, pairing.events.subscriptionCount.value)
+    }
+    @Test fun completed_or_malformed_request_cannot_be_decided_twice() = runTest {
+        val pairing = FakePairingOperations()
+        val vm = PairingViewModel(PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()))
+        pairing.events.emit(pairingRequest(90, "123456"))
+        vm.rejectMismatch()
+        pairing.events.emit(pairingRequest(90, "123456"))
+        vm.rejectMismatch()
+        pairing.events.emit(pairingRequest(91, "bad"))
+        pairing.events.emit(pairingRequest(91, "bad"))
+        assertEquals(listOf(PairingCall.Confirm(90, false), PairingCall.Reject(91)), pairing.calls)
+    }
+
+    @Test fun abandoned_background_pairing_expires_without_an_activity() = runTest {
+        val pairing = FakePairingOperations()
+        val vm = PairingViewModel(PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()))
+        pairing.events.emit(pairingRequest(92, "123456"))
+        advanceTimeBy(120_001)
+        assertNull(vm.uiState.value.prompt)
+        assertEquals(listOf(PairingCall.Reject(92)), pairing.calls)
+    }
     @Test
     fun simultaneous_requests_are_serialized_and_a_request_is_decided_once() = runTest {
         val pairing = FakePairingOperations()
-        val viewModel = PairingViewModel(pairing, FakePairingDevices(), immediateBackgroundScope())
+        val viewModel = PairingViewModel(PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()))
 
         pairing.events.emit(pairingRequest(11, "000042", "First PC"))
         pairing.events.emit(pairingRequest(12, "654321", "Second PC"))
@@ -56,7 +89,7 @@ class PairingViewModelTest {
     @Test
     fun mismatch_and_explicit_dismiss_use_distinct_single_rejection_paths() = runTest {
         val pairing = FakePairingOperations()
-        val viewModel = PairingViewModel(pairing, FakePairingDevices(), immediateBackgroundScope())
+        val viewModel = PairingViewModel(PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()))
 
         pairing.events.emit(pairingRequest(21, "123456"))
         advanceUntilIdle()
@@ -80,7 +113,7 @@ class PairingViewModelTest {
     @Test
     fun malformed_code_is_never_shown_and_is_rejected() = runTest {
         val pairing = FakePairingOperations()
-        val viewModel = PairingViewModel(pairing, FakePairingDevices(), immediateBackgroundScope())
+        val viewModel = PairingViewModel(PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()))
 
         pairing.events.emit(pairingRequest(31, "12345x"))
         advanceUntilIdle()
@@ -92,7 +125,7 @@ class PairingViewModelTest {
     @Test
     fun timeout_or_command_error_dismisses_the_current_request() = runTest {
         val pairing = FakePairingOperations()
-        val viewModel = PairingViewModel(pairing, FakePairingDevices(), immediateBackgroundScope())
+        val viewModel = PairingViewModel(PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()))
 
         pairing.events.emit(pairingRequest(41, "012345"))
         advanceUntilIdle()
@@ -128,7 +161,7 @@ class PairingViewModelTest {
                 identityChanged = true,
             ),
         )
-        val viewModel = PairingViewModel(pairing, devices, immediateBackgroundScope())
+        val viewModel = PairingViewModel(PairingCoordinator(pairing, devices, immediateBackgroundScope()))
 
         pairing.events.emit(GatewayEvent.IdentityChanged(deviceId))
         advanceUntilIdle()
@@ -149,7 +182,7 @@ class PairingViewModelTest {
         val deviceId = DeviceKey("changed-device")
         val pairing = FakePairingOperations()
         val devices = FakePairingDevices()
-        val viewModel = PairingViewModel(pairing, devices, immediateBackgroundScope())
+        val viewModel = PairingViewModel(PairingCoordinator(pairing, devices, immediateBackgroundScope()))
 
         pairing.events.emit(GatewayEvent.IdentityChanged(deviceId))
         advanceUntilIdle()

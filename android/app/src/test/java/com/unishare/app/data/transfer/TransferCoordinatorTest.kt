@@ -382,6 +382,31 @@ class TransferCoordinatorTest {
         assertEquals(1, fixture.gateway.accepted.size + fixture.gateway.rejected.size)
     }
 
+    @Test fun terminal_during_staging_creation_never_submits_expired_accept_or_leaks_work() = runTest {
+        val dispatcher = Executors.newFixedThreadPool(3).asCoroutineDispatcher()
+        val worker = CoroutineScope(SupervisorJob() + dispatcher)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        try {
+            val fixture = fixture(trusted = false, workerScope = worker, ioDispatcher = dispatcher)
+            fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "report.pdf", "preparing"))
+            val activity = fixture.coordinator.pendingConsentActivityIds.first { it.isNotEmpty() }.single()
+            fixture.staging.beforeCreate = { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)) }
+            val acceptance = async { fixture.coordinator.accept(activity) }
+            runCurrent()
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("preparing"), ShareFailure(ShareErrorKind.TIMEOUT))))
+            fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "barrier.pdf", "barrier"))
+            fixture.coordinator.pendingConsentActivityIds.first { ids -> ids.any { fixture.coordinator.pendingOffer(it)?.transferId == TransferKey("barrier") } }
+            release.countDown()
+            acceptance.await()
+            assertTrue("expired request must not be accepted", fixture.gateway.accepted.isEmpty())
+            assertTrue(TransferKey("preparing") in fixture.staging.deleted)
+            assertEquals(0, fixture.coordinator.activeTransferCount.value)
+            assertEquals(ShareErrorKind.TIMEOUT, fixture.tracker.find(activity)?.errorKind)
+        } finally { release.countDown(); worker.cancel(); dispatcher.close() }
+    }
+
     @Test
     fun duplicate_offer_after_rejection_cannot_reopen_the_prompt() = runTest {
         val fixture = fixture(trusted = false)
@@ -944,7 +969,9 @@ private class FakeStagingAccess : StagingAccess {
     val deleted = CopyOnWriteArrayList<TransferKey>()
     var textToWrite: String? = null
     var beforeDelete: (() -> Unit)? = null
+    var beforeCreate: (() -> Unit)? = null
     override fun create(transferId: TransferKey): PreparedStaging {
+        beforeCreate?.invoke()
         val file = kotlin.io.path.createTempFile("unishare-test", ".data").toFile()
         textToWrite?.let(file::writeText)
         return PreparedStaging(transferId, fakeUri(), file, 1_000)

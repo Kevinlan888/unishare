@@ -53,6 +53,7 @@ import com.unishare.app.domain.ActivityStatus
 import com.unishare.app.domain.ContentKind
 import com.unishare.app.domain.ShareDirection
 import com.unishare.app.domain.ShareOrigin
+import com.unishare.app.domain.ShareErrorKind
 import com.unishare.app.platform.ContentUriThumbnail
 import java.util.Date
 
@@ -65,6 +66,7 @@ fun ActivityCard(
 ) {
     val outgoing = activity.direction == ShareDirection.OUTGOING
     val stateDescription = activityStatusDescription(activity.status)
+    val visibleTerminal = activity.status in setOf(ActivityStatus.FAILED, ActivityStatus.REJECTED, ActivityStatus.CANCELLED)
     val cardModifier = if (activity.kind == ContentKind.TEXT) {
         Modifier.width(IntrinsicSize.Max).widthIn(min = 112.dp, max = 312.dp)
     } else {
@@ -77,7 +79,7 @@ fun ActivityCard(
         Surface(
             modifier = cardModifier
                 .semantics {
-                    contentDescription = stateDescription
+                    if (!visibleTerminal) contentDescription = stateDescription
                     if (activity.status.isTerminal) liveRegion = LiveRegionMode.Polite
                 },
             shape = RoundedCornerShape(18.dp),
@@ -96,9 +98,31 @@ fun ActivityCard(
                     Spacer(Modifier.height(7.dp))
                     ActivityMeta(activity, onCancel, onRetry)
                 }
+                if (visibleTerminal) {
+                    Text(stateDescription, style = MaterialTheme.typography.labelMedium)
+                    if (activity.status == ActivityStatus.FAILED && activity.errorKind != null) {
+                        Text(stringResource(activity.errorKind.messageResource()), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
     }
+}
+
+private fun ShareErrorKind.messageResource(): Int = when (this) {
+    ShareErrorKind.PERMISSION_DENIED -> R.string.transfer_error_permission
+    ShareErrorKind.NETWORK_LOST, ShareErrorKind.DISCOVERY_FAILED -> R.string.transfer_error_network
+    ShareErrorKind.TIMEOUT -> R.string.transfer_error_timeout
+    ShareErrorKind.STORAGE_FAILED -> R.string.transfer_error_storage
+    ShareErrorKind.AUTHENTICATION_FAILED, ShareErrorKind.IDENTITY_CHANGED, ShareErrorKind.PAIRING_REJECTED -> R.string.transfer_error_security
+    ShareErrorKind.INTEGRITY_FAILED -> R.string.transfer_error_integrity
+    ShareErrorKind.VERSION_MISMATCH -> R.string.transfer_error_version
+    ShareErrorKind.INVALID_INPUT -> R.string.transfer_error_input
+    ShareErrorKind.RESOURCE_LIMIT -> R.string.transfer_error_limit
+    ShareErrorKind.INTERRUPTED -> R.string.transfer_error_interrupted
+    ShareErrorKind.CANCELLED -> R.string.session_status_cancelled_description
+    ShareErrorKind.TRANSFER_REJECTED -> R.string.session_status_rejected_description
+    ShareErrorKind.UNKNOWN -> R.string.transfer_error_unknown
 }
 
 @Composable

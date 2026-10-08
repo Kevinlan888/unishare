@@ -75,6 +75,8 @@ fun UniShareNavHost(
     receiveContent: (@Composable (ActivityKey, () -> Unit) -> Unit)? = null,
     pendingReceiveActivityId: ActivityKey? = null,
     onReceiveActivityConsumed: () -> Unit = {},
+    pendingSessionDeviceId: DeviceKey? = null,
+    onSessionConsumed: () -> Unit = {},
     devicesContent: (@Composable ((DeviceKey) -> Unit) -> Unit)? = null,
     historyContent: (@Composable () -> Unit)? = null,
     settingsContent: (@Composable () -> Unit)? = null,
@@ -89,6 +91,12 @@ fun UniShareNavHost(
                 launchSingleTop = true
             }
             onReceiveActivityConsumed()
+        }
+    }
+    LaunchedEffect(pendingSessionDeviceId?.value) {
+        pendingSessionDeviceId?.let {
+            navController.navigate(AppDestination.Session(it).route) { launchSingleTop = true }
+            onSessionConsumed()
         }
     }
 

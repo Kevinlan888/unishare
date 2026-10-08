@@ -123,7 +123,9 @@ class AndroidReceivePublisher(
             if (record.getProperty("kind") != "downloads") return false
             val container = Uri.parse(record.getProperty("container") ?: return false)
             val name = record.getProperty("temporaryName") ?: return false
-            if (target != null) resolver.delete(target, null, null)
+            // The provider's commit is authoritative: death may occur after IS_PENDING=0
+            // but before removing our intent. Conditional deletion must never undo that commit.
+            if (target != null) resolver.delete(target, "${MediaStore.MediaColumns.IS_PENDING} = 1", null)
             // Intent is written before insert, so this also handles death before insert returns its URI.
             queryPending(container, name)?.use { cursor ->
                 while (cursor.moveToNext()) {
@@ -153,7 +155,7 @@ class AndroidReceivePublisher(
         // Recovery may encounter a journal on older OS versions. Keep the intent
         // for later recovery rather than resolving API29-only pending Downloads.
         if (Build.VERSION.SDK_INT < 29) return null
-        val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
+        val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 1"
         val arguments = arrayOf("$name%", downloadsPath)
         return if (Build.VERSION.SDK_INT >= 30) resolver.query(container, arrayOf(MediaStore.MediaColumns._ID), Bundle().apply {
             putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)

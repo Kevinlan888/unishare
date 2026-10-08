@@ -32,6 +32,12 @@ import kotlinx.coroutines.withContext
 import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 
 interface SessionOperations {
     suspend fun sendText(deviceId: DeviceKey, text: String): ActivityKey
@@ -74,6 +80,7 @@ class SessionViewModel(
     activities: Flow<List<ShareActivity>>,
     private val previewFor: (ActivityKey) -> ActivityPreview?,
     private val operations: SessionOperations,
+    private val awaitRuntime: suspend () -> Unit = {},
 ) : ViewModel() {
     private data class RateSample(
         val bytes: Long,
@@ -87,6 +94,9 @@ class SessionViewModel(
     private val eventChannel = Channel<SessionEvent>(Channel.UNLIMITED)
     private val rateSamples = HashMap<ActivityKey, RateSample>()
     private var lastDevice: DeviceSummary? = devices.find(deviceId)
+    // Serializes connection/pairing and submission. Never held by the SDK event collector.
+    private val submissions = Mutex()
+    private class Blocked(val messageKind: SessionUserMessage) : Exception()
 
     val events = eventChannel.receiveAsFlow()
 
@@ -171,37 +181,32 @@ class SessionViewModel(
             emit(SessionUserMessage.INVALID_LINK)
             return
         }
-        val blocked = sendBlock()
-        if (blocked != null) {
-            emit(blocked)
-            return
-        }
         viewModelScope.launch {
             try {
-                operations.sendLink(deviceId, normalized)
-                accepted()
-            } catch (_: Exception) {
-                emit(SessionUserMessage.SEND_FAILED)
+                submissions.withLock {
+                    ensureConnection()
+                    operations.sendLink(deviceId, normalized)
+                    accepted()
+                }
+            } catch (failure: Exception) {
+                reportSendFailure(failure)
             }
         }
     }
 
     fun sendPickedContent(selection: RetainedContentUri?, kind: ContentKind) {
         if (selection == null) return
-        val blocked = sendBlock()
-        if (blocked != null) {
-            selection.lease.close()
-            emit(blocked)
-            return
-        }
         shareSheetVisible.value = false
         val viewModelOwnsLease = AtomicBoolean(true)
         val submission = viewModelScope.launch(start = CoroutineStart.LAZY) {
-            if (!viewModelOwnsLease.compareAndSet(true, false)) return@launch
             try {
-                operations.sendPickedContent(deviceId, selection, kind)
-            } catch (_: Exception) {
-                emit(SessionUserMessage.SEND_FAILED)
+                submissions.withLock {
+                    ensureConnection(waitForDiscovery = true)
+                    if (!viewModelOwnsLease.compareAndSet(true, false)) return@withLock
+                    operations.sendPickedContent(deviceId, selection, kind)
+                }
+            } catch (failure: Exception) {
+                reportSendFailure(failure)
             }
         }
         submission.invokeOnCompletion {
@@ -218,16 +223,15 @@ class SessionViewModel(
     }
 
     fun sendClipboard(isForeground: () -> Boolean) {
-        val blocked = sendBlock()
-        if (blocked != null) {
-            emit(blocked)
-            return
-        }
         shareSheetVisible.value = false
         viewModelScope.launch {
             try {
-                if (operations.sendClipboard(deviceId, isForeground) == null) emit(SessionUserMessage.CLIPBOARD_EMPTY)
+                submissions.withLock {
+                    ensureConnection()
+                    if (operations.sendClipboard(deviceId, isForeground) == null) emit(SessionUserMessage.CLIPBOARD_EMPTY)
+                }
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
                 emit(
                     if ((failure as? CoordinatorException)?.errorKind == ShareErrorKind.PERMISSION_DENIED) {
                         SessionUserMessage.CLIPBOARD_REQUIRES_FOREGROUND
@@ -252,34 +256,57 @@ class SessionViewModel(
     fun retry(activityId: ActivityKey) {
         viewModelScope.launch {
             try {
-                operations.retry(activityId)
-            } catch (_: Exception) {
+                submissions.withLock {
+                    if (uiState.value.activities.any { it.id == activityId && it.direction == com.unishare.app.domain.ShareDirection.OUTGOING }) {
+                        ensureConnection(waitForDiscovery = true)
+                    }
+                    operations.retry(activityId)
+                }
+            } catch (failure: Exception) {
+                if (failure is CancellationException && failure !is TimeoutCancellationException) throw failure
                 emit(SessionUserMessage.RETRY_FAILED)
             }
         }
     }
 
     private fun sendText(text: String, accepted: () -> Unit = {}) {
-        val blocked = sendBlock()
-        if (blocked != null) {
-            emit(blocked)
-            return
-        }
         viewModelScope.launch {
             try {
-                operations.sendText(deviceId, text)
-                accepted()
-            } catch (_: Exception) {
-                emit(SessionUserMessage.SEND_FAILED)
+                submissions.withLock {
+                    ensureConnection()
+                    operations.sendText(deviceId, text)
+                    accepted()
+                }
+            } catch (failure: Exception) {
+                reportSendFailure(failure)
             }
         }
     }
 
-    private fun sendBlock(): SessionUserMessage? {
-        val device = devices.find(deviceId) ?: return SessionUserMessage.DEVICE_OFFLINE
-        if (!device.online) return SessionUserMessage.DEVICE_OFFLINE
-        if (!device.trusted || device.identityChanged) return SessionUserMessage.DEVICE_NOT_TRUSTED
-        return null
+    fun enterSession() {
+        viewModelScope.launch {
+            try { submissions.withLock { ensureConnection(waitForDiscovery = true) } }
+            catch (failure: Exception) { reportSendFailure(failure) }
+        }
+    }
+
+    private suspend fun ensureConnection(waitForDiscovery: Boolean = false) {
+        awaitRuntime()
+        if (waitForDiscovery) withTimeout(30_000) {
+            devices.devices.first { peers -> peers.any { it.id == deviceId && (it.online || it.identityChanged) } }
+        }
+        val device = devices.find(deviceId) ?: throw Blocked(SessionUserMessage.DEVICE_OFFLINE)
+        if (device.identityChanged) throw Blocked(SessionUserMessage.DEVICE_NOT_TRUSTED)
+        if (!device.online) throw Blocked(SessionUserMessage.DEVICE_OFFLINE)
+        // Repository validates the authenticated result against the current SDK lifecycle token.
+        devices.connect(deviceId)
+        if (!devices.isTrusted(deviceId)) throw Blocked(SessionUserMessage.DEVICE_NOT_TRUSTED)
+    }
+
+    private fun reportSendFailure(failure: Exception) {
+        if (failure is TimeoutCancellationException) { emit(SessionUserMessage.DEVICE_OFFLINE); return }
+        if (failure is CancellationException) throw failure
+        emit((failure as? Blocked)?.messageKind ?: SessionUserMessage.SEND_FAILED)
     }
 
     private fun emit(message: SessionUserMessage) {
@@ -350,6 +377,7 @@ class SessionViewModel(
                     graph.transferCoordinator,
                     graph.selectedContentResolver,
                 ),
+                awaitRuntime = graph.runtimeController::awaitForegroundReady,
             ) as T
         }
     }

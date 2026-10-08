@@ -43,7 +43,7 @@ $cases = @(
     (Case 'empty XML' '' $manifest 1),
     (Case 'extra testcase outside suite' ('<testsuites tests="2" failures="0" errors="0" skipped="0">' + $suite + '<testcase /></testsuites>') $manifest 1),
     (Case 'relative component success' $suite ($manifest.Replace('com.unishare.app.service.ShareForegroundService', '.service.ShareForegroundService')) 0),
-    (Case 'combined FGS types success' $suite ($manifest.Replace('foregroundServiceType="connectedDevice"', 'foregroundServiceType="dataSync|connectedDevice"')) 0),
+    (Case 'combined dataSync FGS prohibited' $suite ($manifest.Replace('foregroundServiceType="connectedDevice"', 'foregroundServiceType="dataSync|connectedDevice"')) 1),
     (Case 'merged broad storage' $suite ($manifest.Replace('<application>', '<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" /><application>')) 1),
     (Case 'merged read storage' $suite ($manifest.Replace('<application>', '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" /><application>')) 1),
     (Case 'merged sdk23 write storage' $suite ($manifest.Replace('<application>', '<uses-permission-sdk-23 android:name="android.permission.WRITE_EXTERNAL_STORAGE" /><application>')) 1),

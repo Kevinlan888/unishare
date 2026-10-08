@@ -78,6 +78,9 @@ class AppGraph(application: Application) {
     )
     val sessionManager = sessionComposition.session
     val deviceRepository = DefaultDeviceRepository(sessionManager, scope)
+    val pairingCoordinator = com.unishare.app.presentation.pairing.PairingCoordinator(
+        com.unishare.app.presentation.pairing.SessionPairingOperations(sessionManager), deviceRepository, scope,
+    )
     val activityTracker = ActivityTracker(activityRepository, scope)
     val stagingStore = StagingStore(application)
     val receivePublisher = AndroidReceivePublisher(application)
@@ -113,6 +116,10 @@ class AppGraph(application: Application) {
         activeTransferCount = transferCoordinator.activeTransferCount,
         notificationPermission = AndroidNotificationPermissionChecker(application),
         scope = scope,
+    )
+    private val pairingNotifications = com.unishare.app.service.PairingNotificationRelay(
+        pairingCoordinator.uiState, runtimeController.state, localeResources.settings, scope,
+        shareNotifications::postPairingRequest, shareNotifications::cancelPairingRequest,
     )
 
     init {

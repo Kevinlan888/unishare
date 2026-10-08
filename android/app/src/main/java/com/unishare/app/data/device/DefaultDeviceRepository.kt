@@ -10,6 +10,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Merges peers by stable ID. Trusted peers survive offline events without inventing names. */
 class DefaultDeviceRepository(private val session: ShareSessionManager, scope: CoroutineScope) : DeviceRepository {
@@ -18,6 +22,8 @@ class DefaultDeviceRepository(private val session: ShareSessionManager, scope: C
     private var trusted = emptySet<DeviceKey>()
     private val blocked = HashSet<DeviceKey>()
     private val identityVersions = HashMap<DeviceKey, Long>()
+    private val connections = HashMap<DeviceKey, Mutex>()
+    private val connectedInSession = HashMap<DeviceKey, SessionSnapshotToken>()
     private var mutationRevision = 0L
     private val mutableDevices = MutableStateFlow<List<DeviceSummary>>(emptyList())
     override val devices: StateFlow<List<DeviceSummary>> = mutableDevices.asStateFlow()
@@ -29,6 +35,7 @@ class DefaultDeviceRepository(private val session: ShareSessionManager, scope: C
                 synchronized(gate) {
                     mutationRevision++
                     if (state == SessionState.STOPPED || state == SessionState.CLOSED) {
+                        connectedInSession.clear()
                         peers.entries.removeAll { !it.value.trusted }
                         peers.replaceAll { _, peer -> peer.copy(online = false, connected = false) }
                         publish()
@@ -55,7 +62,8 @@ class DefaultDeviceRepository(private val session: ShareSessionManager, scope: C
             if (mutationRevision != capturedRevision || session.snapshotToken !== capturedSession) return
             trusted = trustedSnapshot.toSet()
             val onlineIds = snapshot.mapTo(HashSet()) { it.id }
-            peers.replaceAll { id, peer -> peer.copy(online = id in onlineIds, trusted = id in trusted, connected = peer.connected && id in onlineIds) }
+            peers.replaceAll { id, peer -> peer.copy(online = id in onlineIds, trusted = id in trusted,
+                connected = peer.connected && id in onlineIds && connectedInSession[id] === capturedSession) }
             snapshot.forEach(::mergeOnline)
             trusted.forEach { id ->
                 peers.putIfAbsent(id, DeviceSummary(id, "", null, online = false, trusted = true, identityChanged = id in blocked))
@@ -79,7 +87,11 @@ class DefaultDeviceRepository(private val session: ShareSessionManager, scope: C
                 is GatewayEvent.DeviceOffline -> peers[event.deviceId]?.let { peer ->
                     if (peer.trusted) peers[event.deviceId] = peer.copy(online = false, connected = false) else peers.remove(event.deviceId)
                 }
-                is GatewayEvent.ConnectionChanged -> peers[event.deviceId]?.let { peers[event.deviceId] = it.copy(connected = event.connected) }
+                is GatewayEvent.ConnectionChanged -> {
+                    if (event.connected) connectedInSession[event.deviceId] = session.snapshotToken
+                    else connectedInSession.remove(event.deviceId)
+                    peers[event.deviceId]?.let { peers[event.deviceId] = it.copy(connected = event.connected) }
+                }
                 is GatewayEvent.IdentityChanged -> {
                     identityVersions[event.deviceId] = (identityVersions[event.deviceId] ?: 0) + 1
                     blocked.add(event.deviceId)
@@ -104,14 +116,36 @@ class DefaultDeviceRepository(private val session: ShareSessionManager, scope: C
     override fun canSend(deviceId: DeviceKey): Boolean = synchronized(gate) { peers[deviceId]?.let { it.online && !it.identityChanged } == true }
 
     override suspend fun connect(deviceId: DeviceKey) {
-        session.requireReady()
-        synchronized(gate) { if (deviceId in blocked) throw GatewayException(ShareFailure(ShareErrorKind.IDENTITY_CHANGED)) }
-        session.connect(deviceId)
+        val connection = synchronized(gate) { connections.getOrPut(deviceId) { Mutex() } }
+        // Native operations outlive their caller. Keep this peer's slot until completion so
+        // Activity disposal cannot allow a second pairing operation to overtake the first.
+        connection.withLock {
+            withContext(NonCancellable) {
+                session.requireReady()
+                val token = session.snapshotToken
+                synchronized(gate) {
+                    if (deviceId in blocked) throw GatewayException(ShareFailure(ShareErrorKind.IDENTITY_CHANGED))
+                    if (peers[deviceId]?.connected == true && connectedInSession[deviceId] === token) return@withContext
+                }
+                session.connect(deviceId)
+                if (session.snapshotToken !== token) throw GatewayException(ShareFailure(ShareErrorKind.INTERRUPTED))
+                refresh()
+                synchronized(gate) {
+                    if (deviceId in blocked) throw GatewayException(ShareFailure(ShareErrorKind.IDENTITY_CHANGED))
+                    if (session.snapshotToken !== token) throw GatewayException(ShareFailure(ShareErrorKind.INTERRUPTED))
+                    peers[deviceId]?.let { peers[deviceId] = it.copy(connected = true) }
+                    connectedInSession[deviceId] = token
+                    mutationRevision++
+                    publish()
+                }
+            }
+        }
     }
     override suspend fun forget(deviceId: DeviceKey) {
         val identityVersion = synchronized(gate) { identityVersions[deviceId] ?: 0 }
         session.forgetDevice(deviceId)
         synchronized(gate) {
+            connectedInSession.remove(deviceId)
             if ((identityVersions[deviceId] ?: 0) == identityVersion) blocked.remove(deviceId)
             trusted = trusted - deviceId
             peers[deviceId]?.let { peer ->

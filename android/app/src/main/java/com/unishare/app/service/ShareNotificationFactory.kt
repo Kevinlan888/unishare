@@ -10,6 +10,7 @@ import android.graphics.drawable.Icon
 import com.unishare.app.MainActivity
 import com.unishare.app.R
 import com.unishare.app.domain.ActivityKey
+import com.unishare.app.domain.DeviceKey
 import com.unishare.app.UniShareApplication
 import com.unishare.app.platform.AppLocaleResources
 
@@ -57,7 +58,7 @@ class ShareNotificationFactory(context: Context, private val locale: AppLocaleRe
             ).build())
             .build()
 
-    fun transferProgress(progress: Int): Notification =
+    fun transferProgress(progress: Int, activityId: ActivityKey? = null, deviceId: DeviceKey? = null, canCancel: Boolean = true): Notification =
         if (!locale.isReady) initialForeground(TRANSFER_CHANNEL_ID) else
         baseBuilder(TRANSFER_CHANNEL_ID)
             .setContentTitle(locale.string(R.string.notification_transfer_title))
@@ -65,17 +66,25 @@ class ShareNotificationFactory(context: Context, private val locale: AppLocaleRe
             .setProgress(100, progress.coerceIn(0, 100), false)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
-            .addAction(Notification.Action.Builder(
+            .apply {
+                if (deviceId != null) setContentIntent(PendingIntent.getActivity(application, CONTENT_REQUEST_CODE,
+                    Intent(application, MainActivity::class.java)
+                        .setData(android.net.Uri.Builder().scheme("unishare").authority("session").appendPath(deviceId.value).build())
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        .putExtra(MainActivity.EXTRA_SESSION_DEVICE_ID, deviceId.value), immutableUpdateCurrent))
+                if (canCancel) addAction(Notification.Action.Builder(
                 Icon.createWithResource(application, R.drawable.ic_launcher_foreground),
                 locale.string(R.string.notification_cancel_transfer),
                 PendingIntent.getForegroundService(
                     application,
                     CANCEL_REQUEST_CODE,
                     Intent(application, ShareForegroundService::class.java)
-                        .setAction(ShareForegroundService.ACTION_CANCEL_TRANSFER),
+                        .setAction(ShareForegroundService.ACTION_CANCEL_TRANSFER)
+                        .setData(activityId?.let { android.net.Uri.Builder().scheme("unishare").authority("cancel").appendPath(it.value).build() })
+                        .putExtra(ShareForegroundService.EXTRA_ACTIVITY_ID, activityId?.value),
                     immutableUpdateCurrent,
                 ),
-            ).build())
+            ).build()) }
             .build()
 
     /** A consent-only notification; accepting or rejecting always happens in the app. */
@@ -110,6 +119,17 @@ class ShareNotificationFactory(context: Context, private val locale: AppLocaleRe
     fun cancelIncomingOffer(activityId: ActivityKey) {
         manager.cancel(incomingNotificationId(activityId))
     }
+
+    fun postPairingRequest() {
+        try {
+            manager.notify(PAIRING_NOTIFICATION_ID, baseBuilder(TRANSFER_CHANNEL_ID)
+                .setContentTitle(locale.string(R.string.notification_pairing_title))
+                .setContentText(locale.string(R.string.notification_pairing_content))
+                .setAutoCancel(true).setCategory(Notification.CATEGORY_MESSAGE).build())
+        } catch (_: SecurityException) { /* The application queue still replays when UI opens. */ }
+    }
+
+    fun cancelPairingRequest() = manager.cancel(PAIRING_NOTIFICATION_ID)
 
     private fun incomingNotificationId(activityId: ActivityKey) =
         INCOMING_REQUEST_CODE_BASE xor activityId.value.hashCode()
@@ -146,5 +166,6 @@ class ShareNotificationFactory(context: Context, private val locale: AppLocaleRe
         private const val STOP_REQUEST_CODE = 1101
         private const val CANCEL_REQUEST_CODE = 1102
         private const val INCOMING_REQUEST_CODE_BASE = 0x55000000
+        private const val PAIRING_NOTIFICATION_ID = 1002
     }
 }

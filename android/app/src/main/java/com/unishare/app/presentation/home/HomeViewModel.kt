@@ -27,6 +27,7 @@ class HomeViewModel(
     sessionState: StateFlow<SessionState>,
     sessionEvents: Flow<GatewayEvent>,
     private val refreshDevices: () -> Unit,
+    private val retryRuntime: suspend () -> Boolean = { true },
 ) : ViewModel() {
     private val discoveryError = MutableStateFlow<ShareErrorKind?>(null)
 
@@ -95,12 +96,17 @@ class HomeViewModel(
 
     fun refresh() {
         discoveryError.value = null
-        try {
-            refreshDevices()
-        } catch (error: GatewayException) {
-            discoveryError.value = error.failure.kind
-        } catch (_: IllegalStateException) {
-            discoveryError.value = ShareErrorKind.DISCOVERY_FAILED
+        viewModelScope.launch {
+            try {
+                if (retryRuntime()) refreshDevices()
+                else discoveryError.value = ShareErrorKind.DISCOVERY_FAILED
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: GatewayException) {
+                discoveryError.value = error.failure.kind
+            } catch (_: Exception) {
+                discoveryError.value = ShareErrorKind.DISCOVERY_FAILED
+            }
         }
     }
 
@@ -115,6 +121,7 @@ class HomeViewModel(
                 sessionState = graph.sessionManager.state,
                 sessionEvents = graph.sessionManager.events,
                 refreshDevices = graph.deviceRepository::refresh,
+                retryRuntime = graph.runtimeController::retry,
             ) as T
         }
     }

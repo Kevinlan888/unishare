@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="notification_pairing_title">Pairing needs confirmation</string>
+    <string name="notification_pairing_content">Open UniShare to compare the security code.</string>
+    <string name="transfer_error_unknown">Unknown error</string>
+    <string name="transfer_error_permission">Permission denied</string>
+    <string name="transfer_error_network">Network connection lost</string>
+    <string name="transfer_error_timeout">Request timed out</string>
+    <string name="transfer_error_storage">Storage unavailable</string>
+    <string name="transfer_error_security">Device authentication failed</string>
+    <string name="transfer_error_integrity">Content verification failed</string>
+    <string name="transfer_error_version">Incompatible app version</string>
+    <string name="transfer_error_input">Unsupported content</string>
+    <string name="transfer_error_limit">Resource limit reached</string>
+    <string name="transfer_error_interrupted">Transfer interrupted</string>
     <string name="summary_image">Image</string>
     <string name="settings_write_failed">Could not save settings. Check available storage and try again.</string>
     <string name="app_name">UniShare</string>

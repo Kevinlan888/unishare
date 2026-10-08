@@ -28,6 +28,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -38,6 +39,19 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModelTest {
+    @Test fun refresh_waits_for_runtime_retry_before_discovery() = runTest(dispatcher) {
+        val ready = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        val devices = FakeDeviceRepository(emptyList())
+        val viewModel = HomeViewModel(devices, FakeActivityRepository(emptyList()),
+            FakeSettingsRepository(AppSettings()), MutableStateFlow(SessionState.FAULTED),
+            MutableSharedFlow(), devices::refresh, retryRuntime = { ready.await() })
+        viewModel.refresh()
+        runCurrent()
+        assertEquals(0, devices.refreshCount)
+        ready.complete(true)
+        advanceUntilIdle()
+        assertEquals(1, devices.refreshCount)
+    }
     private val dispatcher = StandardTestDispatcher()
 
     @Before

@@ -28,6 +28,46 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RuntimeControllerTest {
+    @Test fun explicit_retry_reuses_real_session_owner_after_initialize_or_sdk_start_fault() = runTest {
+        for (failInitialize in listOf(true, false)) {
+            val gateway = com.unishare.app.data.sdk.FakeShareSdkGateway()
+            if (failInitialize) gateway.initializeFailure = IllegalStateException("init")
+            else gateway.startFailure = IllegalStateException("start")
+            val session = com.unishare.app.data.sdk.ShareSessionManager(gateway, backgroundScope)
+            val runtime = RuntimeController(FakeSettingsRepository(), ShareSessionRuntime(session),
+                FakeForegroundService(mutableListOf()), MutableStateFlow(0), NotificationPermissionChecker { true }, backgroundScope)
+            runtime.setAppVisible(true)
+            assertEquals(com.unishare.app.data.sdk.SessionState.FAULTED, session.state.value)
+            gateway.initializeFailure = null; gateway.startFailure = null
+            assertTrue(runtime.retry())
+            assertEquals(com.unishare.app.data.sdk.SessionState.RUNNING, session.state.value)
+            assertEquals(1, gateway.calls.count { it == "subscribe" })
+            session.close()
+        }
+    }
+    @Test fun explicit_retry_recovers_failed_session_start() = runTest {
+        val fixture = fixture()
+        fixture.session.startFailure = IllegalStateException("start failed")
+        fixture.runtime.setAppVisible(true)
+        assertEquals(RuntimeFailure.SESSION_START_FAILED, fixture.runtime.state.value.failure)
+        fixture.session.startFailure = null
+        assertTrue(fixture.runtime.retry())
+        assertEquals(RuntimePhase.FOREGROUND, fixture.runtime.state.value.phase)
+        assertNull(fixture.runtime.state.value.failure)
+    }
+
+    @Test fun explicit_retry_recovers_service_start_for_active_work() = runTest {
+        val fixture = fixture()
+        fixture.runtime.setAppVisible(true)
+        fixture.service.startFailure = IllegalStateException("service failed")
+        fixture.active.value = 1
+        runCurrent()
+        assertEquals(RuntimeFailure.SERVICE_START_REJECTED, fixture.runtime.state.value.failure)
+        fixture.service.startFailure = null
+        assertTrue(fixture.runtime.retry())
+        assertTrue(fixture.runtime.state.value.foregroundServiceRunning)
+        assertNull(fixture.runtime.state.value.failure)
+    }
     @Test fun `notification-off rollback IOException stays inside application scope and safely stops receive`() = runTest {
         assertRollbackWriteFailureSafe(activeTransfers = 0)
     }
@@ -394,11 +434,13 @@ class RuntimeControllerTest {
     )
 
     private class FakeRuntimeSession(private val events: MutableList<String>) : RuntimeSession {
+        var startFailure: Exception? = null
         var startCount = 0
         var stopCount = 0
         var beforeStop: suspend () -> Unit = { }
 
         override suspend fun start(deviceName: String) {
+            startFailure?.let { throw it }
             startCount++
             events += "session:start:$deviceName"
         }

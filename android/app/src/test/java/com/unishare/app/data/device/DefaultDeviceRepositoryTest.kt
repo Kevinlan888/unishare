@@ -19,6 +19,26 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultDeviceRepositoryTest {
+    @Test fun simultaneous_connects_share_authenticated_result_and_refresh_trust() = runTest {
+        val key = DeviceKey("a")
+        val gateway = FakeShareSdkGateway().apply { snapshots = listOf(peer("a", "peer")); connectCompletion = CompletableDeferred() }
+        val session = ShareSessionManager(gateway, backgroundScope)
+        val repository = DefaultDeviceRepository(session, backgroundScope)
+        session.initialize(GatewayConfig("local")); session.start(); runCurrent()
+        val first = launch { repository.connect(key) }
+        val second = launch { repository.connect(key) }
+        runCurrent()
+        assertEquals(1, gateway.calls.count { it == "connect:a" })
+        gateway.trusted = setOf(key)
+        gateway.connectCompletion!!.complete(Unit)
+        first.join(); second.join()
+        assertTrue(repository.find(key)!!.connected)
+        assertTrue(repository.isTrusted(key))
+        // StateFlow may conflate STOPPED -> RUNNING before the repository collector runs.
+        session.stop(); session.start()
+        repository.connect(key)
+        assertEquals(2, gateway.calls.count { it == "connect:a" })
+    }
     @Test fun snapshots_merge_online_updates_and_keep_trusted_offline_without_duplicates() = runTest {
         val gateway = FakeShareSdkGateway().apply { snapshots = listOf(peer("a", "old")); trusted = setOf(DeviceKey("a"), DeviceKey("offline")) }
         val session = ShareSessionManager(gateway, backgroundScope)

@@ -117,7 +117,7 @@ seven NewApi errors were fixed with actual runtime guards and legacy fallback;
 the sole remaining machine-local PropertyEscape was corrected only in the ignored
 local file. No suppression or minSdk increase was used.
 
-Final automated evidence: app JVM211/0, app connected91/0, SDK connected10/0,
+Task13 automated evidence: app JVM211/0, app connected91/0, SDK connected10/0,
 focused JVM91/0, verifier fixtures27/0, app lint0 errors/22 warnings and SDK lint0
 errors/15 warnings. Direct Gradle task inventory, debug builds and both release
 assemblies passed. Default/selected test-app wrappers were attempted but exited1
@@ -133,3 +133,25 @@ the unsigned release APK and AAR hashes/sizes are recorded in
 41/91 before the emulator went offline; it was not counted passed. A no-wipe AVD
 restart and a later stale-daemon lock cleanup preceded successful full reruns.
 Keep those environment failures visible; the emulator crash cause is unproven.
+
+The subsequent single final-review fix dispatch against `c75b7b7` now has fresh
+app JVM227/227 (28 suites), app connected96/96 (11 suites, API37 emulator),
+fixtures27/27, EN/zh209 identical keys, app lint0 errors/22 warnings and SDK
+lint0/15. Both modules' debug/release assemblies pass. Current candidate hashes
+and final SDK public evidence are recorded in
+[acceptance](../../android/tests/app-acceptance.md). Managed read-only ZIP/ELF
+inspection and aapt2 packaged-manifest reading replace the externally denied
+llvm-readelf command; the latter command is not claimed passed.
+
+Operational changes: session entry and sends serialize real authenticated SDK
+connection and pairing; explicit file selection retains its URI lease across
+picker-return-before-resume until runtime/rediscovery/connect or abandonment.
+Home refresh can explicitly retry a faulted runtime. Pairing queue and decisions
+are application-owned and replay to a newly opened Activity, with expiry and a
+generic background notification. FGS status follows active transfer/progress and
+online peers; its immutable cancel target cannot switch to another transfer.
+System-level notification disablement is checked on API26–32 as well as API33+.
+Recovery never deletes an already committed Downloads file. Terminal cards show
+localized status/error category, and session history has local date headers.
+All existing storage, physical-peer, signing and version/operator gates remain
+open; this fixes automated findings without converting those gates to PASS.

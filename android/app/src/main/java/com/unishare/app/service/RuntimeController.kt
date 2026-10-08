@@ -117,6 +117,23 @@ class RuntimeController(
         }
     }
 
+    /** Explicit retry uses the same lifecycle mutex and the same process-wide SDK owner. */
+    suspend fun retry(): Boolean {
+        settingsReady.await()
+        return lifecycle.withLock {
+            if (!appVisible) return@withLock false
+            failure = null
+            reconcileLocked(StartAuthority.VISIBLE_ACTIVITY)
+            failure == null && sessionRunning
+        }
+    }
+
+    /** Picker callbacks may precede Activity resume. Wait for its real runtime transition. */
+    suspend fun awaitForegroundReady() {
+        val ready = state.first { it.appVisible && (it.phase != RuntimePhase.STOPPED || it.failure != null) }
+        check(ready.failure != RuntimeFailure.SESSION_START_FAILED) { "Session startup failed" }
+    }
+
     /** Returns false when permission or platform service startup prevents enabling the setting. */
     suspend fun setBackgroundReceive(enabled: Boolean): Boolean {
         settingsReady.await()

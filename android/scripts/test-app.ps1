@@ -38,7 +38,7 @@ function Test-ForegroundService([xml]$Manifest, [string]$PackageName) {
     if ($services.Count -ne 1) { throw 'Foreground service contract: exactly one ShareForegroundService component required' }
     $service = $services[0]
     $types = @($service.GetAttribute('foregroundServiceType', $androidNs).Split('|') | ForEach-Object { $_.Trim() })
-    if ($service.GetAttribute('exported', $androidNs) -ne 'false' -or 'connectedDevice' -notin $types) { throw 'Foreground service contract: exported=false and connectedDevice required' }
+    if ($service.GetAttribute('exported', $androidNs) -ne 'false' -or 'connectedDevice' -notin $types -or 'dataSync' -in $types) { throw 'Foreground service contract: exported=false and connectedDevice required; dataSync prohibited' }
 }
 
 function Test-StaticContract {

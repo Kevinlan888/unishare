@@ -100,3 +100,46 @@ independent ELF inspection. No database/log/identity/sample/test fixture is bund
 Release APK is unsigned; assembly and inspection are not signed-package/device
 acceptance. These automated results close no blocked physical/API gate, and do
 not resolve the API26–28 Downloads or generic SAF publication limitations.
+
+## Final-review fixes (2026-10-08)
+
+The single final-fix dispatch against `c75b7b7` resolves all 8 Important and
+3 Minor findings. New deterministic regressions cover post-commit recovery,
+terminal-during-accept preparation, authenticated connection/lifecycle tokens,
+picker callback before foreground resume, live FGS target/progress, notification
+disablement on every API, explicit runtime retry, application-owned pairing replay/
+expiry, visible errors, local date groups, and prohibited dataSync declarations.
+No native SDK observer or automatic acceptance policy was added.
+
+| Fresh check | Measured result |
+| --- | --- |
+| App JVM | 227/227, 28 suites, 0 failures/errors/skipped |
+| Last connection/session focused group | 26/26: repository9 + SessionViewModel17 |
+| Full app connected | 96/96, 11 suites, 0 failures/errors/skipped; emulator-5554/API37; XML timestamp 2026-10-08T11:57:06 |
+| App / SDK lint | 0 errors, 22 / 15 warnings; no suppression or minSdk increase |
+| Both modules debug/release assembly | BUILD SUCCESSFUL; release APK unsigned |
+| Verifier fixtures | 27/27, including rejection of dataSync\|connectedDevice |
+| EN / zh parity | 209 / 209 keys, identical key sets; JVM format parity passes |
+| Release package audit | Actual packaged + merged manifests, read-only ZIP/ELF dynamic dependencies/defined JNI exports, ABI equality and privacy inspection pass |
+
+The prior llvm-readelf execution was denied by the tool environment; that is not
+an observed architecture defect and is not claimed as a passed external command.
+Equivalent read-only managed inspection parsed ELF section headers, DT_NEEDED and
+defined dynamic exports for all three SDK ABIs, matching APK/AAR library hashes.
+Installed aapt2 successfully read the actual binary manifest: connectedDevice-only,
+min26/target36/compile36, backup disabled, non-exported providers/services, no boot,
+dataSync, broad-storage, local-network or debug/test provider additions. APK has
+154 entries/3 DEX/9 libraries; AAR12 entries/3 libraries/83 classes.jar entries.
+Only baseline-profile assets are packaged, with no user/test payload data.
+
+These candidate measurements supersede the Task13 artifact hashes above:
+
+| Artifact | Bytes | SHA-256 |
+| --- | --- | --- |
+| `app-release-unsigned.apk` | 37,543,456 | `BED942A4F6091F38CA0488644EDDA19B2B7877236D0A13A5E6A1866408240FE7` |
+| `share-sdk-release.aar` | 9,072,941 | `1BA5C5F35AEE755CC4AB13F34EE8C0EACD9C1FAA1A3AECD09D68D007AE460753` |
+| `app-debug.apk` | 48,425,486 | `82162DEFDCE8439AE98BECD9A55BB5853D96D6AAEBCC31F2ED652EFC0C9BBC20` |
+
+All physical and version/operator rows above remain BLOCKED/NOT RUN. Safe-failure
+limits for API26–28 Downloads and generic SAF remain unchanged; successful
+API29+ atomic publication is the only supported public receive-file path.

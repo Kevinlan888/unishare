@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -66,6 +67,11 @@ import com.unishare.app.presentation.components.DeviceIcon
 import com.unishare.app.presentation.components.StatusIndicator
 import com.unishare.app.presentation.components.StatusTone
 import kotlinx.coroutines.flow.distinctUntilChanged
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 fun SessionRoute(
@@ -84,6 +90,7 @@ fun SessionRoute(
         onPermissionFailure = viewModel::onContentPermissionFailure,
     )
     LaunchedEffect(viewModel) {
+        viewModel.enterSession()
         viewModel.events.collect { event ->
             snackbar.showSnackbar(context.getString(event.message.stringResource()))
         }
@@ -132,6 +139,10 @@ fun SessionScreen(
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
 ) {
     val listState = rememberLazyListState()
+    val locale = LocalConfiguration.current.locales[0]
+    val orderedActivities = state.activities.sortedBy { it.timestampMillis }
+    val zone = ZoneId.systemDefault()
+    val today = LocalDate.now(zone)
     val composerFocusRequester = remember { FocusRequester() }
     var userWasNearEnd by remember { mutableStateOf(true) }
     val latestActivities by rememberUpdatedState(state.activities)
@@ -147,7 +158,7 @@ fun SessionScreen(
     }
     LaunchedEffect(state.activities.size) {
         if (userWasNearEnd && latestActivities.isNotEmpty()) {
-            listState.animateScrollToItem(latestActivities.lastIndex + 1)
+            listState.animateScrollToItem(latestActivities.lastIndex)
         }
     }
 
@@ -175,30 +186,39 @@ fun SessionScreen(
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
+            items(
+                count = orderedActivities.size,
+                key = { orderedActivities[it].id.value },
+            ) { index ->
+                val activity = orderedActivities[index]
+                val date = Instant.ofEpochMilli(activity.timestampMillis).atZone(zone).toLocalDate()
+                val previousDate = orderedActivities.getOrNull(index - 1)?.let {
+                    Instant.ofEpochMilli(it.timestampMillis).atZone(zone).toLocalDate()
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (date != previousDate) {
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceContainer,
                     ) {
                         Text(
-                            stringResource(R.string.session_today),
+                            if (date == today) stringResource(R.string.session_today) else
+                                DateFormat.getDateInstance(DateFormat.MEDIUM, locale)
+                                    .format(Date(activity.timestampMillis)),
                             modifier = Modifier.padding(horizontal = 13.dp, vertical = 5.dp),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-            }
-            items(
-                count = state.activities.size,
-                key = { state.activities[it].id.value },
-            ) { index ->
+                }
                 ActivityCard(
-                    activity = state.activities[index],
+                    activity = activity,
                     onCancel = onCancel,
                     onRetry = onRetry,
                 )
+                }
             }
         }
     }

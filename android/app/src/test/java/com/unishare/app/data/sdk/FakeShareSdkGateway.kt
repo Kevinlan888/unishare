@@ -12,6 +12,8 @@ class FakeShareSdkGateway : ShareSdkGateway {
     var initializeFailure: Exception? = null
     var stopCompletion: CompletableDeferred<Unit>? = null
     var forgetCompletion: CompletableDeferred<Unit>? = null
+    var connectCompletion: CompletableDeferred<Unit>? = null
+    var startFailure: Exception? = null
     var snapshots = emptyList<DeviceSnapshot>()
     var trusted = emptySet<DeviceKey>()
     var trustedSnapshotProvider: (() -> Set<DeviceKey>)? = null
@@ -22,13 +24,13 @@ class FakeShareSdkGateway : ShareSdkGateway {
         onSubscribe?.invoke()
         return AutoCloseable { calls += "unsubscribe" }
     }
-    override suspend fun start() { calls += "start" }
+    override suspend fun start() { calls += "start"; startFailure?.let { throw it } }
     override suspend fun stop() { calls += "stop"; stopCompletion?.await(); calls += "stopped" }
     override fun setForeground(value: Boolean) { calls += "foreground:$value" }
     override fun close() { calls += "close" }
     override fun devices() = snapshots
     override fun trustedDevices() = trustedSnapshotProvider?.invoke() ?: trusted
-    override suspend fun connect(deviceId: DeviceKey) { calls += "connect:${deviceId.value}" }
+    override suspend fun connect(deviceId: DeviceKey) { calls += "connect:${deviceId.value}"; connectCompletion?.await() }
     override suspend fun forgetDevice(deviceId: DeviceKey) { calls += "forget:${deviceId.value}"; forgetCompletion?.await(); trusted = trusted - deviceId }
     override suspend fun confirmPairing(requestId: Long, codeMatches: Boolean) = Unit
     override suspend fun rejectPairing(requestId: Long) = Unit
