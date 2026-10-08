@@ -1,5 +1,8 @@
 package com.unishare.app.presentation.receive
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.app.Notification
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.os.LocaleList
@@ -24,6 +27,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.view.WindowCompat
 import com.unishare.app.MainActivity
+import com.unishare.app.consumeReceiveActivityKey
 import com.unishare.app.data.sdk.DevicePlatform
 import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.ContentKind
@@ -36,6 +40,7 @@ import com.unishare.app.presentation.theme.UniShareTheme
 import com.unishare.app.test.R as TestR
 import java.util.Locale
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -117,9 +122,9 @@ class PairingAndReceiveUiTest {
             )
         }
 
-        composeRule.onNodeWithText("Couldn’t save this file. Choose another folder, then try again.")
+        composeRule.onNodeWithText("Couldn’t save this file. Restore Downloads, then try again.")
             .assertIsDisplayed()
-        composeRule.onNodeWithText("Change").performClick()
+        composeRule.onNodeWithText("Use Downloads").performClick()
         composeRule.onNodeWithText("Try again").performClick()
         composeRule.runOnIdle {
             assertEquals(1, changes)
@@ -169,7 +174,53 @@ class PairingAndReceiveUiTest {
             activityId.value,
             intent.getStringExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID),
         )
-        assertNull(factory.incomingOffer(activityId).actions)
+        val notification = factory.incomingOffer(activityId)
+        assertNull(notification.actions)
+        assertEquals(Notification.VISIBILITY_SECRET, notification.visibility)
+        val lockscreenCopy = listOf(
+            notification.extras.getCharSequence(Notification.EXTRA_TITLE),
+            notification.extras.getCharSequence(Notification.EXTRA_TEXT),
+        ).joinToString(" ").lowercase(Locale.US)
+        assertFalse("file" in lockscreenCopy)
+        assertFalse("image" in lockscreenCopy)
+        assertFalse(activityId.value.lowercase(Locale.US) in lockscreenCopy)
+    }
+
+    @Test
+    fun receive_intent_activity_key_is_consumed_once_before_configuration_recreation() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = Intent(context, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID, "activity/once")
+
+        assertEquals(ActivityKey("activity/once"), intent.consumeReceiveActivityKey())
+        assertNull(intent.consumeReceiveActivityKey())
+    }
+
+    @Test
+    fun published_content_launch_skips_package_visibility_preflight_and_handles_no_viewer() {
+        var launched: Intent? = null
+
+        val opened = launchPublishedContent("content://downloads/final-image", "image/jpeg") {
+            launched = it
+        }
+
+        assertTrue(opened)
+        assertEquals(Intent.ACTION_VIEW, launched?.action)
+        assertEquals("content://downloads/final-image", launched?.dataString)
+        assertEquals("image/jpeg", launched?.type)
+        assertTrue(launched!!.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        var unavailable = 0
+        assertFalse(
+            launchPublishedContent(
+                rawUri = "content://downloads/no-viewer",
+                mimeType = "application/x-unishare-test",
+                launch = {
+                throw ActivityNotFoundException()
+                },
+                onUnavailable = { unavailable++ },
+            ),
+        )
+        assertEquals(1, unavailable)
     }
 
     @Test

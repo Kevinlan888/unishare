@@ -3,16 +3,15 @@ package com.unishare.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.DocumentsContract
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -25,18 +24,18 @@ import com.unishare.app.presentation.pairing.PairingViewModel
 import com.unishare.app.presentation.receive.FinalContentReader
 import com.unishare.app.presentation.receive.ReceiveScreen
 import com.unishare.app.presentation.receive.ReceiveViewModel
+import com.unishare.app.presentation.receive.launchPublishedContent
 import com.unishare.app.presentation.session.SessionRoute
 import com.unishare.app.presentation.session.SessionViewModel
 import com.unishare.app.presentation.theme.UniShareTheme
 import com.unishare.app.domain.ActivityKey
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var pendingReceiveActivityId by mutableStateOf<ActivityKey?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingReceiveActivityId = receiveActivityFrom(intent)
+        pendingReceiveActivityId = intent.consumeReceiveActivityKey()
         enableEdgeToEdge()
         setContent {
             val graph = UniShareApplication.graph(this)
@@ -44,6 +43,14 @@ class MainActivity : ComponentActivity() {
             val homeState by homeViewModel.uiState.collectAsStateWithLifecycle()
             val pairingViewModel: PairingViewModel = viewModel(factory = PairingViewModel.Factory(graph))
             val pairingState by pairingViewModel.uiState.collectAsStateWithLifecycle()
+            LaunchedEffect(graph) {
+                if (pendingReceiveActivityId == null) {
+                    pendingReceiveActivityId = graph.transferCoordinator.pendingOffers().firstOrNull()?.first
+                }
+                graph.transferCoordinator.pendingConsentOffers.collect { activityId ->
+                    pendingReceiveActivityId = activityId
+                }
+            }
             UniShareTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -69,17 +76,12 @@ class MainActivity : ComponentActivity() {
                                 ),
                             )
                             val receiveState by receiveViewModel.uiState.collectAsStateWithLifecycle()
-                            val directoryLauncher = rememberLauncherForActivityResult(
-                                ActivityResultContracts.OpenDocumentTree(),
-                            ) { treeUri ->
-                                treeUri?.let { persistReceiveDirectory(graph, it) }
-                            }
                             ReceiveScreen(
                                 state = receiveState,
                                 onBack = onBack,
                                 onAccept = receiveViewModel::accept,
                                 onReject = receiveViewModel::reject,
-                                onChangeDestination = { directoryLauncher.launch(null) },
+                                onChangeDestination = receiveViewModel::restoreDownloadsDestination,
                                 onRetryPublication = receiveViewModel::retryPublication,
                                 onOpen = {
                                     receiveViewModel.openFinalContent()?.let { uri ->
@@ -105,27 +107,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        pendingReceiveActivityId = intent.consumeReceiveActivityKey()
         setIntent(intent)
-        pendingReceiveActivityId = receiveActivityFrom(intent)
-    }
-
-    private fun persistReceiveDirectory(graph: AppGraph, treeUri: Uri) {
-        try {
-            contentResolver.takePersistableUriPermission(
-                treeUri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-        } catch (_: SecurityException) {
-            return
-        }
-        val displayName = try {
-            DocumentsContract.getTreeDocumentId(treeUri).substringAfterLast(':').ifBlank { null }
-        } catch (_: Exception) {
-            null
-        }
-        graph.scope.launch {
-            graph.settingsRepository.setReceiveDirectory(treeUri.toString(), displayName)
-        }
     }
 
     private fun canReadPublishedContent(rawUri: String): Boolean {
@@ -139,19 +122,23 @@ class MainActivity : ComponentActivity() {
 
     private fun openPublishedContent(rawUri: String, mimeType: String) {
         if (!canReadPublishedContent(rawUri)) return
-        val uri = Uri.parse(rawUri)
-        val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, mimeType)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        if (intent.resolveActivity(packageManager) != null) startActivity(intent)
+        launchPublishedContent(
+            rawUri = rawUri,
+            mimeType = mimeType,
+            launch = ::startActivity,
+            onUnavailable = {
+                Toast.makeText(this, R.string.receive_open_failed, Toast.LENGTH_SHORT).show()
+            },
+        )
     }
-
-    private fun receiveActivityFrom(intent: Intent?): ActivityKey? = intent
-        ?.getStringExtra(EXTRA_RECEIVE_ACTIVITY_ID)
-        ?.takeIf(String::isNotBlank)
-        ?.let(::ActivityKey)
 
     companion object {
         const val EXTRA_RECEIVE_ACTIVITY_ID = "com.unishare.app.extra.RECEIVE_ACTIVITY_ID"
     }
+}
+
+internal fun Intent.consumeReceiveActivityKey(): ActivityKey? {
+    val value = getStringExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID)
+    removeExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID)
+    return value?.takeIf(String::isNotBlank)?.let(::ActivityKey)
 }

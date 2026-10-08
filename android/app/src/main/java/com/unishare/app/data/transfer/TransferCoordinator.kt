@@ -18,7 +18,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
@@ -87,6 +90,8 @@ class TransferCoordinator internal constructor(
         val offer: IncomingOffer,
         var decision: OfferDecision = OfferDecision.PENDING,
         var prepared: PreparedStaging? = null,
+        var consentPublished: Boolean = false,
+        var consentDismissed: Boolean = false,
         val terminal: CompletableDeferred<TransferTerminal> = CompletableDeferred(),
     )
     private sealed interface RetryPayload {
@@ -112,6 +117,10 @@ class TransferCoordinator internal constructor(
     private val active = LinkedHashSet<ActivityKey>()
     private val mutableActiveTransferCount = MutableStateFlow(0)
     val activeTransferCount: StateFlow<Int> = mutableActiveTransferCount.asStateFlow()
+    private val mutablePendingConsentOffers = MutableSharedFlow<ActivityKey>(extraBufferCapacity = 16)
+    val pendingConsentOffers: SharedFlow<ActivityKey> = mutablePendingConsentOffers.asSharedFlow()
+    private val mutableDismissedConsentOffers = MutableSharedFlow<ActivityKey>(extraBufferCapacity = 16)
+    val dismissedConsentOffers: SharedFlow<ActivityKey> = mutableDismissedConsentOffers.asSharedFlow()
 
     private val eventDelivery = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.events.collect(::onGatewayEvent)
@@ -199,6 +208,10 @@ class TransferCoordinator internal constructor(
         offers[activityId]?.takeIf { it.decision == OfferDecision.PENDING }?.offer
     }
 
+    fun hasPublicationRecovery(activityId: ActivityKey): Boolean = synchronized(gate) {
+        activityId in recoveries
+    }
+
     internal fun pendingOffers(): List<Pair<ActivityKey, IncomingOffer>> = synchronized(gate) {
         offers.values.filter { it.decision == OfferDecision.PENDING }.map { it.activityId to it.offer }
     }
@@ -214,6 +227,7 @@ class TransferCoordinator internal constructor(
                 it.decision = OfferDecision.ACCEPTING
             }
         } ?: return false
+        dismissConsent(state)
         val prepared = try {
             staging.create(state.offer.transferId).also { state.prepared = it }
         } catch (_: Exception) {
@@ -247,14 +261,19 @@ class TransferCoordinator internal constructor(
                 it.decision = OfferDecision.REJECTING
             }
         } ?: return false
+        dismissConsent(state)
         try {
             session.reject(state.offer.requestId)
             tracker.fail(activityId, ShareErrorKind.TRANSFER_REJECTED, clock())
             finishOfferState(state)
         } catch (failure: Exception) {
             synchronized(gate) {
-                if (offers[state.activityId] === state) state.decision = OfferDecision.PENDING
+                if (offers[state.activityId] === state) {
+                    state.decision = OfferDecision.PENDING
+                    state.consentDismissed = false
+                }
             }
+            mutablePendingConsentOffers.emit(state.activityId)
             throw CoordinatorException(failure.stableKind())
         }
         return true
@@ -433,7 +452,7 @@ class TransferCoordinator internal constructor(
         }
     }
 
-    private fun handleOffer(offer: IncomingOffer) {
+    private suspend fun handleOffer(offer: IncomingOffer) {
         synchronized(gate) { if (!acceptingWork) return }
         val activityId = tracker.registerIncoming(offer, clock())
         if (tracker.find(activityId)?.status?.isTerminal == true) return
@@ -444,6 +463,9 @@ class TransferCoordinator internal constructor(
         }
         if (ReceivePolicy.decide(devices.isTrusted(offer.deviceId), offer.kind) == ReceiveDecision.AUTO_ACCEPT) {
             scope.launch { try { accept(state.activityId) } catch (_: CoordinatorException) { } }
+        } else {
+            synchronized(gate) { state.consentPublished = true }
+            mutablePendingConsentOffers.emit(state.activityId)
         }
     }
 
@@ -504,8 +526,8 @@ class TransferCoordinator internal constructor(
         val destination = try {
             currentDestination()
         } catch (_: Exception) {
-            finishOfferFailure(state, ShareErrorKind.STORAGE_FAILED)
             rememberRecovery(state, prepared)
+            finishOfferFailure(state, ShareErrorKind.STORAGE_FAILED)
             return
         }
         try {
@@ -517,8 +539,8 @@ class TransferCoordinator internal constructor(
             tracker.completeIncoming(state.activityId, clock(), finalUri)
             finishOfferState(state)
         } catch (_: Exception) {
-            finishOfferFailure(state, ShareErrorKind.STORAGE_FAILED)
             rememberRecovery(state, prepared)
+            finishOfferFailure(state, ShareErrorKind.STORAGE_FAILED)
         }
     }
 
@@ -557,7 +579,6 @@ class TransferCoordinator internal constructor(
             }
             tracker.completeIncoming(retryId, clock(), finalUri)
         } catch (_: Exception) {
-            tracker.fail(retryId, ShareErrorKind.STORAGE_FAILED, clock())
             val original = tracker.find(retryId)!!
             val pseudoState = OfferState(retryId, IncomingOffer(
                 requestId = -1,
@@ -569,19 +590,34 @@ class TransferCoordinator internal constructor(
                 byteCount = original.byteCount,
             ))
             rememberRecovery(pseudoState, recovery.staging, recovery.expiresAt)
+            tracker.fail(retryId, ShareErrorKind.STORAGE_FAILED, clock())
         }
         return retryId
     }
 
-    private fun finishOfferFailure(state: OfferState, kind: ShareErrorKind) {
+    private suspend fun finishOfferFailure(state: OfferState, kind: ShareErrorKind) {
         tracker.fail(state.activityId, kind, clock())
         finishOfferState(state)
     }
 
-    private fun finishOfferState(state: OfferState) = synchronized(gate) {
-        state.decision = OfferDecision.DONE
-        offers.remove(state.activityId)
-        offerByTransfer.remove(state.offer.transferId, state.activityId)
+    private suspend fun finishOfferState(state: OfferState) {
+        dismissConsent(state)
+        synchronized(gate) {
+            state.decision = OfferDecision.DONE
+            offers.remove(state.activityId)
+            offerByTransfer.remove(state.offer.transferId, state.activityId)
+        }
+    }
+
+    private suspend fun dismissConsent(state: OfferState) {
+        val shouldDismiss = synchronized(gate) {
+            if (!state.consentPublished || state.consentDismissed) false
+            else {
+                state.consentDismissed = true
+                true
+            }
+        }
+        if (shouldDismiss) mutableDismissedConsentOffers.emit(state.activityId)
     }
 
     private fun outgoingActivity(

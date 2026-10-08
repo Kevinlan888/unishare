@@ -306,8 +306,19 @@ private fun DestinationSection(
                     overflow = TextOverflow.Ellipsis,
                 )
                 TextButton(onClick = onChangeDestination, modifier = Modifier.height(48.dp)) {
-                    Text(stringResource(R.string.receive_change_destination))
+                    Text(stringResource(
+                        if (state.showDestinationRecovery) R.string.receive_restore_downloads
+                        else R.string.receive_change_destination,
+                    ))
                 }
+            }
+            if (state.showUnsupportedDestinationNotice) {
+                Text(
+                    text = stringResource(R.string.receive_custom_destination_unavailable),
+                    modifier = Modifier.padding(top = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             if (state.showDestinationRecovery) {
                 Text(

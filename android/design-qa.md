@@ -61,12 +61,12 @@ final result: passed
 ## Evidence
 
 - Source visual truth: `C:\Users\kevin\AppData\Local\Temp\codex-clipboard-PsXme7.png` (`1536 × 1024` px), fourth-phone receive crop at `(1193, 12)`, `333 × 1000` px.
-- Rendered receive implementation: `app/build/reports/design-qa/task10-receive-final.png`, captured from the Compose test activity on `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp).
-- Rendered pairing implementation: `app/build/reports/design-qa/task10-pairing-final.png`, captured in the same emulator and theme. The supplied reference does not contain a pairing dialog, so this state is evaluated against the approved UniShare Material design system and six-digit consent specification rather than an invented source frame.
+- Rendered receive implementation: `app/build/reports/design-qa/task10-receive-review-fix.png`, freshly captured from the exact Compose test class on `Medium_Phone_API_37.0` at `1080 × 2400` px and `420 dpi` (approximately `411 × 914` dp) after the review fixes.
+- Rendered pairing implementation: `app/build/reports/design-qa/task10-pairing-review-fix.png`, freshly captured in the same emulator and theme. The supplied reference does not contain a pairing dialog, so this state is evaluated against the approved UniShare Material design system and six-digit consent specification rather than an invented source frame.
 - Normalized receive comparison: `app/build/reports/design-qa/task10-receive-comparison-final.png`. The implementation was proportionally downsampled to the source crop width (`333 × 740` px) and placed directly beside the `333 × 1000` source crop.
 - State: English, light theme, pending `IMG_3281.jpg` image offer from an online Windows device, `8.4 MB · JPEG`, default Download destination, and pairing code `000042`.
 - Asset evidence: `app/src/androidTest/res/drawable-nodpi/sample_mountain_lake.png` is used only by the instrumentation visual fixture. It is never packaged in the production APK and is never read from private receive staging. Production pending content uses the generic safe preview; successful content exposes Open only after final-URI readability verification.
-- Interaction evidence: seven `PairingAndReceiveUiTest` cases passed on the API 37 emulator, covering visible metadata, source status, side-by-side mutually exclusive decisions, expired requests, directory recovery, readable final-content Open, ActivityKey notification deep links without direct-accept actions, six-digit accessibility semantics, identity-change recovery, 48 dp pairing actions, and both screenshots. Thirteen focused JVM state tests also passed before full-suite verification.
+- Interaction evidence: nine `PairingAndReceiveUiTest` cases passed on the API 37 emulator, covering visible metadata, source status, side-by-side mutually exclusive decisions, expired requests, truthful Downloads recovery, readable final-content Open and unavailable-viewer handling, one-shot ActivityKey intents, privacy-safe ActivityKey notification deep links without direct-accept actions, six-digit accessibility semantics, identity-change recovery, 48 dp pairing actions, and both screenshots. Seventeen focused pairing/receive JVM state tests also passed before full-suite verification.
 - Browser console checks: not applicable to this native Android implementation. Instrumentation completed without a process crash or failed test.
 
 ## Full-view comparison
@@ -97,6 +97,7 @@ The `666 × 1000` normalized comparison keeps title weight, preview crop, metada
 5. The round-one test-host capture rendered light status icons on the white surface. The fixture now requests Android's light-status-bar appearance; final evidence shows dark platform-owned status icons. Production continues to use edge-to-edge system chrome rather than recreating it in app content.
 6. The screenshot fixture initially attempted two `setContent` calls in one activity. It now switches receive and pairing states inside one Compose tree, producing deterministic captures without altering product behavior.
 7. The final comparison and post-fix pairing capture found no remaining actionable P0, P1, or P2 issue.
+8. Review hardened the non-reference states without altering the pending receive composition: unsupported generic SAF destinations now reset to Downloads with localized explanatory copy, unavailable viewers surface an error, and notifications use payload-neutral text. The exact nine-case connected class recaptured the reference state and found no new visual P0/P1/P2 issue.
 
 ## Findings
 
@@ -104,6 +105,7 @@ The `666 × 1000` normalized comparison keeps title weight, preview crop, metada
 - P3: official Material outline device/folder icons are intentionally simpler than the source illustrations, satisfying the approved icon-library constraint.
 - Expected product deviation: the persistent file/image auto-accept switch is deliberately omitted; trusted automatic acceptance applies only to text in the domain policy.
 - Expected security deviation: before publication, production shows a generic safe content icon rather than decoding private staging. The mountain image appears only in the isolated instrumentation fixture so visual fidelity can be assessed without weakening the receive boundary.
+- Expected storage-safety deviation: generic SAF trees remain unavailable under the approved atomic-publication ruling. Change restores the supported Downloads target and explains the limitation instead of activating a destination that must fail.
 
 ## Implementation checklist
 

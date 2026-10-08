@@ -58,8 +58,8 @@
     <string name="notification_transfer_title">UniShare 传输</string>
     <string name="notification_transfer_content">正在传输</string>
     <string name="notification_cancel_transfer">取消传输</string>
-    <string name="notification_receive_request_title">有文件等待确认</string>
-    <string name="notification_receive_request_content">打开 UniShare 查看此接收请求。</string>
+    <string name="notification_receive_request_title">接收请求待确认</string>
+    <string name="notification_receive_request_content">打开 UniShare 查看请求。</string>
     <string name="session_today">今天</string>
     <string name="session_add_attachment">添加附件</string>
     <string name="session_send_text">发送文本</string>
@@ -123,12 +123,15 @@
     <string name="receive_accept">接受</string>
     <string name="receive_receiving">正在接收…</string>
     <string name="receive_open">打开</string>
+    <string name="receive_open_failed">没有可打开此文件的应用。</string>
     <string name="receive_expired">此接收请求已失效。</string>
     <string name="receive_rejected">已拒绝此文件。</string>
     <string name="receive_failed">无法完成传输。</string>
     <string name="receive_saved_to">文件将保存到：</string>
     <string name="receive_destination_download">下载</string>
     <string name="receive_change_destination">更改</string>
-    <string name="receive_directory_error">无法保存此文件。请选择其他文件夹后重试。</string>
+    <string name="receive_restore_downloads">使用下载目录</string>
+    <string name="receive_custom_destination_unavailable">自定义文件夹暂不可用，因为无法保证私密发布。文件将保存在下载目录。</string>
+    <string name="receive_directory_error">无法保存此文件。请恢复下载目录后重试。</string>
     <string name="receive_retry_publication">重试</string>
 </resources>

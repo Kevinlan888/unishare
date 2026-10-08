@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
@@ -293,6 +294,14 @@ class TransferCoordinatorTest {
     fun trusted_text_auto_accepts_but_every_image_and_file_waits_for_prompt() = runTest {
         val fixture = fixture(trusted = true)
         fixture.staging.textToWrite = "received text"
+        val consentRequests = mutableListOf<ActivityKey>()
+        val consentDismissals = mutableListOf<ActivityKey>()
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            fixture.coordinator.pendingConsentOffers.collect { consentRequests += it }
+        }
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            fixture.coordinator.dismissedConsentOffers.collect { consentDismissals += it }
+        }
 
         fixture.gateway.emit(offer(ContentKind.TEXT, "text/plain", "Text", "text-transfer"))
         fixture.gateway.emit(offer(ContentKind.IMAGE, "image/png", "photo.png", "image-transfer"))
@@ -301,6 +310,13 @@ class TransferCoordinatorTest {
 
         assertEquals(1, fixture.gateway.accepted.size)
         assertEquals(2, fixture.coordinator.pendingOffers().size)
+        assertEquals(
+            fixture.coordinator.pendingOffers().map { it.first },
+            consentRequests,
+        )
+        fixture.coordinator.reject(consentRequests.first())
+        runCurrent()
+        assertEquals(listOf(consentRequests.first()), consentDismissals)
         fixture.gateway.emit(GatewayEvent.TransferCompleted(TransferTerminal(TransferKey("text-transfer"))))
         runCurrent()
         val textActivity = fixture.tracker.activities(device).value.single { it.kind == ContentKind.TEXT }

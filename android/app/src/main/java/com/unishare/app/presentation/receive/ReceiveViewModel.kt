@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 
 interface ReceiveOperations {
     fun pendingOffer(activityId: ActivityKey): IncomingOffer?
+    fun hasPublicationRecovery(activityId: ActivityKey): Boolean
     fun observeActivities(deviceId: DeviceKey): Flow<List<ShareActivity>>
     fun findActivity(activityId: ActivityKey): ShareActivity?
     suspend fun accept(activityId: ActivityKey): Boolean
@@ -41,6 +42,7 @@ private class AppReceiveOperations(
     private val tracker: ActivityTracker,
 ) : ReceiveOperations {
     override fun pendingOffer(activityId: ActivityKey) = coordinator.pendingOffer(activityId)
+    override fun hasPublicationRecovery(activityId: ActivityKey) = coordinator.hasPublicationRecovery(activityId)
     override fun observeActivities(deviceId: DeviceKey): Flow<List<ShareActivity>> = tracker.activities(deviceId)
     override fun findActivity(activityId: ActivityKey) = tracker.find(activityId)
     override suspend fun accept(activityId: ActivityKey) = coordinator.accept(activityId)
@@ -127,15 +129,31 @@ class ReceiveViewModel internal constructor(
             mutableUiState.value = mutableUiState.value.copy(phase = ReceivePhase.RECEIVING)
         }
         workerScope.launch {
+            val retrySourceId = synchronized(gate) { observedActivityId }
             try {
-                val retryId = operations.retry(originalActivityId)
+                val retryId = operations.retry(retrySourceId)
                 synchronized(gate) { observedActivityId = retryId }
                 operations.findActivity(retryId)?.let { activity ->
                     mutableUiState.value = mutableUiState.value.withActivity(activity)
                 }
             } catch (_: Exception) {
-                synchronized(gate) { decisionClaimed = false }
-                mutableUiState.value = mutableUiState.value.copy(phase = ReceivePhase.DIRECTORY_ERROR)
+                val recoverable = operations.hasPublicationRecovery(retrySourceId)
+                synchronized(gate) { decisionClaimed = !recoverable }
+                mutableUiState.value = mutableUiState.value.copy(
+                    phase = if (recoverable) ReceivePhase.DIRECTORY_ERROR else ReceivePhase.FAILED,
+                )
+            }
+        }
+    }
+
+    /** Generic SAF publication is intentionally unsupported; correction returns to safe Downloads. */
+    fun restoreDownloadsDestination() {
+        mutableUiState.value = mutableUiState.value.copy(showUnsupportedDestinationNotice = true)
+        workerScope.launch {
+            try {
+                settings.setReceiveDirectory(treeUri = null, displayName = null)
+            } catch (_: Exception) {
+                // The existing destination remains visible when persistence itself is unavailable.
             }
         }
     }
@@ -168,7 +186,10 @@ class ReceiveViewModel internal constructor(
             ActivityStatus.TRANSFERRING -> ReceivePhase.RECEIVING
             ActivityStatus.COMPLETED -> ReceivePhase.COMPLETED
             ActivityStatus.REJECTED, ActivityStatus.CANCELLED -> ReceivePhase.REJECTED
-            ActivityStatus.FAILED -> if (activity.errorKind == ShareErrorKind.STORAGE_FAILED) {
+            ActivityStatus.FAILED -> if (
+                activity.errorKind == ShareErrorKind.STORAGE_FAILED &&
+                operations.hasPublicationRecovery(activity.id)
+            ) {
                 ReceivePhase.DIRECTORY_ERROR
             } else {
                 ReceivePhase.FAILED

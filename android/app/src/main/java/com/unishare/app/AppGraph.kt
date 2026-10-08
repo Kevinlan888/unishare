@@ -19,7 +19,9 @@ import com.unishare.app.platform.AndroidNotificationPermissionChecker
 import com.unishare.app.platform.AndroidContentUriPermissionRetainer
 import com.unishare.app.service.ForegroundServiceController
 import com.unishare.app.service.RuntimeController
+import com.unishare.app.service.ReceiveOfferNotificationRelay
 import com.unishare.app.service.ShareSessionRuntime
+import com.unishare.app.service.ShareNotificationFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -85,6 +87,16 @@ class AppGraph(application: Application) {
         settings = settingsRepository,
         stagingStore = stagingStore,
         receivePublisher = receivePublisher,
+        scope = scope,
+    )
+    private val shareNotifications = ShareNotificationFactory(application).also { it.createChannels() }
+    @Suppress("unused") // Keeps the application-scope collector owned by this graph.
+    private val receiveOfferNotifications = ReceiveOfferNotificationRelay(
+        pendingActivityIds = transferCoordinator.pendingConsentOffers,
+        dismissedActivityIds = transferCoordinator.dismissedConsentOffers,
+        isPending = { transferCoordinator.pendingOffer(it) != null },
+        notify = shareNotifications::postIncomingOffer,
+        cancel = shareNotifications::cancelIncomingOffer,
         scope = scope,
     )
     val foregroundServiceController = ForegroundServiceController(

@@ -59,8 +59,8 @@
     <string name="notification_transfer_title">UniShare transfer</string>
     <string name="notification_transfer_content">Transfer in progress</string>
     <string name="notification_cancel_transfer">Cancel transfer</string>
-    <string name="notification_receive_request_title">File waiting for approval</string>
-    <string name="notification_receive_request_content">Open UniShare to review this receive request.</string>
+    <string name="notification_receive_request_title">Receive request</string>
+    <string name="notification_receive_request_content">Open UniShare to review a request.</string>
     <string name="session_today">Today</string>
     <string name="session_add_attachment">Add attachment</string>
     <string name="session_send_text">Send text</string>
@@ -124,12 +124,15 @@
     <string name="receive_accept">Accept</string>
     <string name="receive_receiving">Receiving…</string>
     <string name="receive_open">Open</string>
+    <string name="receive_open_failed">No app can open this file.</string>
     <string name="receive_expired">This receive request is no longer available.</string>
     <string name="receive_rejected">This file was rejected.</string>
     <string name="receive_failed">The transfer couldn’t be completed.</string>
     <string name="receive_saved_to">Files will be saved to:</string>
     <string name="receive_destination_download">Download</string>
     <string name="receive_change_destination">Change</string>
-    <string name="receive_directory_error">Couldn’t save this file. Choose another folder, then try again.</string>
+    <string name="receive_restore_downloads">Use Downloads</string>
+    <string name="receive_custom_destination_unavailable">Custom folders aren’t available because they can’t guarantee private publication. Files remain in Downloads.</string>
+    <string name="receive_directory_error">Couldn’t save this file. Restore Downloads, then try again.</string>
     <string name="receive_retry_publication">Try again</string>
 </resources>

@@ -33,6 +33,7 @@ data class ReceiveUiState(
     val phase: ReceivePhase = ReceivePhase.EXPIRED,
     val finalContentUri: String? = null,
     val canOpen: Boolean = false,
+    val showUnsupportedDestinationNotice: Boolean = false,
 ) {
     val actionsEnabled: Boolean get() = phase == ReceivePhase.PENDING
     val showDestinationRecovery: Boolean get() = phase == ReceivePhase.DIRECTORY_ERROR

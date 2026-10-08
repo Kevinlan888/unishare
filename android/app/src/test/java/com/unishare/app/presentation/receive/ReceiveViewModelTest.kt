@@ -48,6 +48,20 @@ class ReceiveViewModelTest {
     }
 
     @Test
+    fun destination_correction_clears_an_unsupported_tree_and_returns_to_downloads() = runTest {
+        val fixture = fixture(immediateBackgroundScope(), destination = "Pictures / UniShare")
+
+        fixture.viewModel.restoreDownloadsDestination()
+        advanceUntilIdle()
+
+        assertNull(fixture.settings.current.receiveTreeUri)
+        assertNull(fixture.settings.current.receiveDirectoryDisplayName)
+        assertNull(fixture.viewModel.uiState.value.destinationDisplayName)
+        assertTrue(fixture.viewModel.uiState.value.showUnsupportedDestinationNotice)
+        assertEquals(listOf(null to null), fixture.settings.directoryWrites)
+    }
+
+    @Test
     fun expired_or_non_pending_deep_link_never_calls_accept_or_reject() = runTest {
         val operations = FakeReceiveOperations(pending = null)
         val viewModel = ReceiveViewModel(
@@ -142,6 +156,84 @@ class ReceiveViewModelTest {
     }
 
     @Test
+    fun storage_failure_without_retained_publication_does_not_offer_a_broken_retry() = runTest {
+        val fixture = fixture(immediateBackgroundScope())
+        fixture.operations.publicationRecovery = false
+        fixture.viewModel.accept()
+        advanceUntilIdle()
+
+        fixture.operations.publish(
+            activity(status = ActivityStatus.FAILED, error = ShareErrorKind.STORAGE_FAILED),
+        )
+        advanceUntilIdle()
+
+        assertEquals(ReceivePhase.FAILED, fixture.viewModel.uiState.value.phase)
+        assertFalse(fixture.viewModel.uiState.value.showDestinationRecovery)
+    }
+
+    @Test
+    fun repeated_publication_retry_uses_the_latest_failed_retry_activity() = runTest {
+        val fixture = fixture(immediateBackgroundScope())
+        fixture.viewModel.accept()
+        advanceUntilIdle()
+        fixture.operations.publish(
+            activity(status = ActivityStatus.FAILED, error = ShareErrorKind.STORAGE_FAILED),
+        )
+        advanceUntilIdle()
+
+        val firstRetry = ActivityKey("retry-1")
+        fixture.operations.retryResult = firstRetry
+        fixture.viewModel.retryPublication()
+        advanceUntilIdle()
+        fixture.operations.publish(
+            activity(
+                id = firstRetry,
+                status = ActivityStatus.FAILED,
+                error = ShareErrorKind.STORAGE_FAILED,
+            ),
+        )
+        advanceUntilIdle()
+
+        val secondRetry = ActivityKey("retry-2")
+        fixture.operations.retryResult = secondRetry
+        fixture.viewModel.retryPublication()
+        advanceUntilIdle()
+
+        assertEquals("retry:retry-1", fixture.operations.calls.last())
+        fixture.operations.publish(
+            activity(
+                id = secondRetry,
+                status = ActivityStatus.COMPLETED,
+                finalUri = "content://downloads/third-attempt",
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(ReceivePhase.COMPLETED, fixture.viewModel.uiState.value.phase)
+        assertEquals("content://downloads/third-attempt", fixture.viewModel.openFinalContent())
+    }
+
+    @Test
+    fun expired_publication_recovery_becomes_terminal_instead_of_looping_retry() = runTest {
+        val fixture = fixture(immediateBackgroundScope())
+        fixture.viewModel.accept()
+        advanceUntilIdle()
+        fixture.operations.publish(
+            activity(status = ActivityStatus.FAILED, error = ShareErrorKind.STORAGE_FAILED),
+        )
+        advanceUntilIdle()
+        assertEquals(ReceivePhase.DIRECTORY_ERROR, fixture.viewModel.uiState.value.phase)
+
+        fixture.operations.retryFailure = IllegalStateException("recovery expired")
+        fixture.operations.publicationRecovery = false
+        fixture.viewModel.retryPublication()
+        advanceUntilIdle()
+
+        assertEquals(ReceivePhase.FAILED, fixture.viewModel.uiState.value.phase)
+        assertFalse(fixture.viewModel.uiState.value.showDestinationRecovery)
+    }
+
+    @Test
     fun unreadable_or_staging_uri_is_never_offered_for_opening() = runTest {
         val fixture = fixture(immediateBackgroundScope(), readable = false)
         fixture.viewModel.accept()
@@ -189,12 +281,13 @@ class ReceiveViewModelTest {
             FinalContentReader { readable },
             scope,
         )
-        return Fixture(viewModel, operations)
+        return Fixture(viewModel, operations, settings)
     }
 
     private data class Fixture(
         val viewModel: ReceiveViewModel,
         val operations: FakeReceiveOperations,
+        val settings: FakeSettingsRepository,
     )
 
     companion object {
@@ -249,8 +342,11 @@ private class FakeReceiveOperations(
     var rejectResult = true
     var rejectFailure: Exception? = null
     var retryResult = ActivityKey("retry")
+    var publicationRecovery = true
+    var retryFailure: Exception? = null
 
     override fun pendingOffer(activityId: ActivityKey) = pending
+    override fun hasPublicationRecovery(activityId: ActivityKey) = publicationRecovery
     override fun observeActivities(deviceId: DeviceKey): Flow<List<ShareActivity>> = activities
     override fun findActivity(activityId: ActivityKey) = activities.value.firstOrNull { it.id == activityId }
     override suspend fun accept(activityId: ActivityKey): Boolean {
@@ -266,6 +362,7 @@ private class FakeReceiveOperations(
     }
     override suspend fun retry(activityId: ActivityKey): ActivityKey {
         calls += "retry:${activityId.value}"
+        retryFailure?.let { throw it }
         return retryResult
     }
     fun publish(activity: ShareActivity) { activities.value = listOf(activity) }
@@ -282,9 +379,12 @@ private class FakeReceiveDevices(vararg summaries: DeviceSummary) : DeviceReposi
 
 private class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRepository {
     private val mutable = MutableStateFlow(initial)
+    val current: AppSettings get() = mutable.value
+    val directoryWrites = mutableListOf<Pair<String?, String?>>()
     override val settings: Flow<AppSettings> = mutable
     override suspend fun setDeviceName(name: String) = Unit
     override suspend fun setReceiveDirectory(treeUri: String?, displayName: String?) {
+        directoryWrites += treeUri to displayName
         mutable.value = mutable.value.copy(
             receiveTreeUri = treeUri,
             receiveDirectoryDisplayName = displayName,

@@ -95,6 +95,21 @@ class ShareNotificationFactory(context: Context) {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(MainActivity.EXTRA_RECEIVE_ACTIVITY_ID, activityId.value)
 
+    fun postIncomingOffer(activityId: ActivityKey) {
+        try {
+            manager.notify(incomingNotificationId(activityId), incomingOffer(activityId))
+        } catch (_: SecurityException) {
+            // Foreground UI observes the same coordinator event when notification permission is denied.
+        }
+    }
+
+    fun cancelIncomingOffer(activityId: ActivityKey) {
+        manager.cancel(incomingNotificationId(activityId))
+    }
+
+    private fun incomingNotificationId(activityId: ActivityKey) =
+        INCOMING_REQUEST_CODE_BASE xor activityId.value.hashCode()
+
     private fun baseBuilder(channel: String): Notification.Builder =
         Notification.Builder(application, channel)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -123,5 +138,6 @@ class ShareNotificationFactory(context: Context) {
         private const val CONTENT_REQUEST_CODE = 1100
         private const val STOP_REQUEST_CODE = 1101
         private const val CANCEL_REQUEST_CODE = 1102
+        private const val INCOMING_REQUEST_CODE_BASE = 0x55000000
     }
 }
