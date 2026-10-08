@@ -60,7 +60,8 @@ class HomeViewModel(
                 )
             },
             nearby = devices
-                .sortedWith(compareByDescending<com.unishare.app.data.device.DeviceSummary> { it.online }
+                .sortedWith(compareByDescending<com.unishare.app.data.device.DeviceSummary> { it.connected }
+                    .thenByDescending { it.online }
                     .thenByDescending { it.trusted }
                     .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
                 .map { device ->

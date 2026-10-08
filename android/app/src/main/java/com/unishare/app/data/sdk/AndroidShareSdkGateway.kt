@@ -25,6 +25,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 
@@ -43,13 +44,23 @@ class AndroidShareSdkGateway internal constructor(private val client: SdkClient,
     private var initialization: CompletableFuture<OperationResult>? = null
     private var subscriptions: AutoCloseable? = null
     private val deliveryScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
-    private val envelopes = Channel<GatewayEvent>(Channel.UNLIMITED)
-    private val delivered = MutableSharedFlow<GatewayEvent>()
-    override val events: Flow<GatewayEvent> = delivered.filter { !closed }
+    private sealed interface DeliveryEnvelope {
+        data class Event(val value: GatewayEventEnvelope) : DeliveryEnvelope
+        data class Barrier(val completion: CompletableDeferred<Unit>) : DeliveryEnvelope
+    }
+    private val envelopes = Channel<DeliveryEnvelope>(Channel.UNLIMITED)
+    private val delivered = MutableSharedFlow<GatewayEventEnvelope>()
+    override val eventEnvelopes: Flow<GatewayEventEnvelope> = delivered.filter { !closed }
+    override val events: Flow<GatewayEvent> = eventEnvelopes.map { it.event }
+    @Volatile override var eventGeneration = 0L
+        private set
 
     init {
         deliveryScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            for (event in envelopes) if (!closed) delivered.emit(event)
+            for (envelope in envelopes) when (envelope) {
+                is DeliveryEnvelope.Event -> if (!closed) delivered.emit(envelope.value)
+                is DeliveryEnvelope.Barrier -> envelope.completion.complete(Unit)
+            }
         }
     }
 
@@ -98,7 +109,16 @@ class AndroidShareSdkGateway internal constructor(private val client: SdkClient,
     override suspend fun start() { command { client.start() }.requireSuccess() }
     override suspend fun stop() {
         command { client.stop() }.requireSuccess()
-        synchronized(gate) { registry.clear() }
+        // The native stop completion drains native callbacks, but their copied events may
+        // still be queued on our coroutine delivery lane. Do not let STOPPED publication
+        // overtake those events or a later restart could revive stale connection state.
+        val barrier = CompletableDeferred<Unit>()
+        check(envelopes.trySend(DeliveryEnvelope.Barrier(barrier)).isSuccess) { "Event delivery is closed" }
+        barrier.await()
+        synchronized(gate) {
+            eventGeneration++
+            registry.clear()
+        }
     }
     override fun setForeground(value: Boolean) = synchronized(gate) { ensureReady(); sdkCall { client.setForeground(value) } }
     override fun devices(): List<DeviceSnapshot> = synchronized(gate) {
@@ -182,12 +202,14 @@ class AndroidShareSdkGateway internal constructor(private val client: SdkClient,
             is GatewayEvent.IdentityChanged -> blockedDevices.add(event.deviceId)
             is GatewayEvent.OfferReceived -> registry.observeIncoming(event.offer.transferId)
             is GatewayEvent.ProgressReceived -> registry.observeProgress(event.progress.transferId)?.let {
-                envelopes.trySend(GatewayEvent.OutgoingTransferRegistered(it))
+                envelopes.trySend(DeliveryEnvelope.Event(GatewayEventEnvelope(
+                    GatewayEvent.OutgoingTransferRegistered(it), eventGeneration,
+                )))
             }
             is GatewayEvent.TransferCompleted -> event.terminal.transferId?.let(registry::observeIncoming)
             else -> Unit
         }
-        envelopes.trySend(event)
+        envelopes.trySend(DeliveryEnvelope.Event(GatewayEventEnvelope(event, eventGeneration)))
     }
 
     override fun close() {

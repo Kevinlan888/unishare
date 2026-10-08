@@ -13,7 +13,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.BiConsumer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -192,6 +196,29 @@ class AndroidShareSdkGatewayTest {
         assertNull("An early successful initialize must already permit subscription", earlyOutcome?.exceptionOrNull())
         assertTrue(outcome.await().isSuccess)
         assertEquals(listOf("discovery", "connection", "transfer"), client.observers)
+        gateway.close()
+    }
+
+    @Test fun stop_waits_until_callbacks_queued_before_stop_are_delivered() = runTest {
+        val client = FakeClient()
+        val deliveryScheduler = TestCoroutineScheduler()
+        val gateway = AndroidShareSdkGateway(
+            client,
+            CoroutineScope(StandardTestDispatcher(deliveryScheduler) + Job()),
+        )
+        val events = mutableListOf<GatewayEvent>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { gateway.events.collect { events += it } }
+        gateway.initialize(GatewayConfig("local")); gateway.subscribe()
+        client.connection!!(ConnectionEvent.Connected(DeviceId(UUID.fromString(device.value))))
+
+        val stopping = backgroundScope.launch { gateway.stop() }
+        runCurrent()
+
+        assertFalse("Stop must not overtake a queued callback", stopping.isCompleted)
+        assertTrue(events.isEmpty())
+        deliveryScheduler.runCurrent()
+        stopping.join()
+        assertEquals(listOf(GatewayEvent.ConnectionChanged(device, connected = true)), events)
         gateway.close()
     }
 

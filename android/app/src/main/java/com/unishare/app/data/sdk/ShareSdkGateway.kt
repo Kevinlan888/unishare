@@ -4,10 +4,18 @@ import android.net.Uri
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.TransferKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+data class GatewayEventEnvelope(val event: GatewayEvent, val generation: Long)
 
 /** One application session owns this gateway and its observer handle. */
 interface ShareSdkGateway : AutoCloseable {
     val events: Flow<GatewayEvent>
+    /** Source-stamped event stream used to retire callbacks across stop/start boundaries. */
+    val eventEnvelopes: Flow<GatewayEventEnvelope>
+        get() = events.map { GatewayEventEnvelope(it, eventGeneration) }
+    val eventGeneration: Long
+        get() = 0L
     suspend fun initialize(config: GatewayConfig)
     fun subscribe(): AutoCloseable
     suspend fun start()

@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 
 class FakeShareSdkGateway : ShareSdkGateway {
     override val events = MutableSharedFlow<GatewayEvent>(extraBufferCapacity = 20)
+    override var eventGeneration = 0L
+        private set
     val calls = mutableListOf<String>()
     var initializeFailure: Exception? = null
     var stopCompletion: CompletableDeferred<Unit>? = null
@@ -25,7 +27,7 @@ class FakeShareSdkGateway : ShareSdkGateway {
         return AutoCloseable { calls += "unsubscribe" }
     }
     override suspend fun start() { calls += "start"; startFailure?.let { throw it } }
-    override suspend fun stop() { calls += "stop"; stopCompletion?.await(); calls += "stopped" }
+    override suspend fun stop() { calls += "stop"; stopCompletion?.await(); eventGeneration++; calls += "stopped" }
     override fun setForeground(value: Boolean) { calls += "foreground:$value" }
     override fun close() { calls += "close" }
     override fun devices() = snapshots

@@ -196,10 +196,11 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         foreach (var device in Session.Devices.Devices)
         {
             var projection = new DeviceProjection(device.Name, device.Snapshot?.Platform == DevicePlatform.Windows ? "\uE7F4" : "\uE8EA",
-                Strings.Get(device.IsOnline ? "Online" : "Offline"), "", device.IsTrusted, device.IsOnline, device.Snapshot?.Platform.ToString() ?? "")
+                Strings.Get(PresentationState.StatusResourceKey(device.IsOnline, device.IsConnected)), "", device.IsTrusted, device.IsOnline, device.Snapshot?.Platform.ToString() ?? "")
             {
                 Id = device.Id,
-                Blocked = device.IsBlocked
+                Blocked = device.IsBlocked,
+                Connected = device.IsConnected
             };
             (device.IsTrusted ? model.Recent : model.Nearby).Add(projection);
         }

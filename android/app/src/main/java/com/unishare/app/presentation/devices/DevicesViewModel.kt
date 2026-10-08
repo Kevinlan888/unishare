@@ -14,8 +14,8 @@ class DevicesViewModel(private val repository: DeviceRepository) : ViewModel() {
     private val failed = MutableStateFlow(false)
     val uiState = combine(repository.devices, pending, failed) { devices, id, error ->
         val clean = devices.map { it.copy(name = sanitizedDisplayName(it.name)) }.sortedBy { it.name.lowercase() }
-        DevicesUiState(clean.filter { it.trusted && it.online }, clean.filter { !it.trusted && it.online },
-            clean.filter { !it.online }, clean.find { it.id == id && it.trusted }, error)
+        DevicesUiState(clean.filter { it.trusted && (it.online || it.connected) }, clean.filter { !it.trusted && (it.online || it.connected) },
+            clean.filter { !it.online && !it.connected }, clean.find { it.id == id && it.trusted }, error)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, DevicesUiState())
     fun requestForget(id: DeviceKey) { if (repository.isTrusted(id)) pending.value = id }
     fun dismissForget() { pending.value = null }

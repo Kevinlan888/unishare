@@ -59,8 +59,13 @@ fun DevicesScreen(state: DevicesUiState, onConnect: (DeviceKey) -> Unit, onReque
 @Composable
 private fun DeviceManagementCard(peer: DeviceSummary, order: Float, onConnect: (DeviceKey) -> Unit, onForget: (DeviceKey) -> Unit, onOpen: (DeviceKey) -> Unit) {
     val name = peer.name.ifBlank { stringResource(R.string.unknown_device) }
+    val presence = devicePresence(peer.online, peer.connected)
     val status = if (peer.identityChanged) stringResource(R.string.status_identity_changed) else stringResource(R.string.device_status_format,
-        stringResource(if (peer.trusted) R.string.status_trusted else R.string.status_unpaired), stringResource(if (peer.online) R.string.status_online else R.string.status_offline))
+        stringResource(if (peer.trusted) R.string.status_trusted else R.string.status_unpaired), stringResource(when (presence) {
+            DevicePresence.CONNECTED -> R.string.status_connected
+            DevicePresence.ONLINE -> R.string.status_online
+            DevicePresence.OFFLINE -> R.string.status_offline
+        }))
     Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLowest, modifier = Modifier.fillMaxWidth().testTag("device-${peer.id.value}").semantics { isTraversalGroup = true; traversalIndex = order }) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -68,7 +73,7 @@ private fun DeviceManagementCard(peer: DeviceSummary, order: Float, onConnect: (
                     DeviceIcon(peer.platform, stringResource(R.string.device_icon_unknown), Modifier.size(36.dp))
                     Column(Modifier.padding(start = 12.dp)) {
                         Text(name, style = MaterialTheme.typography.titleMedium)
-                        StatusIndicator(status, if (peer.online && !peer.identityChanged) StatusTone.ONLINE else StatusTone.NEUTRAL)
+                        StatusIndicator(status, if (presence != DevicePresence.OFFLINE && !peer.identityChanged) StatusTone.ONLINE else StatusTone.NEUTRAL)
                     }
                 }
                 if (peer.trusted) IconButton(onClick = { onForget(peer.id) }, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.DeleteOutline, stringResource(R.string.devices_forget_label, name)) }

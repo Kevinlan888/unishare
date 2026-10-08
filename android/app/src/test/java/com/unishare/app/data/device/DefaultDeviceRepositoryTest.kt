@@ -5,8 +5,11 @@ import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareErrorKind
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -56,6 +59,73 @@ class DefaultDeviceRepositoryTest {
         session.close()
     }
 
+    @Test fun discovery_offline_preserves_authenticated_connection_until_disconnect() = runTest {
+        val key = DeviceKey("a")
+        val gateway = FakeShareSdkGateway().apply {
+            snapshots = listOf(peer("a", "peer"))
+            trusted = setOf(key)
+        }
+        val session = ShareSessionManager(gateway, backgroundScope)
+        val repository = DefaultDeviceRepository(session, backgroundScope)
+        session.initialize(GatewayConfig("local")); session.start(); runCurrent()
+
+        gateway.events.emit(GatewayEvent.ConnectionChanged(key, connected = true)); runCurrent()
+        gateway.events.emit(GatewayEvent.DeviceOffline(key)); runCurrent()
+
+        assertFalse(repository.find(key)!!.online)
+        assertTrue(repository.find(key)!!.connected)
+        assertTrue(repository.canSend(key))
+
+        gateway.events.emit(GatewayEvent.ConnectionChanged(key, connected = false)); runCurrent()
+        assertFalse(repository.find(key)!!.connected)
+        assertFalse(repository.canSend(key))
+        session.close()
+    }
+
+    @Test fun pairing_request_and_connection_create_peer_without_discovery() = runTest {
+        val key = DeviceKey("a")
+        val gateway = FakeShareSdkGateway()
+        val session = ShareSessionManager(gateway, backgroundScope)
+        val repository = DefaultDeviceRepository(session, backgroundScope)
+        session.initialize(GatewayConfig("local")); session.start(); runCurrent()
+
+        gateway.events.emit(GatewayEvent.PairingRequested(7, peer("a", "LAN peer"), "123456")); runCurrent()
+        gateway.events.emit(GatewayEvent.ConnectionChanged(key, connected = true)); runCurrent()
+
+        val peer = repository.find(key)
+        assertNotNull(peer)
+        assertEquals("LAN peer", peer!!.name)
+        assertFalse(peer.online)
+        assertTrue(peer.connected)
+        session.close()
+    }
+
+    @Test fun unknown_disconnect_does_not_create_an_offline_ghost_peer() = runTest {
+        val gateway = FakeShareSdkGateway()
+        val session = ShareSessionManager(gateway, backgroundScope)
+        val repository = DefaultDeviceRepository(session, backgroundScope)
+        session.initialize(GatewayConfig("local")); session.start(); runCurrent()
+
+        gateway.events.emit(GatewayEvent.ConnectionChanged(DeviceKey("ghost"), connected = false)); runCurrent()
+
+        assertNull(repository.find(DeviceKey("ghost")))
+        session.close()
+    }
+
+    @Test fun failed_pairing_removes_undiscovered_untrusted_peer() = runTest {
+        val key = DeviceKey("a")
+        val gateway = FakeShareSdkGateway()
+        val session = ShareSessionManager(gateway, backgroundScope)
+        val repository = DefaultDeviceRepository(session, backgroundScope)
+        session.initialize(GatewayConfig("local")); session.start(); runCurrent()
+        gateway.events.emit(GatewayEvent.PairingRequested(7, peer("a", "LAN peer"), "123456")); runCurrent()
+
+        gateway.events.emit(GatewayEvent.PairingCompleted(7, key, ShareFailure(ShareErrorKind.PAIRING_REJECTED))); runCurrent()
+
+        assertNull(repository.find(key))
+        session.close()
+    }
+
     @Test fun identity_changed_blocks_commands_until_successful_forget() = runTest {
         val gateway = FakeShareSdkGateway().apply { snapshots = listOf(peer("a", "peer")); trusted = setOf(DeviceKey("a")) }
         val session = ShareSessionManager(gateway, backgroundScope)
@@ -89,6 +159,32 @@ class DefaultDeviceRepositoryTest {
         gateway.events.emit(GatewayEvent.DeviceUpdated(peer("a", "after"))); runCurrent()
         assertEquals("after", repository.devices.value.single().name)
         session.close()
+    }
+
+    @Test fun connection_event_queued_before_stop_cannot_revive_peer_after_restart() = runTest {
+        val key = DeviceKey("a")
+        val gateway = FakeShareSdkGateway().apply {
+            snapshots = listOf(peer("a", "peer"))
+            trusted = setOf(key)
+        }
+        val session = ShareSessionManager(gateway, backgroundScope)
+        val repositoryDispatcher = ManualDispatcher()
+        val repositoryScope = CoroutineScope(repositoryDispatcher + Job())
+        val repository = DefaultDeviceRepository(session, repositoryScope)
+        try {
+            session.initialize(GatewayConfig("local")); session.start(); runCurrent()
+            repositoryDispatcher.runAll()
+            assertFalse(repository.find(key)!!.connected)
+
+            gateway.events.emit(GatewayEvent.ConnectionChanged(key, connected = true)); runCurrent()
+            session.stop(); session.start(); runCurrent()
+            repositoryDispatcher.runAll()
+
+            assertFalse("A callback from the previous run must stay retired", repository.find(key)!!.connected)
+        } finally {
+            repositoryScope.cancel()
+            session.close()
+        }
     }
 
     @Test fun newer_identity_event_processed_before_old_forget_continuation_stays_blocked() = runTest {

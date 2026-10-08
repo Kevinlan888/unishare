@@ -26,9 +26,9 @@ public sealed partial class DeviceDetailsPane : UserControl, IDisposable
     private void RefreshSharedFiles() => NoSharedFiles.Visibility = model.SharedFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     private void Refresh()
     {
-        DeviceStatus.Text = model.SelectedDevice is null ? Strings.Get("NoSelection") : Strings.Get(model.CanSend ? "Online" : "Offline");
+        DeviceStatus.Text = model.SelectedDevice?.StatusText ?? Strings.Get("NoSelection");
         TrustValue.Text = Strings.Get(model.SelectedDevice?.Trusted == true ? "Yes" : "No");
-        HeroOnlineDot.Visibility = model.CanSend ? Visibility.Visible : Visibility.Collapsed;
+        HeroOnlineDot.Visibility = model.SelectedDevice is { Online: true } or { Connected: true } ? Visibility.Visible : Visibility.Collapsed;
         RefreshSharedFiles();
     }
     private void TextClick(object sender, RoutedEventArgs e)

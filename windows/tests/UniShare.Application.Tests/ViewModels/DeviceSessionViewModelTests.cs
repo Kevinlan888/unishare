@@ -166,7 +166,8 @@ public sealed class DeviceSessionViewModelTests
         if (identityChanged)
             f.Sdk.Emit(new ShareSdkEvent.IdentityChanged(device.Id));
         else
-            f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+            f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Disconnected,
+                new(ShareErrorKind.NetworkLost, "private")));
         Assert.IsTrue(f.Sdk.ClipboardToken.IsCancellationRequested);
         if (image)
             staged.SetResult(source);
@@ -199,8 +200,10 @@ public sealed class DeviceSessionViewModelTests
         var sending = vm.SendClipboardCommand.ExecuteAsync(null);
         Assert.IsTrue(f.Tracker.HasActiveTransfers);
         f.Dispatcher.Queue = true;
-        f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Disconnected,
+            new(ShareErrorKind.NetworkLost, "private")));
         f.Sdk.Emit(new ShareSdkEvent.DeviceOnline(device.Snapshot!));
+        f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Connected, null));
         f.Dispatcher.Drain();
         f.Dispatcher.Queue = false;
         var image = new ViewModelFixture.TestFiles.StagedImage();
@@ -225,7 +228,8 @@ public sealed class DeviceSessionViewModelTests
         f.Sdk.Emit(new ShareSdkEvent.OutgoingTransferRegistered(new(1), transfer));
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         f.Sdk.Cancelling = () => { cancelled.SetResult(); return Task.CompletedTask; };
-        f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Disconnected,
+            new(ShareErrorKind.NetworkLost, "private")));
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.AreEqual(1, f.Sdk.Calls.Count(x => x.StartsWith("cancel:")));
         Assert.IsTrue(f.Tracker.HasActiveTransfers);
@@ -278,7 +282,7 @@ public sealed class DeviceSessionViewModelTests
     [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
-    public async Task UnsafeDeviceEventRevokesPendingClipboardBeforeSubmission(bool identityChanged)
+    public async Task UnsafeIdentityOrDisconnectEventRevokesPendingClipboardBeforeSubmission(bool identityChanged)
     {
         using var f = new ViewModelFixture();
         var device = f.Online();
@@ -291,14 +295,14 @@ public sealed class DeviceSessionViewModelTests
         if (identityChanged)
             f.Sdk.Emit(new ShareSdkEvent.IdentityChanged(device.Id));
         else
-            f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+            f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Disconnected, null));
         f.Dispatcher.Drain();
         f.Dispatcher.Queue = false;
         read.SetResult();
         await sending;
         Assert.AreEqual(1, f.Sdk.Calls.Count);
         Assert.AreEqual(0, f.Tracker.GetDeviceSnapshot(device.Id).Count);
-        Assert.IsFalse(vm.SendClipboardCommand.CanExecute(null));
+        Assert.AreEqual(!identityChanged, vm.SendClipboardCommand.CanExecute(null));
         if (identityChanged)
         {
             await vm.ForgetCommand.ExecuteAsync(null);
@@ -310,6 +314,25 @@ public sealed class DeviceSessionViewModelTests
         f.Sdk.Wait = null;
         await vm.SendClipboardCommand.ExecuteAsync(null);
         Assert.AreEqual("text:clipboard", f.Sdk.Calls.Last());
+    }
+
+    [TestMethod]
+    public async Task DiscoveryOfflinePreservesPendingClipboardWhileConnectionIsAlive()
+    {
+        using var f = new ViewModelFixture();
+        var device = f.Online();
+        using var vm = f.Session(device);
+        var read = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Sdk.Wait = () => read.Task;
+
+        var sending = vm.SendClipboardCommand.ExecuteAsync(null);
+        f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        read.SetResult();
+        await sending;
+
+        CollectionAssert.AreEqual(new[] { "clipboard", "text:clipboard" }, f.Sdk.Calls);
+        Assert.AreEqual(1, f.Tracker.GetDeviceSnapshot(device.Id).Count);
+        Assert.IsTrue(vm.SendClipboardCommand.CanExecute(null));
     }
     [TestMethod]
     public async Task CancellationRemainsDisabledUntilOutgoingNativeCompletion()
@@ -388,7 +411,7 @@ public sealed class DeviceSessionViewModelTests
     public async Task OfflineAndBlockedCommandsCannotSubmitEvenThroughExecuteAsync()
     {
         using var f = new ViewModelFixture();
-        var device = f.Online();
+        var device = f.Online(connected: false);
         using var vm = f.Session(device);
         vm.ComposerText = "draft";
         f.Sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));

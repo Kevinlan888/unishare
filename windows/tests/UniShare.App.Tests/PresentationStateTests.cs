@@ -8,14 +8,15 @@ namespace UniShare.App.Tests;
 public sealed class PresentationStateTests
 {
     [TestMethod]
-    [DataRow(true, true, false, true, true)]
-    [DataRow(true, false, false, true, false)]
-    [DataRow(false, true, false, true, false)]
-    [DataRow(true, true, true, true, false)]
-    [DataRow(true, true, false, false, false)]
-    public void SendingRequiresAnOnlineTrustedUnblockedDeviceAndRunningSession(
-        bool online, bool trusted, bool blocked, bool running, bool expected)
-        => Assert.AreEqual(expected, PresentationState.SendAvailable(online, trusted, blocked, running));
+    [DataRow(true, false, true, false, true, true)]
+    [DataRow(false, true, true, false, true, true)]
+    [DataRow(false, false, true, false, true, false)]
+    [DataRow(true, false, false, false, true, false)]
+    [DataRow(true, false, true, true, true, false)]
+    [DataRow(true, false, true, false, false, false)]
+    public void SendingRequiresAnAvailableTrustedUnblockedDeviceAndRunningSession(
+        bool online, bool connected, bool trusted, bool blocked, bool running, bool expected)
+        => Assert.AreEqual(expected, PresentationState.SendAvailable(online, connected, trusted, blocked, running));
 
     [TestMethod]
     [DataRow(false, false, false, "NoSelection")]
@@ -35,11 +36,12 @@ public sealed class PresentationStateTests
         => Assert.AreEqual(expected, PresentationState.ClipboardMarkerVisible(direction, origin));
 
     [TestMethod]
-    [DataRow(true, 1.0, "Online")]
-    [DataRow(false, 0.0, "OfflineStatus")]
-    public void PresenceSelectsMatchingVisualAndAccessibleState(bool online, double opacity, string key)
+    [DataRow(true, false, 1.0, "Online")]
+    [DataRow(false, true, 1.0, "Connected")]
+    [DataRow(false, false, 0.0, "OfflineStatus")]
+    public void PresenceSelectsMatchingVisualAndAccessibleState(bool online, bool connected, double opacity, string key)
     {
-        Assert.AreEqual(opacity, PresentationState.OnlineIndicatorOpacity(online));
-        Assert.AreEqual(key, PresentationState.StatusResourceKey(online));
+        Assert.AreEqual(opacity, PresentationState.OnlineIndicatorOpacity(online || connected));
+        Assert.AreEqual(key, PresentationState.StatusResourceKey(online, connected));
     }
 }

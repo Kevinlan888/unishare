@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -24,17 +25,19 @@ enum class SessionState { UNINITIALIZED, INITIALIZING, READY, RUNNING, STOPPING,
 
 /** A unique token per transition also detects stop/start when StateFlow conflates both states. */
 internal class SessionSnapshotToken(val state: SessionState)
-
 /** Application-scoped owner. UI, repositories and services share this instance. */
 class ShareSessionManager(private val gateway: ShareSdkGateway, scope: CoroutineScope) {
     private val lifecycle = Mutex()
+    private val eventGate = Any()
     private val sessionScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
     private val mutableState = MutableStateFlow(SessionState.UNINITIALIZED)
     @Volatile internal var snapshotToken = SessionSnapshotToken(SessionState.UNINITIALIZED)
         private set
     val state: StateFlow<SessionState> = mutableState.asStateFlow()
-    private val delivered = MutableSharedFlow<GatewayEvent>()
-    val events: Flow<GatewayEvent> = delivered.asSharedFlow()
+    private val delivered = MutableSharedFlow<GatewayEventEnvelope>()
+    internal val sequencedEvents = delivered.asSharedFlow()
+    val events: Flow<GatewayEvent> = delivered.map { it.event }
+    private var acceptedEventGeneration = gateway.eventGeneration
     private var observations: AutoCloseable? = null
     private var delivery: Job? = null
     @Volatile private var initialized = false
@@ -51,7 +54,7 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
                 gateway.initialize(config)
                 // Start collection before opening native observers, so the first callback is kept.
                 delivery = sessionScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                    gateway.events.collect { if (!closed) delivered.emit(it) }
+                    gateway.eventEnvelopes.collect { if (!closed) delivered.emit(it) }
                 }
                 try { observations = gateway.subscribe() } catch (failure: Exception) {
                     delivery?.cancel(); delivery = null
@@ -95,6 +98,7 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
         publishState(SessionState.STOPPING)
         try {
             gateway.stop()
+            synchronized(eventGate) { acceptedEventGeneration = gateway.eventGeneration }
             running = false
             // The completed stop operation drains SDK work before foreground is withdrawn.
             gateway.setForeground(false)
@@ -112,6 +116,7 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
             var failure: Exception? = null
             if (running) try { stopCore() } catch (error: Exception) { failure = error }
             closed = true
+            synchronized(eventGate) { acceptedEventGeneration = Long.MIN_VALUE }
             delivery?.cancel(); sessionScope.cancel()
             try { observations?.close() } catch (error: Exception) { failure = failure ?: error }
             observations = null
@@ -130,6 +135,10 @@ class ShareSessionManager(private val gateway: ShareSdkGateway, scope: Coroutine
         mutableState.value = value
     }
     private fun ensureOpen() { check(!closed && !closing) { "Session is closed" } }
+
+    internal fun applyIfCurrentEvent(delivery: GatewayEventEnvelope, action: () -> Unit): Boolean = synchronized(eventGate) {
+        if (delivery.generation != acceptedEventGeneration) false else { action(); true }
+    }
 
     fun devices(): List<DeviceSnapshot> { requireReady(); return gateway.devices() }
     fun trustedDevices(): Set<DeviceKey> { requireReady(); return gateway.trustedDevices() }

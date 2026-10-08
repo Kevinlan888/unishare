@@ -166,6 +166,36 @@ class SessionViewModelTest {
     }
 
     @Test
+    fun connected_device_can_send_without_discovery_or_reconnecting() = runTest(dispatcher) {
+        val repository = FakeSessionDeviceRepository(device(online = false, connected = true))
+        val operations = FakeSessionOperations()
+        val viewModel = SessionViewModel(deviceId, repository, MutableStateFlow(emptyList()), { null }, operations)
+        viewModel.onComposerChanged("still connected")
+
+        viewModel.sendComposer()
+        advanceUntilIdle()
+
+        assertEquals(listOf("still connected"), operations.sentTexts)
+        assertEquals(0, repository.connectCalls)
+        assertTrue(viewModel.uiState.value.connected)
+    }
+
+    @Test
+    fun connected_device_can_send_picked_content_without_waiting_for_discovery() = runTest(dispatcher) {
+        val repository = FakeSessionDeviceRepository(device(online = false, connected = true))
+        val operations = FakeSessionOperations()
+        val lease = RecordingSessionContentLease()
+        val viewModel = SessionViewModel(deviceId, repository, MutableStateFlow(emptyList()), { null }, operations)
+
+        viewModel.sendPickedContent(RetainedContentUri(fakeUri(), lease), ContentKind.FILE)
+        runCurrent()
+
+        assertEquals(1, operations.pickedContent.size)
+        assertEquals(0, repository.connectCalls)
+        assertEquals(0, lease.closeCalls)
+    }
+
+    @Test
     fun untrusted_device_blocks_send_before_reaching_transfer_boundary() = runTest(dispatcher) {
         val operations = FakeSessionOperations()
         val viewModel = viewModel(operations, device(online = true, trusted = false))
@@ -363,12 +393,14 @@ class SessionViewModelTest {
         name: String = "Kevin's Windows PC",
         online: Boolean = true,
         trusted: Boolean = true,
+        connected: Boolean = false,
     ) = DeviceSummary(
         id = deviceId,
         name = name,
         platform = DevicePlatform.WINDOWS,
         online = online,
         trusted = trusted,
+        connected = connected,
     )
 
     private fun activity(text: String) = ShareActivity(
@@ -451,7 +483,7 @@ private class FakeSessionDeviceRepository(initial: DeviceSummary) : DeviceReposi
     override val devices = mutableDevices
     override fun find(deviceId: DeviceKey) = devices.value.firstOrNull { it.id == deviceId }
     override fun isTrusted(deviceId: DeviceKey) = find(deviceId)?.trusted == true
-    override fun canSend(deviceId: DeviceKey) = find(deviceId)?.let { it.online && it.trusted && !it.identityChanged } == true
+    override fun canSend(deviceId: DeviceKey) = find(deviceId)?.let { (it.online || it.connected) && it.trusted && !it.identityChanged } == true
     override suspend fun connect(deviceId: DeviceKey) {
         connectCalls++
         connectGate?.await()

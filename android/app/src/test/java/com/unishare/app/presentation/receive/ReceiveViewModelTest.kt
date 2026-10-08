@@ -51,6 +51,16 @@ class ReceiveViewModelTest {
     }
 
     @Test
+    fun connected_source_is_not_reported_offline_when_discovery_is_missing() = runTest {
+        val fixture = fixture(immediateBackgroundScope(), online = false, connected = true)
+
+        val state = fixture.viewModel.uiState.value
+
+        assertFalse(state.source.online)
+        assertTrue(state.source.connected)
+    }
+
+    @Test
     fun destination_correction_clears_an_unsupported_tree_and_returns_to_downloads() = runTest {
         val fixture = fixture(immediateBackgroundScope(), destination = "Pictures / UniShare")
 
@@ -343,6 +353,8 @@ class ReceiveViewModelTest {
         destination: String? = null,
         readable: Boolean = true,
         settingsWriteGate: CompletableDeferred<Unit>? = null,
+        online: Boolean = true,
+        connected: Boolean = false,
     ): Fixture {
         val offer = offer()
         val operations = FakeReceiveOperations(offer)
@@ -351,8 +363,9 @@ class ReceiveViewModelTest {
                 id = offer.deviceId,
                 name = "Kevin's Windows PC",
                 platform = DevicePlatform.WINDOWS,
-                online = true,
+                online = online,
                 trusted = true,
+                connected = connected,
             ),
         )
         val settings = FakeSettingsRepository(

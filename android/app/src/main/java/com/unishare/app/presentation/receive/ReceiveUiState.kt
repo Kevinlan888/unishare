@@ -20,6 +20,7 @@ data class ReceiveSourceUi(
     val name: String = "",
     val platform: DevicePlatform? = null,
     val online: Boolean = false,
+    val connected: Boolean = false,
 )
 
 data class ReceiveUiState(

@@ -66,6 +66,8 @@ import com.unishare.app.platform.rememberContentPickerLauncher
 import com.unishare.app.presentation.components.DeviceIcon
 import com.unishare.app.presentation.components.StatusIndicator
 import com.unishare.app.presentation.components.StatusTone
+import com.unishare.app.presentation.components.DevicePresence
+import com.unishare.app.presentation.components.devicePresence
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.time.Instant
 import java.time.LocalDate
@@ -267,15 +269,17 @@ private fun SessionHeader(state: SessionUiState, onBack: () -> Unit, onMore: () 
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    val presence = devicePresence(state.online, state.connected)
                     StatusIndicator(
                         label = when {
                             state.identityChanged -> stringResource(R.string.status_identity_changed)
-                            state.online -> stringResource(R.string.status_online)
+                            presence == DevicePresence.CONNECTED -> stringResource(R.string.status_connected)
+                            presence == DevicePresence.ONLINE -> stringResource(R.string.status_online)
                             else -> stringResource(R.string.status_offline)
                         },
                         tone = when {
                             state.identityChanged -> StatusTone.ERROR
-                            state.online -> StatusTone.ONLINE
+                            presence != DevicePresence.OFFLINE -> StatusTone.ONLINE
                             else -> StatusTone.NEUTRAL
                         },
                     )

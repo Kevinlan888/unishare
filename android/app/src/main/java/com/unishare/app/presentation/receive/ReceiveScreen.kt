@@ -47,8 +47,10 @@ import androidx.compose.ui.unit.sp
 import com.unishare.app.R
 import com.unishare.app.domain.ContentKind
 import com.unishare.app.presentation.components.DeviceIcon
+import com.unishare.app.presentation.components.DevicePresence
 import com.unishare.app.presentation.components.StatusIndicator
 import com.unishare.app.presentation.components.StatusTone
+import com.unishare.app.presentation.components.devicePresence
 
 @Composable
 fun ReceiveScreen(
@@ -194,6 +196,7 @@ private fun ReceivePreview(state: ReceiveUiState, preview: ImageBitmap?) {
 
 @Composable
 private fun SourceDeviceRow(state: ReceiveUiState) {
+    val presence = devicePresence(state.source.online, state.source.connected)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -217,8 +220,12 @@ private fun SourceDeviceRow(state: ReceiveUiState) {
                 overflow = TextOverflow.Ellipsis,
             )
             StatusIndicator(
-                label = stringResource(if (state.source.online) R.string.status_online else R.string.status_offline),
-                tone = if (state.source.online) StatusTone.ONLINE else StatusTone.NEUTRAL,
+                label = stringResource(when (presence) {
+                    DevicePresence.CONNECTED -> R.string.status_connected
+                    DevicePresence.ONLINE -> R.string.status_online
+                    DevicePresence.OFFLINE -> R.string.status_offline
+                }),
+                tone = if (presence != DevicePresence.OFFLINE) StatusTone.ONLINE else StatusTone.NEUTRAL,
                 modifier = Modifier.padding(top = 2.dp),
             )
         }

@@ -44,9 +44,11 @@ import com.unishare.app.R
 import com.unishare.app.data.sdk.DevicePlatform
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.presentation.components.DeviceIcon
+import com.unishare.app.presentation.components.DevicePresence
 import com.unishare.app.presentation.components.EmptyState
 import com.unishare.app.presentation.components.StatusIndicator
 import com.unishare.app.presentation.components.StatusTone
+import com.unishare.app.presentation.components.devicePresence
 import com.unishare.app.presentation.format.activityDisplayName
 import java.util.Calendar
 import java.util.Date
@@ -327,7 +329,7 @@ private fun NearbyDeviceRow(device: NearbyDeviceUi, onClick: () -> Unit) {
             platform = device.platform,
             contentDescription = deviceIconDescription(device.platform),
             modifier = Modifier.size(42.dp),
-            tint = if (device.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+            tint = if (device.online || device.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -345,16 +347,17 @@ private fun NearbyDeviceRow(device: NearbyDeviceUi, onClick: () -> Unit) {
                 device.trusted -> stringResource(R.string.status_trusted)
                 else -> stringResource(R.string.status_unpaired)
             }
-            val presence = when {
-                device.connected -> stringResource(R.string.status_connected)
-                device.online -> stringResource(R.string.status_online)
-                else -> stringResource(R.string.status_offline)
+            val presenceState = devicePresence(device.online, device.connected)
+            val presence = when (presenceState) {
+                DevicePresence.CONNECTED -> stringResource(R.string.status_connected)
+                DevicePresence.ONLINE -> stringResource(R.string.status_online)
+                DevicePresence.OFFLINE -> stringResource(R.string.status_offline)
             }
             StatusIndicator(
                 label = stringResource(R.string.device_status_format, trust, presence),
                 tone = when {
                     identityChanged -> StatusTone.ERROR
-                    device.online -> StatusTone.ONLINE
+                    presenceState != DevicePresence.OFFLINE -> StatusTone.ONLINE
                     else -> StatusTone.NEUTRAL
                 },
             )

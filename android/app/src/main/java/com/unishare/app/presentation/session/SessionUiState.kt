@@ -38,6 +38,7 @@ data class SessionUiState(
     val deviceName: String = "",
     val platform: DevicePlatform? = null,
     val online: Boolean = false,
+    val connected: Boolean = false,
     val trusted: Boolean = false,
     val identityChanged: Boolean = false,
     val composerText: String = "",

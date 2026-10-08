@@ -17,10 +17,11 @@ class DevicesViewModelTest {
         val repository = ManagementDevices(listOf(
             DeviceSummary(DeviceKey("a"), "PC", null, true, true),
             DeviceSummary(DeviceKey("b"), "Phone", null, true, false),
-            DeviceSummary(DeviceKey("c"), "Laptop", null, false, true)))
+            DeviceSummary(DeviceKey("c"), "Laptop", null, false, true),
+            DeviceSummary(DeviceKey("d"), "Connected tablet", null, false, true, connected = true)))
         val vm = DevicesViewModel(repository)
         advanceUntilIdle()
-        assertEquals(listOf("a"), vm.uiState.value.trusted.map { it.id.value })
+        assertEquals(listOf("d", "a"), vm.uiState.value.trusted.map { it.id.value })
         assertEquals(listOf("b"), vm.uiState.value.nearby.map { it.id.value })
         assertEquals(listOf("c"), vm.uiState.value.offline.map { it.id.value })
         vm.requestForget(DeviceKey("a")); advanceUntilIdle()

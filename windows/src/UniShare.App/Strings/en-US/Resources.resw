@@ -22,6 +22,7 @@
 <data name="Recent" xml:space="preserve"><value>Recent</value></data>
 <data name="Nearby" xml:space="preserve"><value>Nearby Devices</value></data>
 <data name="Online" xml:space="preserve"><value>Online</value></data>
+<data name="Connected" xml:space="preserve"><value>Connected</value></data>
 <data name="Yes" xml:space="preserve"><value>Yes</value></data>
 <data name="No" xml:space="preserve"><value>No</value></data>
 <data name="Yesterday" xml:space="preserve"><value>Yesterday</value></data>

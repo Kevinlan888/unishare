@@ -95,6 +95,7 @@ class ReceiveViewModel internal constructor(
                             name = device?.name ?: incoming.deviceId.value,
                             platform = device?.platform,
                             online = device?.online == true,
+                            connected = device?.connected == true,
                         ),
                         destinationDisplayName = appSettings.receiveDirectoryDisplayName,
                     )

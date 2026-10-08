@@ -38,7 +38,7 @@ public sealed class DeviceEntry
         get
         {
             var value = Data;
-            return value.Online && value.Trusted && !value.Blocked;
+            return (value.Online || value.Connected) && value.Trusted && !value.Blocked;
         }
     }
 }
@@ -104,7 +104,7 @@ public sealed class DeviceStore : IDisposable
     }
 
     private IEnumerable<DeviceEntry> SortedEntries() => entries.Values
-        .Where(value => value.IsOnline || value.IsTrusted || value.IsBlocked)
+        .Where(value => value.IsOnline || value.IsConnected || value.IsTrusted || value.IsBlocked)
         .OrderByDescending(value => value.IsTrusted)
         .ThenBy(value => value.Name, StringComparer.OrdinalIgnoreCase)
         .ThenBy(value => value.Id.Value);
@@ -116,7 +116,7 @@ public sealed class DeviceStore : IDisposable
         return entry;
     }
 
-    public void Refresh()
+    public void Refresh(bool preserveConnections = true)
     {
         lock (gate)
         {
@@ -138,7 +138,7 @@ public sealed class DeviceStore : IDisposable
                 {
                     Online = online.Contains(entry.Id),
                     Trusted = forgetting.Contains(entry.Id) ? data.Trusted : isTrusted,
-                    Connected = online.Contains(entry.Id) && data.Connected
+                    Connected = preserveConnections && data.Connected
                 };
             }
         }
@@ -177,9 +177,17 @@ public sealed class DeviceStore : IDisposable
                     if (entries.TryGetValue(offline.Device, out var offlineEntry))
                         offlineEntry.Data = offlineEntry.Data with
                         {
-                            Online = false,
-                            Connected = false
+                            Online = false
                         };
+                    break;
+                case ShareSdkEvent.PairingRequested requested:
+                    var requestedEntry = GetOrAdd(requested.Device.Id);
+                    var requestedData = requestedEntry.Data;
+                    requestedEntry.Data = requestedData with
+                    {
+                        Snapshot = requested.Device,
+                        Trusted = requestedData.Trusted
+                    };
                     break;
                 case ShareSdkEvent.ConnectionChanged connection:
                     var connectedEntry = GetOrAdd(connection.Device);

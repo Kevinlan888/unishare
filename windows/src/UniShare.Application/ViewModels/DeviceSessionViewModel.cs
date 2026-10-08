@@ -183,9 +183,8 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
         }
         // This is non-binding state: revoke synchronously on the SDK thread.
         // Clipboard/staging continuations do not wait for UI notifications.
-        if (value is ShareSdkEvent.DeviceOffline offline && offline.Device == Device.Id ||
-            value is ShareSdkEvent.IdentityChanged changed && changed.Device == Device.Id ||
-            value is ShareSdkEvent.ConnectionChanged { Failure.Kind: ShareErrorKind.IdentityChanged } connection && connection.Device == Device.Id ||
+        if (value is ShareSdkEvent.IdentityChanged changed && changed.Device == Device.Id ||
+            value is ShareSdkEvent.ConnectionChanged { State: ConnectionState.Disconnected } connection && connection.Device == Device.Id ||
             value is ShareSdkEvent.PairingCompleted { Failure.Kind: ShareErrorKind.IdentityChanged } pairing && pairing.Device == Device.Id)
         {
             connectionAvailable = false;

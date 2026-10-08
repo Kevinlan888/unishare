@@ -115,6 +115,7 @@ class SessionViewModel(
             deviceName = visibleDevice?.name.orEmpty(),
             platform = visibleDevice?.platform,
             online = current?.online == true,
+            connected = current?.connected == true,
             trusted = current?.trusted == true,
             identityChanged = current?.identityChanged == true,
             composerText = composerText,
@@ -130,6 +131,7 @@ class SessionViewModel(
             deviceName = lastDevice?.name.orEmpty(),
             platform = lastDevice?.platform,
             online = lastDevice?.online == true,
+            connected = lastDevice?.connected == true,
             trusted = lastDevice?.trusted == true,
             identityChanged = lastDevice?.identityChanged == true,
         ),
@@ -293,13 +295,13 @@ class SessionViewModel(
     private suspend fun ensureConnection(waitForDiscovery: Boolean = false) {
         awaitRuntime()
         if (waitForDiscovery) withTimeout(30_000) {
-            devices.devices.first { peers -> peers.any { it.id == deviceId && (it.online || it.identityChanged) } }
+            devices.devices.first { peers -> peers.any { it.id == deviceId && (it.online || it.connected || it.identityChanged) } }
         }
         val device = devices.find(deviceId) ?: throw Blocked(SessionUserMessage.DEVICE_OFFLINE)
         if (device.identityChanged) throw Blocked(SessionUserMessage.DEVICE_NOT_TRUSTED)
-        if (!device.online) throw Blocked(SessionUserMessage.DEVICE_OFFLINE)
+        if (!device.online && !device.connected) throw Blocked(SessionUserMessage.DEVICE_OFFLINE)
         // Repository validates the authenticated result against the current SDK lifecycle token.
-        devices.connect(deviceId)
+        if (!device.connected) devices.connect(deviceId)
         if (!devices.isTrusted(deviceId)) throw Blocked(SessionUserMessage.DEVICE_NOT_TRUSTED)
     }
 
