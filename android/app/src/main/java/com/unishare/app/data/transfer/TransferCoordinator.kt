@@ -292,15 +292,12 @@ class TransferCoordinator internal constructor(
             if (recovery != null) return@runOwned retryPublication(activityId, recovery)
             val original = tracker.find(activityId) ?: throw CoordinatorException(ShareErrorKind.INVALID_INPUT)
             if (!original.status.isTerminal) throw CoordinatorException(ShareErrorKind.INVALID_INPUT)
-            val payload = synchronized(gate) { retryPayloads[activityId] }
-                ?: throw CoordinatorException(ShareErrorKind.INVALID_INPUT)
             ensureCanSubmit(original.deviceId)
+            val payload = synchronized(gate) { retryPayloads.remove(activityId) }
+                ?: throw CoordinatorException(ShareErrorKind.INVALID_INPUT)
             when (payload) {
                 is RetryPayload.Text -> submitText(original.deviceId, payload.text, payload.origin, original.id)
-                is RetryPayload.Content -> {
-                    synchronized(gate) { retryPayloads.remove(activityId, payload) }
-                    submitContent(original.deviceId, payload.content, payload.origin, original.id, null)
-                }
+                is RetryPayload.Content -> submitContent(original.deviceId, payload.content, payload.origin, original.id, null)
             }
         }
     }
@@ -618,7 +615,7 @@ class TransferCoordinator internal constructor(
         var retiredPayload: RetryPayload? = null
         val staged = synchronized(gate) {
             val ownedStaging = outgoingStaging.remove(activityId)
-            if (activity.status == ActivityStatus.COMPLETED || ownedStaging != null) {
+            if (activity.status != ActivityStatus.FAILED || ownedStaging != null) {
                 retiredPayload = retryPayloads.remove(activityId)
             }
             ownedStaging

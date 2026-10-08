@@ -77,7 +77,7 @@ class AppGraph(application: Application) {
     val stagingStore = StagingStore(application)
     val receivePublisher = AndroidReceivePublisher(application)
     val selectedContentResolver = SelectedContentResolver(application.contentResolver)
-    val contentUriPermissionRetainer = AndroidContentUriPermissionRetainer(application.contentResolver)
+    val contentUriPermissionRetainer = AndroidContentUriPermissionRetainer(application)
     val transferCoordinator = TransferCoordinator(
         session = sessionManager,
         tracker = activityTracker,

@@ -10,7 +10,11 @@ import com.unishare.app.data.settings.*
 import com.unishare.app.domain.*
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -93,6 +97,46 @@ class TransferCoordinatorTest {
     }
 
     @Test
+    fun rejected_outgoing_content_releases_its_lease_and_cannot_retry() = runTest {
+        val fixture = fixture()
+        val lease = RecordingContentReadPermissionLease()
+        val activityId = fixture.coordinator.sendContent(
+            device,
+            selected(ContentKind.FILE, "application/pdf", "report.pdf").copy(readPermission = lease),
+        )
+
+        fixture.gateway.completeNext(
+            TransferTerminal(TransferKey("rejected-transfer"), ShareFailure(ShareErrorKind.TRANSFER_REJECTED)),
+        )
+        runCurrent()
+
+        assertEquals(ActivityStatus.REJECTED, fixture.tracker.find(activityId)?.status)
+        assertEquals(1, lease.closeCalls)
+        val retryFailure = runCatching { fixture.coordinator.retry(activityId) }.exceptionOrNull()
+        assertEquals(ShareErrorKind.INVALID_INPUT, (retryFailure as CoordinatorException).errorKind)
+    }
+
+    @Test
+    fun cancelled_outgoing_content_releases_its_lease_and_cannot_retry() = runTest {
+        val fixture = fixture()
+        val lease = RecordingContentReadPermissionLease()
+        val activityId = fixture.coordinator.sendContent(
+            device,
+            selected(ContentKind.IMAGE, "image/jpeg", "photo.jpg").copy(readPermission = lease),
+        )
+
+        fixture.gateway.completeNext(
+            TransferTerminal(TransferKey("cancelled-transfer"), ShareFailure(ShareErrorKind.CANCELLED)),
+        )
+        runCurrent()
+
+        assertEquals(ActivityStatus.CANCELLED, fixture.tracker.find(activityId)?.status)
+        assertEquals(1, lease.closeCalls)
+        val retryFailure = runCatching { fixture.coordinator.retry(activityId) }.exceptionOrNull()
+        assertEquals(ShareErrorKind.INVALID_INPUT, (retryFailure as CoordinatorException).errorKind)
+    }
+
+    @Test
     fun coordinator_retirement_releases_a_retryable_uri_lease_exactly_once() = runTest {
         val fixture = fixture()
         val lease = RecordingContentReadPermissionLease()
@@ -134,6 +178,76 @@ class TransferCoordinatorTest {
         assertTrue(lease.closed)
         assertEquals(1, lease.closeCalls)
         workerScope.cancel()
+    }
+
+    @Test
+    fun concurrent_retries_atomically_claim_one_content_payload_and_release_it_once() = runTest {
+        val retryBarrier = CyclicBarrier(2)
+        val synchronizeRetries = AtomicBoolean(false)
+        val executor = Executors.newFixedThreadPool(2)
+        val workerDispatcher = executor.asCoroutineDispatcher()
+        val workerScope = CoroutineScope(SupervisorJob() + workerDispatcher)
+        val fixture = fixture(
+            workerScope = workerScope,
+            onCanSend = {
+                if (synchronizeRetries.get()) retryBarrier.await(5, TimeUnit.SECONDS)
+            },
+        )
+        val lease = RecordingContentReadPermissionLease()
+        fixture.gateway.beginFailure = GatewayException(ShareFailure(ShareErrorKind.NETWORK_LOST))
+        runCatching {
+            fixture.coordinator.sendContent(
+                device,
+                selected(ContentKind.FILE, "application/pdf", "report.pdf").copy(readPermission = lease),
+            )
+        }
+        val original = fixture.tracker.activities(device).value.single()
+        fixture.gateway.beginFailure = null
+        synchronizeRetries.set(true)
+
+        val first = async(start = CoroutineStart.UNDISPATCHED) { runCatching { fixture.coordinator.retry(original.id) } }
+        val second = async(start = CoroutineStart.UNDISPATCHED) { runCatching { fixture.coordinator.retry(original.id) } }
+        val outcomes = listOf(first.await(), second.await())
+
+        assertEquals(1, outcomes.count { it.isSuccess })
+        assertEquals(1, outcomes.count { (it.exceptionOrNull() as? CoordinatorException)?.errorKind == ShareErrorKind.INVALID_INPUT })
+        assertEquals(1, fixture.gateway.submissions.size)
+        assertFalse(lease.closed)
+
+        fixture.gateway.completeNext(TransferTerminal(TransferKey("single-retry-success")))
+        assertTrue("terminal completion should close the claimed lease", lease.awaitClosed())
+        assertEquals(1, lease.closeCalls)
+        workerScope.cancel()
+        workerDispatcher.close()
+        executor.shutdownNow()
+    }
+
+    @Test
+    fun failed_retry_submission_retains_one_reachable_payload_until_a_later_success() = runTest {
+        val fixture = fixture()
+        val lease = RecordingContentReadPermissionLease()
+        fixture.gateway.beginFailure = GatewayException(ShareFailure(ShareErrorKind.NETWORK_LOST))
+        runCatching {
+            fixture.coordinator.sendContent(
+                device,
+                selected(ContentKind.IMAGE, "image/jpeg", "photo.jpg").copy(readPermission = lease),
+            )
+        }
+        val original = fixture.tracker.activities(device).value.single()
+
+        val retryFailure = runCatching { fixture.coordinator.retry(original.id) }.exceptionOrNull()
+
+        assertEquals(ShareErrorKind.NETWORK_LOST, (retryFailure as CoordinatorException).errorKind)
+        assertFalse(lease.closed)
+        val retainedRetry = fixture.tracker.activities(device).value.single { it.retryOf == original.id }
+        assertEquals(ActivityStatus.FAILED, retainedRetry.status)
+
+        fixture.gateway.beginFailure = null
+        fixture.coordinator.retry(retainedRetry.id)
+        fixture.gateway.completeNext(TransferTerminal(TransferKey("eventual-success")))
+        runCurrent()
+
+        assertEquals(1, lease.closeCalls)
     }
 
     @Test
@@ -610,6 +724,7 @@ class TransferCoordinatorTest {
         clock: () -> Long = { 1_000L },
         workerScope: CoroutineScope = backgroundScope,
         ioDispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
+        onCanSend: () -> Unit = {},
     ): Fixture {
         val repository = CoordinatorActivityRepository()
         val tracker = ActivityTracker(repository, workerScope, idFactory = sequentialIds())
@@ -619,7 +734,7 @@ class TransferCoordinatorTest {
         val staging = FakeStagingAccess()
         val publication = FakePublication()
         val settings = FakeSettingsRepository()
-        val devices = FakeDeviceRepository(if (trusted) setOf(device) else emptySet())
+        val devices = FakeDeviceRepository(if (trusted) setOf(device) else emptySet(), onCanSend)
         val coordinator = TransferCoordinator(
             session = session,
             tracker = tracker,
@@ -721,7 +836,10 @@ private class CoordinatorGateway : ShareSdkGateway {
     override fun close() = Unit
 
     fun emit(event: GatewayEvent) { check(events.tryEmit(event)) }
+    @Synchronized
     fun completeNext(terminal: TransferTerminal) { pending.removeFirst().complete(terminal) }
+
+    @Synchronized
     private fun pending(description: String): PendingSend {
         beginFailure?.let { throw it }
         calls += description
@@ -735,11 +853,17 @@ private class CoordinatorGateway : ShareSdkGateway {
     }
 }
 
-private class FakeDeviceRepository(private val trusted: Set<DeviceKey>) : DeviceRepository {
+private class FakeDeviceRepository(
+    private val trusted: Set<DeviceKey>,
+    private val onCanSend: () -> Unit = {},
+) : DeviceRepository {
     override val devices: StateFlow<List<DeviceSummary>> = MutableStateFlow(emptyList())
     override fun find(deviceId: DeviceKey): DeviceSummary? = DeviceSummary(deviceId, "", null, true, deviceId in trusted)
     override fun isTrusted(deviceId: DeviceKey) = deviceId in trusted
-    override fun canSend(deviceId: DeviceKey) = true
+    override fun canSend(deviceId: DeviceKey): Boolean {
+        onCanSend()
+        return true
+    }
     override suspend fun connect(deviceId: DeviceKey) = Unit
     override suspend fun forget(deviceId: DeviceKey) = Unit
 }
@@ -784,13 +908,17 @@ private class FakePublication : ContentPublication {
 }
 
 private class RecordingContentReadPermissionLease : ContentReadPermissionLease {
+    private val closedSignal = CountDownLatch(1)
     var closeCalls = 0
         private set
     val closed: Boolean get() = closeCalls > 0
 
     override fun close() {
         closeCalls++
+        closedSignal.countDown()
     }
+
+    fun awaitClosed(): Boolean = closedSignal.await(5, TimeUnit.SECONDS)
 }
 
 private class GuardedDispatcher(private val delegate: CoroutineDispatcher) : CoroutineDispatcher() {
