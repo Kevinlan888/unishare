@@ -6,6 +6,11 @@ import com.unishare.app.data.settings.AppTheme
 import com.unishare.app.data.settings.SettingsRepository
 import com.unishare.app.platform.NotificationPermissionChecker
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -13,6 +18,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.StandardTestDispatcher
+import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -21,6 +28,72 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RuntimeControllerTest {
+    @Test fun `notification-off rollback IOException stays inside application scope and safely stops receive`() = runTest {
+        assertRollbackWriteFailureSafe(activeTransfers = 0)
+    }
+
+    @Test fun `notification-off rollback IOException preserves active transfer service until drain`() = runTest {
+        assertRollbackWriteFailureSafe(activeTransfers = 1)
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.assertRollbackWriteFailureSafe(activeTransfers: Int) {
+        val uncaught = mutableListOf<Throwable>()
+        val applicationScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler) +
+            CoroutineExceptionHandler { _, error -> uncaught += error })
+        try {
+            val fixture = fixture(scope = applicationScope)
+            fixture.runtime.setAppVisible(true)
+            assertTrue(fixture.runtime.setBackgroundReceive(true))
+            fixture.active.value = activeTransfers
+            runCurrent()
+            fixture.runtime.setAppVisible(false)
+            fixture.settings.backgroundWriteFailure = IOException("disk unavailable")
+            val attemptsBefore = fixture.settings.backgroundWriteAttempts
+            fixture.settings.setNotificationsEnabled(false)
+            runCurrent()
+            assertEquals(emptyList<Throwable>(), uncaught)
+            assertFalse(fixture.runtime.state.value.backgroundReceiveEnabled)
+            assertEquals(RuntimeFailure.SETTINGS_WRITE_FAILED, fixture.runtime.state.value.failure)
+            assertEquals(if (activeTransfers == 0) RuntimePhase.STOPPED else RuntimePhase.ACTIVE_TRANSFER,
+                fixture.runtime.state.value.phase)
+            assertEquals(activeTransfers > 0, fixture.runtime.state.value.foregroundServiceRunning)
+            assertEquals(if (activeTransfers == 0) 1 else 0, fixture.service.stopCount)
+            assertEquals(attemptsBefore + 1, fixture.settings.backgroundWriteAttempts)
+            // A failed persist must not spin or re-enable on unrelated settings emissions.
+            fixture.settings.setDeviceName("Changed")
+            fixture.settings.setNotificationsEnabled(true)
+            runCurrent()
+            assertFalse(fixture.runtime.state.value.backgroundReceiveEnabled)
+            assertEquals(attemptsBefore + 1, fixture.settings.backgroundWriteAttempts)
+            fixture.active.value = 0
+            runCurrent()
+            assertEquals(RuntimePhase.STOPPED, fixture.runtime.state.value.phase)
+            assertEquals(1, fixture.service.stopCount)
+            assertEquals(1, fixture.session.stopCount)
+        } finally { applicationScope.cancel() }
+    }
+
+    @Test fun `runtime stop propagates cancellation instead of recording a session failure`() = runTest {
+        val fixture = fixture()
+        fixture.runtime.setAppVisible(true)
+        fixture.session.beforeStop = { throw CancellationException("cancel stop") }
+        val stopping = backgroundScope.launch { fixture.runtime.setAppVisible(false) }
+        runCurrent()
+        assertTrue(stopping.isCancelled)
+        assertNull(fixture.runtime.state.value.failure)
+    }
+
+    @Test fun `rollback write cancellation is not converted to an ordinary runtime failure`() = runTest {
+        val fixture = fixture()
+        fixture.runtime.setAppVisible(true)
+        fixture.runtime.setBackgroundReceive(true)
+        fixture.settings.backgroundWriteFailure = CancellationException("cancel write")
+        val disabling = backgroundScope.launch { fixture.runtime.setBackgroundReceive(false) }
+        runCurrent()
+        assertTrue(disabling.isCancelled)
+        assertNull(fixture.runtime.state.value.failure)
+    }
+
     @Test
     fun `foreground-only runtime starts while visible and stops after leaving`() = runTest {
         val fixture = fixture()
@@ -291,6 +364,7 @@ class RuntimeControllerTest {
     private fun kotlinx.coroutines.test.TestScope.fixture(
         notificationGranted: Boolean = true,
         initialSettings: AppSettings = AppSettings(deviceName = "Pixel"),
+        scope: CoroutineScope = backgroundScope,
     ): Fixture {
         val events = mutableListOf<String>()
         val settings = FakeSettingsRepository(initialSettings)
@@ -304,7 +378,7 @@ class RuntimeControllerTest {
             foregroundService = service,
             activeTransferCount = active,
             notificationPermission = permission,
-            scope = backgroundScope,
+            scope = scope,
         )
         return Fixture(runtime, settings, session, service, active, permission, events)
     }
@@ -359,12 +433,16 @@ class RuntimeControllerTest {
 
     private class FakeSettingsRepository(initial: AppSettings = AppSettings(deviceName = "Pixel")) : SettingsRepository {
         val value = MutableStateFlow(initial)
+        var backgroundWriteFailure: Exception? = null
+        var backgroundWriteAttempts = 0
         override val settings: Flow<AppSettings> = value
         override suspend fun setDeviceName(name: String) { value.value = value.value.copy(deviceName = name) }
         override suspend fun setReceiveDirectory(treeUri: String?, displayName: String?) {
             value.value = value.value.copy(receiveTreeUri = treeUri, receiveDirectoryDisplayName = displayName)
         }
         override suspend fun setBackgroundReceiveEnabled(enabled: Boolean) {
+            backgroundWriteAttempts++
+            backgroundWriteFailure?.let { throw it }
             value.value = value.value.copy(backgroundReceiveEnabled = enabled)
         }
         override suspend fun setNotificationsEnabled(enabled: Boolean) {

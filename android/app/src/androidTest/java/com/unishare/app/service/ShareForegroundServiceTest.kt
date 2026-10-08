@@ -36,6 +36,51 @@ import com.unishare.app.data.transfer.IncomingConsentEvent
 
 class ShareForegroundServiceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    @Test fun cold_offer_waits_for_first_policy_then_posts_one_live_localized_android_notification() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val policy = MutableSharedFlow<AppSettings>(replay = 1)
+        val locale = AppLocaleResources(context, policy, scope)
+        val factory = ShareNotificationFactory(context, locale)
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val live = ActivityKey("task11-cold-live")
+        val dismissed = ActivityKey("task11-cold-dismissed")
+        val liveId = 0x55000000 xor live.value.hashCode()
+        val dismissedId = 0x55000000 xor dismissed.value.hashCode()
+        var posts = 0
+        val events = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 4)
+        try {
+            if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.POST_NOTIFICATIONS)
+            }
+            factory.createChannels()
+            ReceiveOfferNotificationRelay(events, { true }, { posts++; factory.postIncomingOffer(it) },
+                factory::cancelIncomingOffer, scope, locale.settings)
+            events.emit(IncomingConsentEvent.Pending(live))
+            events.emit(IncomingConsentEvent.Pending(live))
+            events.emit(IncomingConsentEvent.Pending(dismissed))
+            events.emit(IncomingConsentEvent.Dismissed(dismissed))
+            assertEquals(0, posts)
+            assertFalse(manager.activeNotifications.any { it.id == liveId || it.id == dismissedId })
+            policy.emit(AppSettings(language = AppLanguage.SIMPLIFIED_CHINESE))
+            withTimeout(5_000) {
+                while (manager.activeNotifications.none { it.id == liveId }) delay(10)
+            }
+            assertEquals(1, posts)
+            assertEquals("接收请求待确认", manager.activeNotifications.single { it.id == liveId }
+                .notification.extras.getString(Notification.EXTRA_TITLE))
+            assertFalse(manager.activeNotifications.any { it.id == dismissedId })
+            events.emit(IncomingConsentEvent.Pending(live))
+            assertEquals(1, posts)
+            policy.emit(AppSettings(notificationsEnabled = false))
+            withTimeout(5_000) { while (manager.activeNotifications.any { it.id == liveId }) delay(10) }
+        } finally {
+            scope.cancel()
+            factory.cancelIncomingOffer(live)
+            factory.cancelIncomingOffer(dismissed)
+        }
+    }
+
     @Test fun real_settings_and_offer_relay_cancel_optional_alerts_without_removing_ongoing_transfer_notification() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val graph = UniShareApplication.graph(context)

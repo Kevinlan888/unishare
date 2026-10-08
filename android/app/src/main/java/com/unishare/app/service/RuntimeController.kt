@@ -6,6 +6,7 @@ import com.unishare.app.data.settings.AppSettings
 import com.unishare.app.data.settings.SettingsRepository
 import com.unishare.app.platform.NotificationPermissionChecker
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,7 @@ enum class RuntimeFailure {
     SERVICE_STOP_FAILED,
     SESSION_START_FAILED,
     SESSION_STOP_FAILED,
+    SETTINGS_WRITE_FAILED,
 }
 
 data class RuntimeState(
@@ -73,12 +75,16 @@ class RuntimeController(
     private var sessionRunning = false
     private var serviceRunning = false
     private var failure: RuntimeFailure? = null
+    // Fail closed after an unsuccessful rollback. Unrelated persisted settings emissions must
+    // not resurrect receive or trigger a write loop; a stored false or explicit enable clears it.
+    private var backgroundReceiveBlocked = false
 
     init {
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             settingsRepository.settings.collect { updated ->
                 lifecycle.withLock {
-                    settings = updated
+                    if (!updated.backgroundReceiveEnabled) backgroundReceiveBlocked = false
+                    settings = updated.copy(backgroundReceiveEnabled = updated.backgroundReceiveEnabled && !backgroundReceiveBlocked)
                     settingsReady.complete(Unit)
                     reconcileLocked(StartAuthority.NONE)
                 }
@@ -117,27 +123,25 @@ class RuntimeController(
         return lifecycle.withLock {
             activeTransfers = activeTransferCount.value.coerceAtLeast(0)
             if (!enabled) {
-                settingsRepository.setBackgroundReceiveEnabled(false)
-                settings = settings.copy(backgroundReceiveEnabled = false)
+                val persisted = disableBackgroundReceiveLocked()
                 reconcileLocked(StartAuthority.NONE)
-                return@withLock true
+                return@withLock persisted
             }
             failure = null
             if (!appVisible) {
-                settingsRepository.setBackgroundReceiveEnabled(false)
-                settings = settings.copy(backgroundReceiveEnabled = false)
                 failure = RuntimeFailure.SERVICE_START_NOT_ALLOWED
+                disableBackgroundReceiveLocked()
                 publishLocked()
                 return@withLock false
             }
             if (!settings.notificationsEnabled || !notificationPermission.isGranted()) {
-                settingsRepository.setBackgroundReceiveEnabled(false)
-                settings = settings.copy(backgroundReceiveEnabled = false)
                 failure = RuntimeFailure.NOTIFICATION_PERMISSION_DENIED
+                disableBackgroundReceiveLocked()
                 publishLocked()
                 return@withLock false
             }
             settingsRepository.setBackgroundReceiveEnabled(true)
+            backgroundReceiveBlocked = false
             settings = settings.copy(backgroundReceiveEnabled = true)
             reconcileLocked(StartAuthority.VISIBLE_ACTIVITY)
             settings.backgroundReceiveEnabled && serviceRunning
@@ -148,7 +152,7 @@ class RuntimeController(
     suspend fun resumeFromSystemRestart() {
         val restored = settingsRepository.settings.first()
         lifecycle.withLock {
-            settings = restored
+            settings = restored.copy(backgroundReceiveEnabled = restored.backgroundReceiveEnabled && !backgroundReceiveBlocked)
             serviceRunning = true
             reconcileLocked(StartAuthority.SYSTEM_RESTART)
         }
@@ -159,11 +163,8 @@ class RuntimeController(
         if (settings.backgroundReceiveEnabled &&
             (!settings.notificationsEnabled || !notificationPermission.isGranted())
         ) {
-            // Persist the denial before evaluating desired runtime state, so neither a restored
-            // setting nor a later lifecycle edge can briefly start background receive.
-            settingsRepository.setBackgroundReceiveEnabled(false)
-            settings = settings.copy(backgroundReceiveEnabled = false)
             failure = RuntimeFailure.NOTIFICATION_PERMISSION_DENIED
+            disableBackgroundReceiveLocked()
         }
         var wantsService = settings.backgroundReceiveEnabled || activeTransfers > 0
         var wantsSession = appVisible || wantsService
@@ -180,6 +181,8 @@ class RuntimeController(
                 session.start(settings.deviceName)
                 sessionRunning = true
                 if (failure == RuntimeFailure.SESSION_START_FAILED) failure = null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 failure = RuntimeFailure.SESSION_START_FAILED
                 publishLocked()
@@ -199,11 +202,12 @@ class RuntimeController(
                 if (failure == RuntimeFailure.SERVICE_START_REJECTED ||
                     failure == RuntimeFailure.SERVICE_START_NOT_ALLOWED
                 ) failure = null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 failure = RuntimeFailure.SERVICE_START_REJECTED
                 if (settings.backgroundReceiveEnabled) {
-                    settingsRepository.setBackgroundReceiveEnabled(false)
-                    settings = settings.copy(backgroundReceiveEnabled = false)
+                    disableBackgroundReceiveLocked()
                     wantsService = activeTransfers > 0
                     wantsSession = appVisible || wantsService
                 }
@@ -215,6 +219,8 @@ class RuntimeController(
                 foregroundService.stopWhenIdle()
                 serviceRunning = false
                 if (failure == RuntimeFailure.SERVICE_STOP_FAILED) failure = null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 failure = RuntimeFailure.SERVICE_STOP_FAILED
                 publishLocked()
@@ -225,6 +231,8 @@ class RuntimeController(
             try {
                 session.stop()
                 sessionRunning = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 failure = RuntimeFailure.SESSION_STOP_FAILED
                 publishLocked()
@@ -232,6 +240,21 @@ class RuntimeController(
             }
         }
         publishLocked()
+    }
+
+    private suspend fun disableBackgroundReceiveLocked(): Boolean {
+        // Safety cannot depend on storage availability. Keep active-transfer policy independent.
+        settings = settings.copy(backgroundReceiveEnabled = false)
+        backgroundReceiveBlocked = true
+        return try {
+            settingsRepository.setBackgroundReceiveEnabled(false)
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            failure = RuntimeFailure.SETTINGS_WRITE_FAILED
+            false
+        }
     }
 
     private fun publishLocked() {

@@ -19,6 +19,69 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReceiveOfferNotificationRelayTest {
+    @Test fun delayed_first_enabled_policy_replays_only_live_buffered_offers_once_in_order() = runTest {
+        val settings = MutableSharedFlow<AppSettings>()
+        val events = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 8)
+        val first = ActivityKey("first")
+        val second = ActivityKey("second")
+        val expired = ActivityKey("expired")
+        val dismissed = ActivityKey("dismissed")
+        val pending = mutableSetOf(first, second, expired, dismissed)
+        val posted = mutableListOf<ActivityKey>()
+        ReceiveOfferNotificationRelay(events, pending::contains, posted::add, {}, backgroundScope, settings)
+        events.emit(IncomingConsentEvent.Pending(first))
+        events.emit(IncomingConsentEvent.Pending(first))
+        events.emit(IncomingConsentEvent.Pending(expired))
+        events.emit(IncomingConsentEvent.Pending(dismissed))
+        events.emit(IncomingConsentEvent.Dismissed(dismissed))
+        events.emit(IncomingConsentEvent.Pending(second))
+        runCurrent()
+        assertEquals(emptyList<ActivityKey>(), posted)
+        pending -= expired
+        settings.emit(AppSettings())
+        events.emit(IncomingConsentEvent.Pending(first))
+        runCurrent()
+        settings.emit(AppSettings())
+        runCurrent()
+        assertEquals(listOf(first, second), posted)
+    }
+
+    @Test fun delayed_first_disabled_policy_cancels_buffer_and_never_replays_it_on_enable() = runTest {
+        val settings = MutableSharedFlow<AppSettings>()
+        val events = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 2)
+        val old = ActivityKey("before-policy")
+        val fresh = ActivityKey("after-enable")
+        val posted = mutableListOf<ActivityKey>()
+        val cancelled = mutableListOf<ActivityKey>()
+        ReceiveOfferNotificationRelay(events, { true }, posted::add, cancelled::add, backgroundScope, settings)
+        events.emit(IncomingConsentEvent.Pending(old)); runCurrent()
+        settings.emit(AppSettings(notificationsEnabled = false)); runCurrent()
+        assertEquals(listOf(old), cancelled)
+        settings.emit(AppSettings()); runCurrent()
+        assertEquals(emptyList<ActivityKey>(), posted)
+        events.emit(IncomingConsentEvent.Pending(fresh)); runCurrent()
+        assertEquals(listOf(fresh), posted)
+    }
+
+    @Test fun dismissal_during_first_policy_flush_cannot_leave_a_stale_notification() = runTest {
+        val settings = MutableSharedFlow<AppSettings>()
+        val events = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 2)
+        val id = ActivityKey("flush-race")
+        var pending = true
+        val visible = mutableSetOf<ActivityKey>()
+        val posted = mutableListOf<ActivityKey>()
+        ReceiveOfferNotificationRelay(events, { pending }, {
+            posted += it
+            visible += it
+            pending = false
+            events.tryEmit(IncomingConsentEvent.Dismissed(it))
+        }, { visible -= it }, backgroundScope, settings)
+        events.emit(IncomingConsentEvent.Pending(id)); runCurrent()
+        settings.emit(AppSettings()); runCurrent()
+        assertEquals(listOf(id), posted)
+        assertEquals(emptySet<ActivityKey>(), visible)
+    }
+
     @Test fun disabling_notifications_via_settings_cancels_offers_before_runtime_shutdown_and_suppresses_new_offers() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
