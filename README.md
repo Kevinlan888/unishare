@@ -1,12 +1,13 @@
 # UniShare
 
-UniShare is a local-first LAN sharing SDK and Windows desktop client. The shared C++17 core provides discovery, authenticated pairing, trusted-device management, and bounded streaming for text, images, files, and explicit clipboard content. Platform adapters expose the SDK to Windows, Android, and iOS.
+UniShare is a local-first LAN sharing SDK with Windows and Android clients. The shared C++17 core provides discovery, authenticated pairing, trusted-device management, and bounded streaming for text, images, files, and explicit clipboard content. Platform adapters expose the SDK to Windows, Android, and iOS.
 
 The repository currently includes:
 
 - a C++ SDK with C and C++ APIs;
 - Windows, Android, and iOS platform adapters;
 - a WinUI 3 Windows client with English and Simplified Chinese resources;
+- a native Android Compose client with English and Simplified Chinese resources;
 - native, managed, packaging, and interoperability test suites.
 
 ## Project handoff
@@ -19,7 +20,7 @@ Read [docs/HANDOFF.md](docs/HANDOFF.md) before continuing development or prepari
 | --- | --- |
 | `include/unishare`, `src/core`, `src/c_api*` | Public native API, core services, and C ABI |
 | `src/platform` | Windows and Android native platform ports |
-| `android` | Kotlin SDK, JNI adapter, packaging, and tests |
+| `android` | Compose application, Kotlin SDK, JNI adapter, packaging, and tests |
 | `ios` | Swift/Objective-C++ adapter and XCFramework tooling |
 | `windows` | WinUI 3 application, managed SDK bridge, tests, and MSIX scripts |
 | `tests/interop` | Cross-platform hosts, matrices, and evidence |
@@ -54,11 +55,28 @@ Build output is written under the ignored `windows/artifacts` directory. Native 
 
 Detailed prerequisites and acceptance procedures are in the [Windows application guide](docs/integration/windows-app.md). General native build notes are in [docs/building.md](docs/building.md).
 
+## Android quick start
+
+With the Android/JDK/native dependencies configured, run from the repository root:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File android/scripts/test-app.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File android/scripts/build-app.ps1
+```
+
+The build prints the debug APK path, SHA-256 and size. Select an online adb serial
+with `test-app.ps1 -DeviceSerial <serial>` to run connected tests. Without an
+explicit selection, connected execution is skipped. `-VerifyOnly` reads static
+contracts and existing artifacts/reports without building. See the
+[Android app guide](docs/integration/android-app.md) and
+[acceptance matrix](android/tests/app-acceptance.md) for prerequisites and gates.
+
 ## Platform integration
 
 - [SDK integration index](docs/integration/README.md)
 - [Windows C++ integration](docs/integration/windows.md)
 - [Android Kotlin integration](docs/integration/android.md)
+- [Android application build and acceptance](docs/integration/android-app.md)
 - [iOS Swift integration](docs/integration/ios.md)
 - [Protocol v1](docs/protocol-v1.md)
 - [Interoperability hosts and evidence](tests/interop/README.md)
@@ -74,3 +92,8 @@ The repository contains only the Windows package-signing **public** certificate.
 ## Release status
 
 Automated native, managed, and MSIX checks are implemented. They do not replace physical-device, firewall, installation, accessibility, display-scaling, and cross-platform acceptance. The Windows release gate remains blocked until the operator-driven matrix described in [docs/integration/windows-app.md](docs/integration/windows-app.md) is completed with current-package evidence.
+
+The Android release gate also remains blocked: API 26/33/35/36 and full Android
+17 compatibility/operator evidence plus the physical Android app ↔ Windows app
+matrix are incomplete. API 37 emulator tests do not satisfy these physical gates;
+see [Android acceptance](android/tests/app-acceptance.md).

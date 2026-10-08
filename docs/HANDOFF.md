@@ -116,6 +116,41 @@ Transfer data must remain streamed and bounded. Do not reintroduce whole-file bu
 5. Re-run Android and iOS consumer/interoperability suites whenever the C ABI or wire protocol changes.
 6. For broader distribution, replace the internal self-signed identity with a protected production signing certificate and update publisher documentation deliberately.
 
+## Android application workflow update (2026-10-08)
+
+The Android app work on `feature/android-client` adds a Compose client,
+repository SDK integration, unit/connected tests and repeatable
+[`test-app.ps1`](../android/scripts/test-app.ps1) / [`build-app.ps1`](../android/scripts/build-app.ps1).
+Use the [app guide](integration/android-app.md) for prerequisites and command
+semantics. Outputs are worktree-local and ignored. `-VerifyOnly` reads existing
+evidence without running Gradle/adb; connected execution requires an explicitly
+selected online serial. Debug APK output is
+`android/app/build/outputs/apk/debug/app-debug.apk`; the build script prints its
+absolute path/hash/size without signing secrets.
+
+The current available device is `emulator-5554`, API 37, x86_64. Measured counts
+and package identity belong to [Android acceptance](../android/tests/app-acceptance.md).
+No API 26/33/35/36 or full Android 17 operator gate has passed in this app task.
+All physical Android app ↔ Windows app rows are BLOCKED / NOT RUN because a real
+Android device, a usable Windows application peer and operator are missing.
+Historical SDK host evidence cannot close these rows or the Windows GUI gate.
+
+Known Android release concerns include safe publication on API 26–28 and generic
+SAF directories, which the current publisher rejects, and the separately observed
+SDK lint debt (8 errors/15 warnings; not passed or part of the Task 12 app gate).
+Task 13 must assess these issues and the unchanged physical/version release gates.
+The minimal app API lint fix adds an API29 recovery guard and day/night v27
+navigation-bar resources without suppressing errors or raising minimum SDK.
+
+Task12 measured210 app unit and91 full app connected tests, zero failures/errors/
+skipped, and app lint0 errors/22 warnings. The complete automated gate fails:
+SDK PublicApiTests ran7 cases, failed focusedClipboard with a Text-to-Image
+ClassCastException, and did not run the eighth acceptance case. The script and
+connected VerifyOnly exit1. Task13 must resolve/re-run this blocker. Standalone
+build-app/default-skip reruns were blocked by sandbox network access and
+interrupted pending approval; no passing command claim. APK hash/size are in the
+acceptance matrix.
+
 ## Useful references
 
 - [Windows native application](integration/windows-app.md)
