@@ -367,7 +367,7 @@ class TransferCoordinator internal constructor(
         origin: ShareOrigin,
         retryOf: ActivityKey?,
     ): ActivityKey {
-        val activity = outgoingActivity(deviceId, ContentKind.TEXT, origin, "Text", "text/plain", text.toByteArray().size.toLong(), retryOf)
+        val activity = outgoingActivity(deviceId, ContentKind.TEXT, origin, "", "text/plain", text.toByteArray().size.toLong(), retryOf)
         tracker.reserve(activity, ActivityPreview.Text(text))
         synchronized(gate) { retryPayloads[activity.id] = RetryPayload.Text(text, origin) }
         addActive(activity.id)

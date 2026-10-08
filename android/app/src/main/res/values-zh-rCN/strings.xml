@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="summary_image">图片</string>
+    <string name="settings_write_failed">无法保存设置。请检查可用存储空间，然后重试。</string>
     <string name="app_name">UniShare</string>
     <string name="nav_share">分享</string>
     <string name="nav_devices">设备</string>

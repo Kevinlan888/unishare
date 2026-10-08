@@ -5,9 +5,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import android.Manifest
-import android.content.res.Configuration
-import android.os.LocaleList
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,6 +21,8 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +56,7 @@ import com.unishare.app.presentation.session.SessionRoute
 import com.unishare.app.presentation.session.SessionViewModel
 import com.unishare.app.presentation.theme.UniShareTheme
 import com.unishare.app.domain.ActivityKey
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var pendingReceiveActivityId by mutableStateOf<ActivityKey?>(null)
@@ -77,7 +80,7 @@ class MainActivity : ComponentActivity() {
             val devicesViewModel: DevicesViewModel = viewModel(factory = viewModelFactory { initializer { DevicesViewModel(graph.deviceRepository) } })
             val devicesState by devicesViewModel.uiState.collectAsStateWithLifecycle()
             val historyViewModel: HistoryViewModel = viewModel(factory = viewModelFactory { initializer { HistoryViewModel(graph.activityRepository, graph.deviceRepository, FinalContentReader(::canReadPublishedContent)) } })
-            val historyState by historyViewModel.uiState.collectAsStateWithLifecycle()
+            val uiScope = rememberCoroutineScope()
             val settingsViewModel: SettingsViewModel = viewModel(factory = viewModelFactory { initializer {
                 SettingsViewModel(graph.settingsRepository, graph.runtimeController::setBackgroundReceive) { uri ->
                     contentResolver.persistedUriPermissions.filter { it.uri.toString() == uri }.forEach { grant ->
@@ -106,13 +109,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val systemConfig = LocalConfiguration.current
-            val localizedConfig = remember(systemConfig, settingsState.settings.language) { Configuration(systemConfig).apply {
-                when (settingsState.settings.language) {
-                    AppLanguage.ENGLISH -> setLocales(LocaleList.forLanguageTags("en"))
-                    AppLanguage.SIMPLIFIED_CHINESE -> setLocales(LocaleList.forLanguageTags("zh-CN"))
-                    AppLanguage.SYSTEM -> Unit
-                }
-            } }
+            val localizedConfig = remember(systemConfig, settingsState.settings.language) {
+                graph.localeResources.configuration(systemConfig, settingsState.settings.language)
+            }
             val localizedContext = remember(localizedConfig) { createConfigurationContext(localizedConfig) }
             val dark = when (settingsState.settings.theme) { AppTheme.SYSTEM -> isSystemInDarkTheme(); AppTheme.DARK -> true; AppTheme.LIGHT -> false }
             SideEffect {
@@ -121,7 +120,13 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = !dark
                 }
             }
-            CompositionLocalProvider(LocalContext provides localizedContext, LocalConfiguration provides localizedConfig) {
+            CompositionLocalProvider(
+                LocalContext provides localizedContext,
+                LocalConfiguration provides localizedConfig,
+                LocalResources provides localizedContext.resources,
+                LocalActivityResultRegistryOwner provides this,
+                LocalOnBackPressedDispatcherOwner provides this,
+            ) {
             UniShareTheme(darkTheme = dark) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -131,12 +136,14 @@ class MainActivity : ComponentActivity() {
                         homeUiState = homeState,
                         onRefresh = homeViewModel::refresh,
                         devicesContent = { open -> DevicesScreen(devicesState, devicesViewModel::connect, devicesViewModel::requestForget, devicesViewModel::confirmForget, devicesViewModel::dismissForget, open) },
-                        historyContent = { HistoryScreen(historyState, historyViewModel::setQuery) { id ->
+                        historyContent = {
+                            val historyState by historyViewModel.uiState.collectAsStateWithLifecycle()
+                            HistoryScreen(historyState, historyViewModel::setQuery) { id -> uiScope.launch {
                             historyViewModel.openFinalContent(id)?.let { uri ->
                                 val mime = historyState.rows.find { it.activity.id == id }?.activity?.mimeType ?: "application/octet-stream"
                                 openPublishedContent(uri, mime)
                             }
-                        } },
+                        } } },
                         settingsContent = { SettingsScreen(settingsState, settingsViewModel::saveDeviceName, { enabled ->
                             settingsViewModel.requestBackgroundReceive(enabled, AndroidNotificationPermissionChecker(this).isGranted(), lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
                         }, settingsViewModel::setNotifications, settingsViewModel::setLanguage, settingsViewModel::setTheme,
@@ -220,7 +227,7 @@ class MainActivity : ComponentActivity() {
             mimeType = mimeType,
             launch = ::startActivity,
             onUnavailable = {
-                Toast.makeText(this, R.string.receive_open_failed, Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, UniShareApplication.graph(this).localeResources.string(R.string.receive_open_failed), Toast.LENGTH_SHORT).show()
             },
         )
     }

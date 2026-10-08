@@ -6,11 +6,64 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import com.unishare.app.presentation.ManagementSettings
+import com.unishare.app.presentation.settings.SettingsViewModel
+import com.unishare.app.data.settings.AppSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReceiveOfferNotificationRelayTest {
+    @Test fun disabling_notifications_via_settings_cancels_offers_before_runtime_shutdown_and_suppresses_new_offers() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val settings = ManagementSettings()
+            val events = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 4)
+            val visible = mutableSetOf<ActivityKey>()
+            val shutdown = CompletableDeferred<Boolean>()
+            val vm = SettingsViewModel(settings, { shutdown.await() })
+            ReceiveOfferNotificationRelay(events, { true }, { visible += it }, { visible -= it }, backgroundScope, settings.settings)
+            runCurrent()
+            events.emit(IncomingConsentEvent.Pending(ActivityKey("old"))); runCurrent()
+            assertEquals(setOf(ActivityKey("old")), visible)
+            vm.setNotifications(false); runCurrent()
+            assertEquals(false, settings.settings.value.notificationsEnabled)
+            assertEquals(emptySet<ActivityKey>(), visible)
+            events.emit(IncomingConsentEvent.Pending(ActivityKey("new"))); runCurrent()
+            assertEquals(emptySet<ActivityKey>(), visible)
+            shutdown.complete(true); runCurrent()
+        } finally { Dispatchers.resetMain() }
+    }
+    @Test fun notification_disable_racing_with_a_synchronous_post_cannot_resurrect_an_offer() = runTest {
+        val settings = ManagementSettings()
+        val events = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 2)
+        val visible = mutableSetOf<ActivityKey>()
+        ReceiveOfferNotificationRelay(events, { true }, {
+            visible += it
+            settings.settings.value = settings.settings.value.copy(notificationsEnabled = false)
+        }, { visible -= it }, backgroundScope, settings.settings)
+        runCurrent()
+        events.emit(IncomingConsentEvent.Pending(ActivityKey("race"))); runCurrent()
+        assertEquals(emptySet<ActivityKey>(), visible)
+    }
+    @Test fun disabled_initial_policy_does_not_post_and_reenable_only_allows_new_pending_events() = runTest {
+        val settings = ManagementSettings(AppSettings(notificationsEnabled = false))
+        val events = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 2)
+        val posted = mutableListOf<ActivityKey>()
+        ReceiveOfferNotificationRelay(events, { true }, posted::add, {}, backgroundScope, settings.settings)
+        runCurrent()
+        events.emit(IncomingConsentEvent.Pending(ActivityKey("disabled"))); runCurrent()
+        assertEquals(emptyList<ActivityKey>(), posted)
+        settings.setNotificationsEnabled(true); runCurrent()
+        assertEquals(emptyList<ActivityKey>(), posted)
+        events.emit(IncomingConsentEvent.Pending(ActivityKey("enabled"))); runCurrent()
+        assertEquals(listOf(ActivityKey("enabled")), posted)
+    }
     @Test
     fun only_still_pending_consent_events_reach_the_notification_sink() = runTest {
         val consentEvents = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 3)

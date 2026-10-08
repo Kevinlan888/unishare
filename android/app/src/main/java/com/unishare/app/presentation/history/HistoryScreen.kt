@@ -15,6 +15,7 @@ import com.unishare.app.data.history.HistoryQuery
 import com.unishare.app.domain.*
 import com.unishare.app.presentation.components.ManagementChoice
 import com.unishare.app.presentation.format.DisplayFormatters
+import com.unishare.app.presentation.format.activityDisplayName
 
 @Composable
 fun HistoryScreen(state: HistoryUiState, onQuery: (HistoryQuery) -> Unit, onOpen: (ActivityKey) -> Unit) {
@@ -31,7 +32,7 @@ fun HistoryScreen(state: HistoryUiState, onQuery: (HistoryQuery) -> Unit, onOpen
             Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLowest) {
                 val context = LocalContext.current
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    Text(row.activity.displayName.ifBlank { stringResource(R.string.history_unnamed) }, style = MaterialTheme.typography.titleMedium)
+                    Text(activityDisplayName(row.activity.kind, row.activity.displayName), style = MaterialTheme.typography.titleMedium)
                     Text(row.deviceName.ifBlank { stringResource(R.string.unknown_device) }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(stringResource(R.string.history_metadata, directionLabel(row.activity.direction), kindLabel(row.activity.kind), DisplayFormatters.bytes(context, row.activity.byteCount)), style = MaterialTheme.typography.bodyMedium)
                     Text(statusLabel(row.activity.status))

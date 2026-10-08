@@ -32,6 +32,8 @@ import com.unishare.app.domain.*
 import com.unishare.app.presentation.devices.*
 import com.unishare.app.presentation.history.*
 import com.unishare.app.presentation.home.HomeUiState
+import com.unishare.app.presentation.home.HomeScreen
+import com.unishare.app.presentation.home.RecentActivityUi
 import com.unishare.app.presentation.navigation.UniShareNavHost
 import com.unishare.app.presentation.session.*
 import com.unishare.app.presentation.settings.*
@@ -132,6 +134,8 @@ class AppAccessibilityTest {
             val query = HistoryQuery("REPORT", peer.id, ShareDirection.INCOMING, ContentKind.FILE, ActivityStatus.COMPLETED)
             assertEquals(listOf("one"), repository.observeHistory(query).first().map { it.id.value })
             assertEquals(listOf("one"), database.activityDao().observeFiltered("pc", "INCOMING", "FILE", "COMPLETED").first().map { it.id })
+            assertEquals(listOf("pc", "phone"), database.activityDao().observeDeviceIds().first())
+            assertEquals(listOf("pc", "phone"), repository.observeDeviceIds().first().map { it.value })
             assertTrue(repository.observeHistory(HistoryQuery("private")).first().isEmpty())
         } finally { database.close() }
     }
@@ -193,6 +197,70 @@ class AppAccessibilityTest {
             }
         } finally {
             runBlocking { settings.setLanguage(original.language); settings.setTheme(original.theme) }
+        }
+    }
+    @Test fun production_language_scope_can_enter_real_session_route_with_picker_owners() {
+        val graph = UniShareApplication.graph(rule.activity)
+        val original = runBlocking { graph.settingsRepository.settings.first() }
+        val now = System.currentTimeMillis()
+        val activity = item.copy(id = ActivityKey("task11-locale-session"), displayName = "task11-session.pdf", createdAtMillis = now, updatedAtMillis = now)
+        val database = Room.databaseBuilder(rule.activity, ActivityDatabase::class.java, "unishare-activity.db").build()
+        try {
+            runBlocking {
+                graph.settingsRepository.setLanguage(AppLanguage.ENGLISH)
+                graph.activityRepository.upsert(activity)
+            }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                rule.onNodeWithText("task11-session.pdf").assertIsDisplayed()
+                runBlocking { graph.settingsRepository.setLanguage(AppLanguage.SIMPLIFIED_CHINESE) }
+                rule.onAllNodesWithText("分享").assertCountEquals(2)
+                rule.onNodeWithText("task11-session.pdf").performClick()
+                rule.onNodeWithContentDescription("添加附件").assertIsDisplayed()
+                scenario.recreate() // Lifecycle/saved-state owners must restore the real route and its picker.
+                rule.onNodeWithContentDescription("添加附件").assertIsDisplayed().performClick()
+                rule.onNodeWithText("照片").assertIsDisplayed()
+                rule.onNodeWithText("文件").assertIsDisplayed()
+                rule.onNodeWithText("文本").performClick()
+                androidx.test.espresso.Espresso.pressBack()
+                rule.onNodeWithText("task11-session.pdf").assertIsDisplayed()
+            }
+        } finally {
+            runBlocking {
+                graph.settingsRepository.setLanguage(original.language)
+                database.openHelper.writableDatabase.execSQL("DELETE FROM activities WHERE id = ?", arrayOf(activity.id.value))
+            }
+            database.close()
+        }
+    }
+    @Test fun generic_home_and_history_summaries_follow_locale_but_real_names_never_translate() {
+        val page = mutableStateOf(false)
+        val chinese = mutableStateOf(false)
+        val entries = listOf(
+            item.copy(id = ActivityKey("text"), kind = ContentKind.TEXT, displayName = "Text"),
+            item.copy(id = ActivityKey("image"), kind = ContentKind.IMAGE, displayName = ""),
+            item.copy(id = ActivityKey("file"), kind = ContentKind.FILE, displayName = ""),
+            item.copy(id = ActivityKey("real"), kind = ContentKind.FILE, displayName = "File"),
+        )
+        setContent {
+            val config = Configuration(rule.activity.resources.configuration).apply { setLocales(LocaleList.forLanguageTags(if (chinese.value) "zh-CN" else "en-US")) }
+            val context = rule.activity.createConfigurationContext(config)
+            CompositionLocalProvider(LocalContext provides context, LocalConfiguration provides config, LocalResources provides context.resources) {
+                if (page.value) HistoryScreen(HistoryUiState(rows = entries.map { HistoryRow(it, "Studio PC", false) }), {}, {})
+                else HomeScreen(HomeUiState(recent = entries.map { RecentActivityUi(it.id, it.deviceId, "Studio PC", null, it.displayName, it.status, null, it.updatedAtMillis, it.kind) }), {}, {}, {}, {}, {}, {}, {})
+            }
+        }
+        listOf(false, true).forEach { zh ->
+            rule.runOnIdle { chinese.value = zh }
+            listOf(false, true).forEach { history ->
+                rule.runOnIdle { page.value = history }
+                val labels = if (zh) listOf("文本", "图片", "文件") else listOf("Text", "Image", "File")
+                labels.forEach { label ->
+                    rule.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(label))
+                    rule.onAllNodesWithText(label).onFirst().assertIsDisplayed()
+                }
+                rule.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("File"))
+                rule.onAllNodesWithText("File").onLast().assertIsDisplayed()
+            }
         }
     }
     private fun largeTextActions(orientation: Int) {

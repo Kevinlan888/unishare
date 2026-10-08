@@ -21,6 +21,15 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ActivityTrackerTest {
+    @Test fun generic_summary_names_are_semantic_and_never_persist_english_type_labels() = runTest {
+        val repository = FakeActivityRepository()
+        val tracker = tracker(repository)
+        ContentKind.entries.forEachIndexed { index, kind ->
+            tracker.reserve(activity().copy(id = ActivityKey("generic-$index"), kind = kind, displayName = if (kind == ContentKind.TEXT) "Text" else ""))
+        }
+        runCurrent()
+        assertEquals(listOf("", "", ""), repository.upserts.map { it.displayName })
+    }
     @Test
     fun early_transfer_registration_is_replayed_when_operation_is_bound() = runTest {
         val repository = FakeActivityRepository()

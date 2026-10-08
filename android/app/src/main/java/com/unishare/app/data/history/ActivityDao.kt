@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ActivityDao {
+    @Query("SELECT DISTINCT deviceId FROM activities ORDER BY deviceId")
+    fun observeDeviceIds(): Flow<List<String>>
+
     @Query("""
         SELECT * FROM activities
         WHERE (:deviceId IS NULL OR deviceId = :deviceId)

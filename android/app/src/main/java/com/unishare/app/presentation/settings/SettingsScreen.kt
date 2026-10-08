@@ -27,6 +27,7 @@ fun SettingsScreen(state: SettingsUiState, onName: (String) -> Unit, onBackgroun
             SettingsError.NOTIFICATION_DENIED -> R.string.settings_notification_denied
             SettingsError.ACTIVITY_NOT_VISIBLE -> R.string.settings_visible_required
             SettingsError.RUNTIME_FAILED -> R.string.settings_runtime_failed
+            SettingsError.WRITE_FAILED -> R.string.settings_write_failed
         }), color = MaterialTheme.colorScheme.error) } }
         if (state.error == SettingsError.NOTIFICATION_DENIED) item {
             TextButton(onClick = onNotificationSettings, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.settings_open_notifications)) }

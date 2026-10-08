@@ -10,9 +10,11 @@ import android.graphics.drawable.Icon
 import com.unishare.app.MainActivity
 import com.unishare.app.R
 import com.unishare.app.domain.ActivityKey
+import com.unishare.app.UniShareApplication
+import com.unishare.app.platform.AppLocaleResources
 
 /** Notification copy is intentionally generic: payload, peer and path data never enter it. */
-class ShareNotificationFactory(context: Context) {
+class ShareNotificationFactory(context: Context, private val locale: AppLocaleResources = UniShareApplication.graph(context).localeResources) {
     private val application = context.applicationContext
     private val manager = application.getSystemService(NotificationManager::class.java)
 
@@ -20,27 +22,28 @@ class ShareNotificationFactory(context: Context) {
         manager.createNotificationChannels(listOf(
             NotificationChannel(
                 RECEIVE_CHANNEL_ID,
-                application.getString(R.string.notification_channel_receive),
+                if (locale.isReady) locale.string(R.string.notification_channel_receive) else locale.string(R.string.app_name),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = application.getString(R.string.notification_channel_receive_description)
+                description = if (locale.isReady) locale.string(R.string.notification_channel_receive_description) else null
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             },
             NotificationChannel(
                 TRANSFER_CHANNEL_ID,
-                application.getString(R.string.notification_channel_transfer),
+                if (locale.isReady) locale.string(R.string.notification_channel_transfer) else locale.string(R.string.app_name),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = application.getString(R.string.notification_channel_transfer_description)
+                description = if (locale.isReady) locale.string(R.string.notification_channel_transfer_description) else null
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             },
         ))
     }
 
     fun ongoingReceive(onlineDeviceCount: Int): Notification =
+        if (!locale.isReady) initialForeground(RECEIVE_CHANNEL_ID) else
         baseBuilder(RECEIVE_CHANNEL_ID)
-            .setContentTitle(application.getString(R.string.notification_receive_title))
-            .setContentText(application.resources.getQuantityString(
+            .setContentTitle(locale.string(R.string.notification_receive_title))
+            .setContentText(locale.resources.getQuantityString(
                 R.plurals.notification_receive_content,
                 onlineDeviceCount.coerceAtLeast(0),
                 onlineDeviceCount.coerceAtLeast(0),
@@ -49,21 +52,22 @@ class ShareNotificationFactory(context: Context) {
             .setCategory(Notification.CATEGORY_SERVICE)
             .addAction(Notification.Action.Builder(
                 Icon.createWithResource(application, R.drawable.ic_launcher_foreground),
-                application.getString(R.string.notification_stop_background),
+                locale.string(R.string.notification_stop_background),
                 serviceAction(ShareForegroundService.ACTION_STOP_BACKGROUND_RECEIVE, STOP_REQUEST_CODE),
             ).build())
             .build()
 
     fun transferProgress(progress: Int): Notification =
+        if (!locale.isReady) initialForeground(TRANSFER_CHANNEL_ID) else
         baseBuilder(TRANSFER_CHANNEL_ID)
-            .setContentTitle(application.getString(R.string.notification_transfer_title))
-            .setContentText(application.getString(R.string.notification_transfer_content))
+            .setContentTitle(locale.string(R.string.notification_transfer_title))
+            .setContentText(locale.string(R.string.notification_transfer_content))
             .setProgress(100, progress.coerceIn(0, 100), false)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
             .addAction(Notification.Action.Builder(
                 Icon.createWithResource(application, R.drawable.ic_launcher_foreground),
-                application.getString(R.string.notification_cancel_transfer),
+                locale.string(R.string.notification_cancel_transfer),
                 PendingIntent.getForegroundService(
                     application,
                     CANCEL_REQUEST_CODE,
@@ -77,8 +81,8 @@ class ShareNotificationFactory(context: Context) {
     /** A consent-only notification; accepting or rejecting always happens in the app. */
     fun incomingOffer(activityId: ActivityKey): Notification =
         baseBuilder(TRANSFER_CHANNEL_ID)
-            .setContentTitle(application.getString(R.string.notification_receive_request_title))
-            .setContentText(application.getString(R.string.notification_receive_request_content))
+            .setContentTitle(locale.string(R.string.notification_receive_request_title))
+            .setContentText(locale.string(R.string.notification_receive_request_content))
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(PendingIntent.getActivity(
@@ -122,6 +126,9 @@ class ShareNotificationFactory(context: Context) {
                 Intent(application, MainActivity::class.java),
                 immutableUpdateCurrent,
             ))
+
+    private fun initialForeground(channel: String): Notification =
+        baseBuilder(channel).setContentTitle(locale.string(R.string.app_name)).setOngoing(true).build()
 
     private fun serviceAction(action: String, requestCode: Int): PendingIntent = PendingIntent.getForegroundService(
         application,

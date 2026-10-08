@@ -55,6 +55,7 @@ class HomeViewModel(
                     status = activity.status,
                     progressPercent = activity.progressPercent(),
                     updatedAtMillis = activity.updatedAtMillis,
+                    kind = activity.kind,
                 )
             },
             nearby = devices

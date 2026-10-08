@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="summary_image">Image</string>
+    <string name="settings_write_failed">Could not save settings. Check available storage and try again.</string>
     <string name="app_name">UniShare</string>
     <string name="nav_share">Share</string>
     <string name="nav_devices">Devices</string>

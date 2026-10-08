@@ -66,4 +66,71 @@ class SettingsViewModelTest {
         assertFalse(repository.settings.value.backgroundReceiveEnabled)
         assertFalse(repository.settings.value.notificationsEnabled)
     }
+    @Test fun all_settings_write_failures_are_reported_and_leave_controls_usable() = runTest(dispatcher) {
+        listOf("name", "notifications", "language", "theme", "directory").forEach { operation ->
+            val backing = ManagementSettings()
+            val repository = FailingSettings(backing, operation)
+            val vm = SettingsViewModel(repository, { true })
+            advanceUntilIdle()
+            when (operation) {
+                "name" -> vm.saveDeviceName("New PC")
+                "notifications" -> vm.setNotifications(false)
+                "language" -> vm.setLanguage(AppLanguage.SIMPLIFIED_CHINESE)
+                "theme" -> vm.setTheme(AppTheme.DARK)
+                else -> vm.restoreDownloads()
+            }
+            advanceUntilIdle()
+            assertNotNull("$operation must surface a recoverable error", vm.uiState.value.error)
+            assertFalse(vm.uiState.value.busy)
+            assertEquals(AppSettings(), backing.settings.value)
+            repository.failingOperation = null
+            vm.saveDeviceName("Recovered PC"); advanceUntilIdle()
+            assertEquals("Recovered PC", backing.settings.value.deviceName)
+        }
+    }
+    @Test fun denial_and_runtime_rollback_write_failure_does_not_crash_or_leave_busy() = runTest(dispatcher) {
+        val backing = ManagementSettings(AppSettings(backgroundReceiveEnabled = true))
+        val vm = SettingsViewModel(FailingSettings(backing, "background"), { false })
+        advanceUntilIdle()
+        vm.requestBackgroundReceive(true, false, true)
+        vm.onNotificationPermissionResult(false, true); advanceUntilIdle()
+        assertNotNull(vm.uiState.value.error)
+        assertFalse(vm.uiState.value.requestNotificationPermission)
+        assertFalse(vm.uiState.value.busy)
+        vm.requestBackgroundReceive(true, true, true); advanceUntilIdle()
+        assertNotNull(vm.uiState.value.error)
+        assertFalse(vm.uiState.value.busy)
+    }
+    @Test fun failed_legacy_clear_is_never_exposed_as_a_supported_directory_and_can_retry() = runTest(dispatcher) {
+        val backing = ManagementSettings(AppSettings(receiveTreeUri = "content://legacy/tree", receiveDirectoryDisplayName = "Legacy"))
+        val repository = FailingSettings(backing, "directory")
+        val vm = SettingsViewModel(repository, { true })
+        advanceUntilIdle()
+        assertNotNull(vm.uiState.value.error)
+        assertNull(vm.uiState.value.settings.receiveTreeUri)
+        assertFalse(vm.uiState.value.busy)
+        repository.failingOperation = null
+        vm.restoreDownloads(); advanceUntilIdle()
+        assertNull(backing.settings.value.receiveTreeUri)
+        assertTrue(vm.uiState.value.directoryCorrected)
+    }
+    @Test fun runtime_cancellation_is_not_converted_to_a_failed_write_or_rollback() = runTest(dispatcher) {
+        val backing = ManagementSettings(AppSettings(backgroundReceiveEnabled = true))
+        val vm = SettingsViewModel(backing, { throw CancellationException("scope stopped") })
+        advanceUntilIdle()
+        vm.requestBackgroundReceive(true, true, true); advanceUntilIdle()
+        assertTrue(backing.settings.value.backgroundReceiveEnabled)
+        assertNull(vm.uiState.value.error)
+        assertFalse(vm.uiState.value.busy)
+    }
+}
+
+private class FailingSettings(private val backing: ManagementSettings, var failingOperation: String?) : SettingsRepository by backing {
+    private fun check(operation: String) { if (failingOperation == operation) throw java.io.IOException("storage unavailable") }
+    override suspend fun setDeviceName(name: String) { check("name"); backing.setDeviceName(name) }
+    override suspend fun setNotificationsEnabled(enabled: Boolean) { check("notifications"); backing.setNotificationsEnabled(enabled) }
+    override suspend fun setLanguage(language: AppLanguage) { check("language"); backing.setLanguage(language) }
+    override suspend fun setTheme(theme: AppTheme) { check("theme"); backing.setTheme(theme) }
+    override suspend fun setReceiveDirectory(treeUri: String?, displayName: String?) { check("directory"); backing.setReceiveDirectory(treeUri, displayName) }
+    override suspend fun setBackgroundReceiveEnabled(enabled: Boolean) { check("background"); backing.setBackgroundReceiveEnabled(enabled) }
 }

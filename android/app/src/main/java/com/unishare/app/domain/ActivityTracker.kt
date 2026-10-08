@@ -273,14 +273,11 @@ class ActivityTracker(
     }
 
     private fun sanitize(activity: ShareActivity): ShareActivity {
-        val fallback = when (activity.kind) {
-            ContentKind.TEXT -> "Text"
-            ContentKind.IMAGE -> "Image"
-            ContentKind.FILE -> "File"
-        }
-        val name = activity.displayName.replace('\\', '/').substringAfterLast('/')
+        // Blank names mean "use the semantic content kind" in the display layer, never
+        // an English label persisted as if it were an actual filename.
+        val name = if (activity.kind == ContentKind.TEXT) "" else activity.displayName.replace('\\', '/').substringAfterLast('/')
             .filterNot(Char::isISOControl).trim().take(180)
-            .takeUnless { it.isEmpty() || it == "." || it == ".." } ?: fallback
+            .takeUnless { it.isEmpty() || it == "." || it == ".." }.orEmpty()
         val mime = activity.mimeType.filterNot(Char::isISOControl).trim().take(180).ifEmpty {
             when (activity.kind) {
                 ContentKind.TEXT -> "text/plain"

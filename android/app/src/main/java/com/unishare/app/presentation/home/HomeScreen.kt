@@ -47,6 +47,7 @@ import com.unishare.app.presentation.components.DeviceIcon
 import com.unishare.app.presentation.components.EmptyState
 import com.unishare.app.presentation.components.StatusIndicator
 import com.unishare.app.presentation.components.StatusTone
+import com.unishare.app.presentation.format.activityDisplayName
 import java.util.Calendar
 import java.util.Date
 
@@ -262,6 +263,7 @@ private fun GroupedSurface(
 
 @Composable
 private fun RecentActivityRow(activity: RecentActivityUi, onClick: () -> Unit) {
+    val displayName = activityDisplayName(activity.kind, activity.displayName)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -287,8 +289,8 @@ private fun RecentActivityRow(activity: RecentActivityUi, onClick: () -> Unit) {
             )
             Text(
                 text = activity.progressPercent?.let {
-                    stringResource(R.string.recent_progress, activity.displayName, it)
-                } ?: activity.displayName,
+                    stringResource(R.string.recent_progress, displayName, it)
+                } ?: displayName,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

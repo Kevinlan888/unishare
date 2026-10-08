@@ -16,6 +16,7 @@ class ManagementDevices(initial: List<DeviceSummary> = emptyList()) : DeviceRepo
 }
 class ManagementActivities(initial: List<ShareActivity>) : ActivityRepository {
     val rows = MutableStateFlow(initial)
+    override fun observeDeviceIds() = rows.map { items -> items.map { it.deviceId }.distinct() }
     override fun observeRecent(limit: Int) = rows.map { it.take(limit) }
     override fun observeDevice(device: DeviceKey) = rows.map { items -> items.filter { it.deviceId == device } }
     override suspend fun upsert(activity: ShareActivity) { rows.value = rows.value.filterNot { it.id == activity.id } + activity }

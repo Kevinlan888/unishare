@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 interface ActivityRepository {
+    fun observeDeviceIds(): Flow<List<DeviceKey>> =
+        observeRecent(Int.MAX_VALUE).map { rows -> rows.map { it.deviceId }.distinct() }
     fun observeHistory(query: HistoryQuery): Flow<List<ShareActivity>> =
         observeRecent(Int.MAX_VALUE).map(query::filter)
     fun observeRecent(limit: Int): Flow<List<ShareActivity>>

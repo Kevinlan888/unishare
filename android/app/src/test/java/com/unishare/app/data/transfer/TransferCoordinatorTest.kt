@@ -45,6 +45,11 @@ import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TransferCoordinatorTest {
+    @Test fun outgoing_text_summary_is_a_semantic_type_not_an_english_display_name() = runTest {
+        val fixture = fixture()
+        val id = fixture.coordinator.sendText(device, "hello")
+        assertEquals("", fixture.tracker.find(id)?.displayName)
+    }
     @Test
     fun text_photo_and_file_use_the_matching_sdk_submission() = runTest {
         val fixture = fixture()

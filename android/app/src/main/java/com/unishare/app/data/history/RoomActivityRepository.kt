@@ -11,6 +11,8 @@ class RoomActivityRepository(
     private val clock: () -> Long = System::currentTimeMillis,
 ) : ActivityRepository {
     private val dao = database.activityDao()
+    override fun observeDeviceIds(): Flow<List<DeviceKey>> =
+        dao.observeDeviceIds().map { ids -> ids.map(::DeviceKey) }
 
     override fun observeHistory(query: HistoryQuery): Flow<List<ShareActivity>> = dao.observeFiltered(
         query.device?.value, query.direction?.name, query.kind?.name, query.status?.name,

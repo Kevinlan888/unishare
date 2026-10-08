@@ -7,6 +7,10 @@ import android.os.Build
 import android.os.IBinder
 import com.unishare.app.UniShareApplication
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 
 class ShareServiceActionHandler(
     private val setBackgroundReceive: suspend (Boolean) -> Unit,
@@ -22,30 +26,27 @@ class ShareServiceActionHandler(
 
 class ShareForegroundService : Service() {
     private lateinit var notifications: ShareNotificationFactory
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var currentReason: ServiceReason? = null
+    private var foregroundStarted = false
 
     override fun onCreate() {
         super.onCreate()
         notifications = ShareNotificationFactory(this)
         notifications.createChannels()
+        serviceScope.launch {
+            (application as UniShareApplication).graph.localeResources.language.collect {
+                notifications.createChannels()
+                if (foregroundStarted) showForegroundNotification()
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val reason = intent?.getStringExtra(EXTRA_REASON)
+        currentReason = intent?.getStringExtra(EXTRA_REASON)
             ?.let { value -> ServiceReason.entries.firstOrNull { it.name == value } }
-        val notification = if (reason == ServiceReason.ACTIVE_TRANSFER) {
-            notifications.transferProgress(progress = 0)
-        } else {
-            notifications.ongoingReceive(onlineDeviceCount = 0)
-        }
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        foregroundStarted = true
+        showForegroundNotification()
 
         val graph = (application as UniShareApplication).graph
         val handler = ShareServiceActionHandler(
@@ -69,9 +70,28 @@ class ShareForegroundService : Service() {
         return RESTART_MODE
     }
 
+    private fun showForegroundNotification() {
+        val notification = if (currentReason == ServiceReason.ACTIVE_TRANSFER) {
+            notifications.transferProgress(progress = 0)
+        } else {
+            notifications.ongoingReceive(onlineDeviceCount = 0)
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }

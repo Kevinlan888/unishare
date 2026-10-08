@@ -17,6 +17,8 @@ import com.unishare.app.data.transfer.TransferCoordinator
 import com.unishare.app.domain.ActivityTracker
 import com.unishare.app.platform.AndroidNotificationPermissionChecker
 import com.unishare.app.platform.AndroidContentUriPermissionRetainer
+import com.unishare.app.platform.AppLocaleResources
+import kotlinx.coroutines.flow.filterNotNull
 import com.unishare.app.service.ForegroundServiceController
 import com.unishare.app.service.RuntimeController
 import com.unishare.app.service.ReceiveOfferNotificationRelay
@@ -61,6 +63,7 @@ class AppGraph(application: Application) {
         application.preferencesDataStoreFile("settings")
     }
     val settingsRepository = DataStoreSettingsRepository(settingsStore)
+    val localeResources = AppLocaleResources(application, settingsRepository.settings, scope)
 
     private val activityDatabase = Room.databaseBuilder(
         application,
@@ -89,7 +92,7 @@ class AppGraph(application: Application) {
         receivePublisher = receivePublisher,
         scope = scope,
     )
-    private val shareNotifications = ShareNotificationFactory(application).also { it.createChannels() }
+    private val shareNotifications = ShareNotificationFactory(application, localeResources)
     @Suppress("unused") // Keeps the application-scope collector owned by this graph.
     private val receiveOfferNotifications = ReceiveOfferNotificationRelay(
         consentEvents = transferCoordinator.consentEvents,
@@ -97,6 +100,7 @@ class AppGraph(application: Application) {
         notify = shareNotifications::postIncomingOffer,
         cancel = shareNotifications::cancelIncomingOffer,
         scope = scope,
+        settings = localeResources.settings,
     )
     val foregroundServiceController = ForegroundServiceController(
         application,
@@ -112,6 +116,7 @@ class AppGraph(application: Application) {
     )
 
     init {
+        scope.launch { localeResources.language.filterNotNull().collect { shareNotifications.createChannels() } }
         scope.launch(Dispatchers.IO) {
             val now = System.currentTimeMillis()
             activityRepository.markNonTerminalInterrupted(now)

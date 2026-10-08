@@ -74,7 +74,7 @@ fun SessionRoute(
     onBack: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val context by rememberUpdatedState(LocalContext.current)
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbar = remember { SnackbarHostState() }
     val picker = rememberContentPickerLauncher(

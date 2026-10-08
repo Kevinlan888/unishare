@@ -22,6 +22,7 @@ data class RecentActivityUi(
     val status: ActivityStatus,
     val progressPercent: Int?,
     val updatedAtMillis: Long,
+    val kind: com.unishare.app.domain.ContentKind = com.unishare.app.domain.ContentKind.FILE,
 )
 
 data class NearbyDeviceUi(
