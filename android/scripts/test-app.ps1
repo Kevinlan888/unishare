@@ -18,6 +18,29 @@ function Require-File([string]$Path) {
     if ((Get-Item -LiteralPath $Path).Length -eq 0) { throw "Empty deliverable: $Path" }
 }
 
+function Test-ManifestPermissions([string[]]$Permissions, [string]$Label) {
+    foreach ($permission in @('INTERNET', 'ACCESS_NETWORK_STATE', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_CONNECTED_DEVICE', 'CHANGE_NETWORK_STATE', 'POST_NOTIFICATIONS')) {
+        if ("android.permission.$permission" -notin $Permissions) { throw "Missing $Label manifest permission: $permission" }
+    }
+    foreach ($permission in @('MANAGE_EXTERNAL_STORAGE', 'READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE', 'ACCESS_LOCAL_NETWORK')) {
+        if ("android.permission.$permission" -in $Permissions) { throw "Unexpected $Label target-36/storage permission: $permission" }
+    }
+}
+
+function Test-ForegroundService([xml]$Manifest, [string]$PackageName) {
+    $androidNs = 'http://schemas.android.com/apk/res/android'
+    $services = @($Manifest.SelectNodes("/*[local-name()='manifest']/*[local-name()='application']/*[local-name()='service']") | Where-Object {
+        $name = $_.GetAttribute('name', $androidNs)
+        if ($name.StartsWith('.')) { $name = $PackageName + $name }
+        elseif ($name -and !$name.Contains('.')) { $name = "$PackageName.$name" }
+        $name -eq 'com.unishare.app.service.ShareForegroundService'
+    })
+    if ($services.Count -ne 1) { throw 'Foreground service contract: exactly one ShareForegroundService component required' }
+    $service = $services[0]
+    $types = @($service.GetAttribute('foregroundServiceType', $androidNs).Split('|') | ForEach-Object { $_.Trim() })
+    if ($service.GetAttribute('exported', $androidNs) -ne 'false' -or 'connectedDevice' -notin $types) { throw 'Foreground service contract: exported=false and connectedDevice required' }
+}
+
 function Test-StaticContract {
     foreach ($relative in @('gradlew.bat', 'settings.gradle.kts', 'app/build.gradle.kts', 'share-sdk/build.gradle.kts')) {
         Require-File (Join-Path $androidRoot $relative)
@@ -39,18 +62,12 @@ function Test-StaticContract {
     $permissions = @()
     foreach ($module in @('app', 'share-sdk')) {
         [xml]$manifest = Get-Content -LiteralPath (Join-Path $androidRoot "$module/src/main/AndroidManifest.xml") -Raw
-        $permissions += @($manifest.SelectNodes('/manifest/uses-permission') | ForEach-Object { $_.GetAttribute('name', $nsUri) })
+        $permissions += @($manifest.SelectNodes("/*[local-name()='manifest']/*[local-name()='uses-permission' or local-name()='uses-permission-sdk-23']") | ForEach-Object { $_.GetAttribute('name', $nsUri) })
         if ($module -eq 'app') {
-            $service = $manifest.SelectSingleNode('/manifest/application/service')
-            if (!$service -or $service.GetAttribute('foregroundServiceType', $nsUri) -ne 'connectedDevice' -or $service.GetAttribute('exported', $nsUri) -ne 'false') { throw 'Foreground service contract mismatch' }
+            Test-ForegroundService $manifest 'com.unishare.app'
         }
     }
-    foreach ($permission in @('INTERNET', 'ACCESS_NETWORK_STATE', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_CONNECTED_DEVICE', 'CHANGE_NETWORK_STATE', 'POST_NOTIFICATIONS')) {
-        if ("android.permission.$permission" -notin $permissions) { throw "Missing manifest permission: $permission" }
-    }
-    foreach ($permission in @('MANAGE_EXTERNAL_STORAGE', 'READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE', 'ACCESS_LOCAL_NETWORK')) {
-        if ("android.permission.$permission" -in $permissions) { throw "Unexpected target-36/storage permission: $permission" }
-    }
+    Test-ManifestPermissions $permissions 'source'
     Write-Output 'PASS static module, SDK, manifest permission and connectedDevice service contracts'
 }
 
@@ -61,15 +78,36 @@ function Test-JunitReport([string]$Directory, [string]$Label) {
     $tests = 0; $failures = 0; $errors = 0; $skipped = 0
     foreach ($file in $files) {
         [xml]$report = Get-Content -LiteralPath $file.FullName -Raw
-        $suites = @($report.SelectNodes('/testsuite | /testsuites/testsuite'))
-        if ($suites.Count -eq 0) { throw "Invalid JUnit report: $($file.FullName)" }
-        foreach ($suite in $suites) {
-            foreach ($attribute in @('tests', 'failures', 'errors', 'skipped')) {
-                $value = $suite.GetAttribute($attribute)
-                if ($value -notmatch '^\d+$') { throw "Invalid $attribute count: $($file.FullName)" }
+        if (!$report.DocumentElement -or $report.DocumentElement.LocalName -notin @('testsuite', 'testsuites')) { throw "Invalid JUnit root: $($file.FullName)" }
+        $cases = @($report.SelectNodes("//*[local-name()='testcase']"))
+        $suites = @($report.SelectNodes("//*[local-name()='testsuite']"))
+        if ($cases.Count -eq 0 -or $suites.Count -eq 0) { throw "Empty JUnit testcase report: $($file.FullName)" }
+        foreach ($case in $cases) {
+            if ($case.ParentNode.LocalName -ne 'testsuite') { throw "JUnit testcase outside suite: $($file.FullName)" }
+        }
+        $containers = @($report.SelectNodes("//*[local-name()='testsuite' or local-name()='testsuites']"))
+        foreach ($container in $containers) {
+            if ($container -ne $report.DocumentElement -and $container.ParentNode.LocalName -notin @('testsuite', 'testsuites')) { throw "Invalid JUnit suite nesting: $($file.FullName)" }
+            $actual = @{
+                tests = @($container.SelectNodes(".//*[local-name()='testcase']")).Count
+                failures = @($container.SelectNodes(".//*[local-name()='testcase'][*[local-name()='failure']]")).Count
+                errors = @($container.SelectNodes(".//*[local-name()='testcase'][*[local-name()='error']]")).Count
+                skipped = @($container.SelectNodes(".//*[local-name()='testcase'][*[local-name()='skipped']]")).Count
             }
-            $tests += [int]$suite.tests; $failures += [int]$suite.failures
-            $errors += [int]$suite.errors; $skipped += [int]$suite.skipped
+            foreach ($attribute in @('tests', 'failures', 'errors', 'skipped')) {
+                $value = $container.GetAttribute($attribute)
+                $declared = 0L
+                if ($value -notmatch '^\d+$' -or ![long]::TryParse($value, [ref]$declared)) { throw "Missing/invalid JUnit $attribute count: $($file.FullName)" }
+                if ($declared -ne $actual[$attribute]) { throw "JUnit $attribute aggregate mismatch: declared=$declared actual=$($actual[$attribute]) in $($file.FullName)" }
+            }
+        }
+        $fileFailures = @($report.SelectNodes("//*[local-name()='failure']")).Count
+        $fileErrors = @($report.SelectNodes("//*[local-name()='error']")).Count
+        $fileSkipped = @($report.SelectNodes("//*[local-name()='skipped']")).Count
+        $tests += $cases.Count; $failures += $fileFailures; $errors += $fileErrors; $skipped += $fileSkipped
+        # Nodes are authoritative even if an aggregate attribute was spoofed.
+        if ($fileFailures -ne 0 -or $fileErrors -ne 0 -or $fileSkipped -ne 0) {
+            throw "$Label JUnit failed/skipped nodes: tests=$($cases.Count) failures=$fileFailures errors=$fileErrors skipped=$fileSkipped in $($file.FullName)"
         }
     }
     Write-Output "$Label XML: tests=$tests failures=$failures errors=$errors skipped=$skipped files=$($files.Count)"
@@ -85,10 +123,9 @@ function Test-Deliverables {
     if ($merged.manifest.package -ne 'com.unishare.app') { throw 'Wrong merged application ID' }
     $usesSdk = $merged.SelectSingleNode('/manifest/uses-sdk')
     if (!$usesSdk -or $usesSdk.GetAttribute('minSdkVersion', $androidNs) -ne '26' -or $usesSdk.GetAttribute('targetSdkVersion', $androidNs) -ne '36') { throw 'Wrong merged min/target SDK' }
-    $mergedPermissions = @($merged.SelectNodes('/manifest/uses-permission') | ForEach-Object { $_.GetAttribute('name', $androidNs) })
-    foreach ($permission in @('INTERNET', 'ACCESS_NETWORK_STATE', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_CONNECTED_DEVICE', 'CHANGE_NETWORK_STATE', 'POST_NOTIFICATIONS')) {
-        if ("android.permission.$permission" -notin $mergedPermissions) { throw "Missing merged manifest permission: $permission" }
-    }
+    $mergedPermissions = @($merged.SelectNodes("/*[local-name()='manifest']/*[local-name()='uses-permission' or local-name()='uses-permission-sdk-23']") | ForEach-Object { $_.GetAttribute('name', $androidNs) })
+    Test-ManifestPermissions $mergedPermissions 'merged'
+    Test-ForegroundService $merged 'com.unishare.app'
     Write-Output 'PASS existing merged manifest application ID, API26/target36 and permissions'
     Test-JunitReport (Join-Path $OutputRoot 'app/build/test-results/testDebugUnitTest') 'App unit'
     Require-File (Join-Path $OutputRoot 'app/build/reports/tests/testDebugUnitTest/index.html')
