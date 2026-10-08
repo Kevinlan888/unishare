@@ -22,6 +22,7 @@ import com.unishare.app.presentation.navigation.UniShareNavHost
 import com.unishare.app.presentation.pairing.PairingDialog
 import com.unishare.app.presentation.pairing.PairingViewModel
 import com.unishare.app.presentation.receive.FinalContentReader
+import com.unishare.app.presentation.receive.ForegroundReceiveQueue
 import com.unishare.app.presentation.receive.ReceiveScreen
 import com.unishare.app.presentation.receive.ReceiveViewModel
 import com.unishare.app.presentation.receive.launchPublishedContent
@@ -29,14 +30,19 @@ import com.unishare.app.presentation.session.SessionRoute
 import com.unishare.app.presentation.session.SessionViewModel
 import com.unishare.app.presentation.theme.UniShareTheme
 import com.unishare.app.domain.ActivityKey
-import com.unishare.app.data.transfer.IncomingConsentEvent
 
 class MainActivity : ComponentActivity() {
     private var pendingReceiveActivityId by mutableStateOf<ActivityKey?>(null)
+    private lateinit var foregroundReceiveQueue: ForegroundReceiveQueue
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingReceiveActivityId = intent.consumeReceiveActivityKey()
+        foregroundReceiveQueue = ForegroundReceiveQueue(
+            savedInstanceState?.getString(STATE_ACTIVE_RECEIVE_ACTIVITY_ID)
+                ?.takeIf(String::isNotBlank)
+                ?.let(::ActivityKey),
+        )
+        pendingReceiveActivityId = intent.consumeReceiveActivityKey()?.let(foregroundReceiveQueue::open)
         enableEdgeToEdge()
         setContent {
             val graph = UniShareApplication.graph(this)
@@ -45,12 +51,9 @@ class MainActivity : ComponentActivity() {
             val pairingViewModel: PairingViewModel = viewModel(factory = PairingViewModel.Factory(graph))
             val pairingState by pairingViewModel.uiState.collectAsStateWithLifecycle()
             LaunchedEffect(graph) {
-                if (pendingReceiveActivityId == null) {
-                    pendingReceiveActivityId = graph.transferCoordinator.pendingOffers().firstOrNull()?.first
-                }
-                graph.transferCoordinator.consentEvents.collect { event ->
-                    if (event is IncomingConsentEvent.Pending) {
-                        pendingReceiveActivityId = event.activityId
+                graph.transferCoordinator.pendingConsentActivityIds.collect { pendingActivityIds ->
+                    foregroundReceiveQueue.reconcile(pendingActivityIds)?.let { activityId ->
+                        pendingReceiveActivityId = activityId
                     }
                 }
             }
@@ -110,8 +113,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        pendingReceiveActivityId = intent.consumeReceiveActivityKey()
+        pendingReceiveActivityId = intent.consumeReceiveActivityKey()?.let(foregroundReceiveQueue::open)
         setIntent(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        foregroundReceiveQueue.activeActivityId?.let { activityId ->
+            outState.putString(STATE_ACTIVE_RECEIVE_ACTIVITY_ID, activityId.value)
+        }
+        super.onSaveInstanceState(outState)
     }
 
     private fun canReadPublishedContent(rawUri: String): Boolean {
@@ -137,6 +147,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_RECEIVE_ACTIVITY_ID = "com.unishare.app.extra.RECEIVE_ACTIVITY_ID"
+        private const val STATE_ACTIVE_RECEIVE_ACTIVITY_ID = "active_receive_activity_id"
     }
 }
 

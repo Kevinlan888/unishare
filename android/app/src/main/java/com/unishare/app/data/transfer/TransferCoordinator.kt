@@ -125,6 +125,8 @@ class TransferCoordinator internal constructor(
     private val active = LinkedHashSet<ActivityKey>()
     private val mutableActiveTransferCount = MutableStateFlow(0)
     val activeTransferCount: StateFlow<Int> = mutableActiveTransferCount.asStateFlow()
+    private val mutablePendingConsentActivityIds = MutableStateFlow<List<ActivityKey>>(emptyList())
+    val pendingConsentActivityIds: StateFlow<List<ActivityKey>> = mutablePendingConsentActivityIds.asStateFlow()
     private val mutableConsentEvents = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 16)
     val consentEvents: SharedFlow<IncomingConsentEvent> = mutableConsentEvents.asSharedFlow()
 
@@ -231,6 +233,7 @@ class TransferCoordinator internal constructor(
             ensureAcceptingLocked()
             offers[activityId]?.takeIf { it.decision == OfferDecision.PENDING }?.also {
                 it.decision = OfferDecision.ACCEPTING
+                updatePendingConsentActivityIdsLocked()
             }
         } ?: return false
         dismissConsent(state)
@@ -277,6 +280,7 @@ class TransferCoordinator internal constructor(
                 if (offers[state.activityId] === state) {
                     state.decision = OfferDecision.PENDING
                     state.consentDismissed = false
+                    updatePendingConsentActivityIdsLocked()
                 }
             }
             mutableConsentEvents.emit(IncomingConsentEvent.Pending(state.activityId))
@@ -470,7 +474,10 @@ class TransferCoordinator internal constructor(
         if (ReceivePolicy.decide(devices.isTrusted(offer.deviceId), offer.kind) == ReceiveDecision.AUTO_ACCEPT) {
             scope.launch { try { accept(state.activityId) } catch (_: CoordinatorException) { } }
         } else {
-            synchronized(gate) { state.consentPublished = true }
+            synchronized(gate) {
+                state.consentPublished = true
+                updatePendingConsentActivityIdsLocked()
+            }
             mutableConsentEvents.emit(IncomingConsentEvent.Pending(state.activityId))
         }
     }
@@ -612,7 +619,23 @@ class TransferCoordinator internal constructor(
             state.decision = OfferDecision.DONE
             offers.remove(state.activityId)
             offerByTransfer.remove(state.offer.transferId, state.activityId)
+            updatePendingConsentActivityIdsLocked()
         }
+    }
+
+    /**
+     * Replays every unresolved user consent in insertion order. A rejection remains unresolved
+     * while its SDK command is in flight so a recoverable command failure cannot advance the UI.
+     * Notification delivery continues to use [consentEvents] for its ordered Pending/Dismissed
+     * protocol; this state is solely the foreground reconciliation source.
+     */
+    private fun updatePendingConsentActivityIdsLocked() {
+        mutablePendingConsentActivityIds.value = offers.values
+            .filter { state ->
+                state.consentPublished &&
+                    (state.decision == OfferDecision.PENDING || state.decision == OfferDecision.REJECTING)
+            }
+            .map(OfferState::activityId)
     }
 
     private suspend fun dismissConsent(state: OfferState) {

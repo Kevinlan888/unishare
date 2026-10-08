@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -323,6 +324,32 @@ class TransferCoordinatorTest {
         runCurrent()
         val textActivity = fixture.tracker.activities(device).value.single { it.kind == ContentKind.TEXT }
         assertEquals("received text", (fixture.tracker.preview(textActivity.id) as ActivityPreview.Text).text)
+    }
+
+    @Test
+    fun pending_consent_state_replays_every_offer_that_arrived_after_an_empty_snapshot() = runTest {
+        val fixture = fixture(trusted = false)
+        assertTrue(fixture.coordinator.pendingConsentActivityIds.value.isEmpty())
+
+        fixture.gateway.emit(offer(ContentKind.IMAGE, "image/png", "first.png", "first-transfer"))
+        fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "second.pdf", "second-transfer"))
+        runCurrent()
+
+        val replayedAfterTheFormerSnapshotSubscriptionGap =
+            fixture.coordinator.pendingConsentActivityIds.first()
+        assertEquals(
+            fixture.coordinator.pendingOffers().map { it.first },
+            replayedAfterTheFormerSnapshotSubscriptionGap,
+        )
+        assertEquals(2, replayedAfterTheFormerSnapshotSubscriptionGap.size)
+
+        fixture.coordinator.reject(replayedAfterTheFormerSnapshotSubscriptionGap.first())
+        runCurrent()
+
+        assertEquals(
+            listOf(replayedAfterTheFormerSnapshotSubscriptionGap.last()),
+            fixture.coordinator.pendingConsentActivityIds.value,
+        )
     }
 
     @Test
