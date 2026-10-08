@@ -92,8 +92,7 @@ class AppGraph(application: Application) {
     private val shareNotifications = ShareNotificationFactory(application).also { it.createChannels() }
     @Suppress("unused") // Keeps the application-scope collector owned by this graph.
     private val receiveOfferNotifications = ReceiveOfferNotificationRelay(
-        pendingActivityIds = transferCoordinator.pendingConsentOffers,
-        dismissedActivityIds = transferCoordinator.dismissedConsentOffers,
+        consentEvents = transferCoordinator.consentEvents,
         isPending = { transferCoordinator.pendingOffer(it) != null },
         notify = shareNotifications::postIncomingOffer,
         cancel = shareNotifications::cancelIncomingOffer,

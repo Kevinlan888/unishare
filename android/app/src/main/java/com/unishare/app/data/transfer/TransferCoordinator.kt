@@ -45,6 +45,14 @@ internal fun interface ContentPublication {
 /** Stable coordinator failure. Payload/provider exception details are deliberately discarded. */
 class CoordinatorException(val errorKind: ShareErrorKind) : RuntimeException(errorKind.name)
 
+/** Ordered process-only lifecycle for a consent notification. */
+sealed interface IncomingConsentEvent {
+    val activityId: ActivityKey
+
+    data class Pending(override val activityId: ActivityKey) : IncomingConsentEvent
+    data class Dismissed(override val activityId: ActivityKey) : IncomingConsentEvent
+}
+
 /**
  * Owns the app-level transfer continuations. It never creates an SDK instance: all work passes
  * through the application ShareSessionManager and its single gateway.
@@ -117,10 +125,8 @@ class TransferCoordinator internal constructor(
     private val active = LinkedHashSet<ActivityKey>()
     private val mutableActiveTransferCount = MutableStateFlow(0)
     val activeTransferCount: StateFlow<Int> = mutableActiveTransferCount.asStateFlow()
-    private val mutablePendingConsentOffers = MutableSharedFlow<ActivityKey>(extraBufferCapacity = 16)
-    val pendingConsentOffers: SharedFlow<ActivityKey> = mutablePendingConsentOffers.asSharedFlow()
-    private val mutableDismissedConsentOffers = MutableSharedFlow<ActivityKey>(extraBufferCapacity = 16)
-    val dismissedConsentOffers: SharedFlow<ActivityKey> = mutableDismissedConsentOffers.asSharedFlow()
+    private val mutableConsentEvents = MutableSharedFlow<IncomingConsentEvent>(extraBufferCapacity = 16)
+    val consentEvents: SharedFlow<IncomingConsentEvent> = mutableConsentEvents.asSharedFlow()
 
     private val eventDelivery = scope.launch(start = CoroutineStart.UNDISPATCHED) {
         session.events.collect(::onGatewayEvent)
@@ -273,7 +279,7 @@ class TransferCoordinator internal constructor(
                     state.consentDismissed = false
                 }
             }
-            mutablePendingConsentOffers.emit(state.activityId)
+            mutableConsentEvents.emit(IncomingConsentEvent.Pending(state.activityId))
             throw CoordinatorException(failure.stableKind())
         }
         return true
@@ -465,7 +471,7 @@ class TransferCoordinator internal constructor(
             scope.launch { try { accept(state.activityId) } catch (_: CoordinatorException) { } }
         } else {
             synchronized(gate) { state.consentPublished = true }
-            mutablePendingConsentOffers.emit(state.activityId)
+            mutableConsentEvents.emit(IncomingConsentEvent.Pending(state.activityId))
         }
     }
 
@@ -617,7 +623,7 @@ class TransferCoordinator internal constructor(
                 true
             }
         }
-        if (shouldDismiss) mutableDismissedConsentOffers.emit(state.activityId)
+        if (shouldDismiss) mutableConsentEvents.emit(IncomingConsentEvent.Dismissed(state.activityId))
     }
 
     private fun outgoingActivity(

@@ -297,10 +297,12 @@ class TransferCoordinatorTest {
         val consentRequests = mutableListOf<ActivityKey>()
         val consentDismissals = mutableListOf<ActivityKey>()
         backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            fixture.coordinator.pendingConsentOffers.collect { consentRequests += it }
-        }
-        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            fixture.coordinator.dismissedConsentOffers.collect { consentDismissals += it }
+            fixture.coordinator.consentEvents.collect { event ->
+                when (event) {
+                    is IncomingConsentEvent.Pending -> consentRequests += event.activityId
+                    is IncomingConsentEvent.Dismissed -> consentDismissals += event.activityId
+                }
+            }
         }
 
         fixture.gateway.emit(offer(ContentKind.TEXT, "text/plain", "Text", "text-transfer"))
@@ -367,6 +369,10 @@ class TransferCoordinatorTest {
     @Test
     fun failed_reject_command_keeps_offer_pending_for_an_explicit_retry() = runTest {
         val fixture = fixture(trusted = false)
+        val consentEvents = mutableListOf<IncomingConsentEvent>()
+        backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            fixture.coordinator.consentEvents.collect(consentEvents::add)
+        }
         fixture.gateway.emit(offer(ContentKind.FILE, "application/pdf", "report.pdf", "file-transfer"))
         runCurrent()
         val activityId = fixture.coordinator.pendingOffers().single().first
@@ -381,6 +387,14 @@ class TransferCoordinatorTest {
 
         assertEquals(ActivityStatus.AWAITING_PEER, fixture.tracker.find(activityId)?.status)
         assertEquals(activityId, fixture.coordinator.pendingOffers().single().first)
+        assertEquals(
+            listOf(
+                IncomingConsentEvent.Pending(activityId),
+                IncomingConsentEvent.Dismissed(activityId),
+                IncomingConsentEvent.Pending(activityId),
+            ),
+            consentEvents,
+        )
     }
 
     @Test

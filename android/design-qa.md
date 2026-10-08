@@ -66,7 +66,7 @@ final result: passed
 - Normalized receive comparison: `app/build/reports/design-qa/task10-receive-comparison-final.png`. The implementation was proportionally downsampled to the source crop width (`333 × 740` px) and placed directly beside the `333 × 1000` source crop.
 - State: English, light theme, pending `IMG_3281.jpg` image offer from an online Windows device, `8.4 MB · JPEG`, default Download destination, and pairing code `000042`.
 - Asset evidence: `app/src/androidTest/res/drawable-nodpi/sample_mountain_lake.png` is used only by the instrumentation visual fixture. It is never packaged in the production APK and is never read from private receive staging. Production pending content uses the generic safe preview; successful content exposes Open only after final-URI readability verification.
-- Interaction evidence: nine `PairingAndReceiveUiTest` cases passed on the API 37 emulator, covering visible metadata, source status, side-by-side mutually exclusive decisions, expired requests, truthful Downloads recovery, readable final-content Open and unavailable-viewer handling, one-shot ActivityKey intents, privacy-safe ActivityKey notification deep links without direct-accept actions, six-digit accessibility semantics, identity-change recovery, 48 dp pairing actions, and both screenshots. Eighteen focused pairing/receive JVM state tests also passed before full-suite verification.
+- Interaction evidence: nine `PairingAndReceiveUiTest` cases passed on the API 37 emulator, covering visible metadata, source status, side-by-side mutually exclusive decisions, expired requests, truthful Downloads recovery, readable final-content Open and unavailable-viewer handling, one-shot ActivityKey intents, privacy-safe ActivityKey notification deep links without direct-accept actions, six-digit accessibility semantics, identity-change recovery, 48 dp pairing actions, and both screenshots. Nineteen focused pairing/receive JVM state tests also passed before full-suite verification.
 - Browser console checks: not applicable to this native Android implementation. Instrumentation completed without a process crash or failed test.
 
 ## Full-view comparison
@@ -99,6 +99,7 @@ The `666 × 1000` normalized comparison keeps title weight, preview crop, metada
 7. The final comparison and post-fix pairing capture found no remaining actionable P0, P1, or P2 issue.
 8. Review hardened the non-reference states without altering the pending receive composition: unsupported generic SAF destinations now reset to Downloads with localized explanatory copy, unavailable viewers surface an error, and notifications use payload-neutral text. The exact nine-case connected class recaptured the reference state and found no new visual P0/P1/P2 issue.
 9. Final concurrency review changed the misleading default Change label to Why Downloads? because custom folders are intentionally unavailable. The refreshed full-resolution receive capture confirms the longer localized action fits without clipping or hierarchy regressions; no new P0/P1/P2 issue was introduced.
+10. The final lifecycle fix serializes notification pending/dismissed events and delays the Downloads explanation until correction succeeds. These are state-ordering changes only; the refreshed pending screen remains the reviewed visual baseline with no new P0/P1/P2 issue.
 
 ## Findings
 

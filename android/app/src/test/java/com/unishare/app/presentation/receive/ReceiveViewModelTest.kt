@@ -64,6 +64,18 @@ class ReceiveViewModelTest {
     }
 
     @Test
+    fun destination_notice_is_not_shown_when_downloads_restore_fails() = runTest {
+        val fixture = fixture(immediateBackgroundScope(), destination = "Pictures / UniShare")
+        fixture.settings.directoryWriteFailure = IllegalStateException("settings unavailable")
+
+        fixture.viewModel.restoreDownloadsDestination()
+        advanceUntilIdle()
+
+        assertEquals("content://destination/tree", fixture.settings.current.receiveTreeUri)
+        assertFalse(fixture.viewModel.uiState.value.showUnsupportedDestinationNotice)
+    }
+
+    @Test
     fun retry_waits_for_downloads_restore_before_using_publication_recovery() = runTest {
         val writeGate = CompletableDeferred<Unit>()
         val fixture = fixture(
@@ -415,10 +427,12 @@ private class FakeSettingsRepository(
     private val mutable = MutableStateFlow(initial)
     val current: AppSettings get() = mutable.value
     val directoryWrites = mutableListOf<Pair<String?, String?>>()
+    var directoryWriteFailure: Exception? = null
     override val settings: Flow<AppSettings> = mutable
     override suspend fun setDeviceName(name: String) = Unit
     override suspend fun setReceiveDirectory(treeUri: String?, displayName: String?) {
         directoryWriteGate?.await()
+        directoryWriteFailure?.let { throw it }
         directoryWrites += treeUri to displayName
         mutable.value = mutable.value.copy(
             receiveTreeUri = treeUri,

@@ -29,6 +29,7 @@ import com.unishare.app.presentation.session.SessionRoute
 import com.unishare.app.presentation.session.SessionViewModel
 import com.unishare.app.presentation.theme.UniShareTheme
 import com.unishare.app.domain.ActivityKey
+import com.unishare.app.data.transfer.IncomingConsentEvent
 
 class MainActivity : ComponentActivity() {
     private var pendingReceiveActivityId by mutableStateOf<ActivityKey?>(null)
@@ -47,8 +48,10 @@ class MainActivity : ComponentActivity() {
                 if (pendingReceiveActivityId == null) {
                     pendingReceiveActivityId = graph.transferCoordinator.pendingOffers().firstOrNull()?.first
                 }
-                graph.transferCoordinator.pendingConsentOffers.collect { activityId ->
-                    pendingReceiveActivityId = activityId
+                graph.transferCoordinator.consentEvents.collect { event ->
+                    if (event is IncomingConsentEvent.Pending) {
+                        pendingReceiveActivityId = event.activityId
+                    }
                 }
             }
             UniShareTheme {

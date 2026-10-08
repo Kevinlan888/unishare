@@ -157,9 +157,10 @@ class ReceiveViewModel internal constructor(
 
     /** Generic SAF publication is intentionally unsupported; correction returns to safe Downloads. */
     fun restoreDownloadsDestination() {
-        mutableUiState.value = mutableUiState.value.copy(showUnsupportedDestinationNotice = true)
         workerScope.launch {
-            ensureDownloadsDestination()
+            if (ensureDownloadsDestination()) {
+                mutableUiState.value = mutableUiState.value.copy(showUnsupportedDestinationNotice = true)
+            }
         }
     }
 
