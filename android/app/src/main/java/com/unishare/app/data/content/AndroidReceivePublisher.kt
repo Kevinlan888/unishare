@@ -150,6 +150,9 @@ class AndroidReceivePublisher(
 
     @Suppress("DEPRECATION") // API29 predates QUERY_ARG_MATCH_PENDING; use its public compatibility API.
     private fun queryPending(container: Uri, name: String): Cursor? {
+        // Recovery may encounter a journal on older OS versions. Keep the intent
+        // for later recovery rather than resolving API29-only pending Downloads.
+        if (Build.VERSION.SDK_INT < 29) return null
         val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
         val arguments = arrayOf("$name%", downloadsPath)
         return if (Build.VERSION.SDK_INT >= 30) resolver.query(container, arrayOf(MediaStore.MediaColumns._ID), Bundle().apply {
