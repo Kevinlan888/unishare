@@ -44,6 +44,39 @@ android {
     }
 }
 
+// Inspect the evaluated Android DSL; source text (including comments) is not evidence.
+val abiContractFile = layout.buildDirectory.file("reports/abi-contract.properties")
+val appAndroid = extensions.getByType<com.android.build.api.dsl.ApplicationExtension>()
+val abiContractValues = listOf("debug", "release").flatMap { variant ->
+    listOf(
+        "app.$variant" to providers.provider {
+            appAndroid.buildTypes.getByName(variant).ndk.abiFilters.sorted().joinToString(",")
+        },
+        "sdk.$variant" to providers.provider {
+            project(":share-sdk").extensions.getByType<com.android.build.api.dsl.LibraryExtension>()
+                .buildTypes.getByName(variant).ndk.abiFilters.sorted().joinToString(",")
+        },
+    )
+}.toMap()
+val writeAbiContract = tasks.register("writeAbiContract") {
+    group = "verification"
+    description = "Writes evaluated app/SDK debug/release ABI filters for contract tests."
+    abiContractValues.forEach { (name, value) -> inputs.property(name, value) }
+    outputs.file(abiContractFile)
+    doLast {
+        val report = abiContractFile.get().asFile
+        report.parentFile.mkdirs()
+        report.writeText(abiContractValues.toSortedMap().entries.joinToString("\n", postfix = "\n") {
+            (name, value) -> "$name=${value.get()}"
+        })
+    }
+}
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    dependsOn(writeAbiContract)
+    inputs.file(abiContractFile).withPropertyName("evaluatedAbiFilters")
+    systemProperty("unishare.abiContractFile", abiContractFile.get().asFile.absolutePath)
+}
+
 dependencies {
     implementation(project(":share-sdk"))
     implementation(platform(libs.compose.bom))

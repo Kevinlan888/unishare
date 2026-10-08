@@ -49,21 +49,25 @@ class BuildContractTest {
 
     @Test
     fun app_variants_filter_dependency_abis_to_the_native_sdk_abis() {
-        fun filters(script: File, variant: String): Set<String> {
-            val block = Regex(
-                "(?s)(?:getByName\\(\"$variant\"\\)|\\b$variant)\\s*\\{.*?ndk\\s*\\{\\s*abiFilters\\s*\\+=\\s*listOf\\(([^)]*)\\)",
-            ).find(script.readText())
-            return block?.groupValues?.get(1)?.let { values ->
-                Regex("\"([^\"]+)\"").findAll(values).map { it.groupValues[1] }.toSet()
-            }.orEmpty()
+        val metadata = Properties().apply {
+            val path = requireNotNull(System.getProperty("unishare.abiContractFile")) {
+                "Gradle must supply its evaluated ABI contract metadata"
+            }
+            File(path).inputStream().use { load(it) }
+        }
+        fun filters(module: String, variant: String): Set<String> {
+            val value = requireNotNull(metadata.getProperty("$module.$variant")) {
+                "Missing evaluated ABI filters for $module.$variant"
+            }
+            return value.split(',').filter(String::isNotBlank).toSet()
         }
         val expected = mapOf(
             "debug" to setOf("arm64-v8a", "x86_64"),
             "release" to setOf("arm64-v8a", "armeabi-v7a", "x86_64"),
         )
         for ((variant, abis) in expected) {
-            assertEquals("SDK $variant ABIs", abis, filters(File("../share-sdk/build.gradle.kts"), variant))
-            assertEquals("App $variant must not package dependency-only ABIs", abis, filters(File("build.gradle.kts"), variant))
+            assertEquals("SDK $variant ABIs", abis, filters("sdk", variant))
+            assertEquals("App $variant must not package dependency-only ABIs", abis, filters("app", variant))
         }
     }
 

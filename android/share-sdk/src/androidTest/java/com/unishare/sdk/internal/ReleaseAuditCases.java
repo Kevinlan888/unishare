@@ -18,6 +18,7 @@ public final class ReleaseAuditCases {
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
 
     public static void clipboardReplacement(Context context)throws Exception {
+        com.unishare.sdk.ClipboardFixtureRetry.assertContracts();
         class Boundary implements ClipboardPort.Boundary {
             ClipData clip;
             public ClipData get(){return clip;}
