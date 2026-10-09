@@ -5,6 +5,9 @@ import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -33,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +81,9 @@ private val topLevelRoutes = AppDestination.topLevel.map { it.route }.toSet()
 private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTopLevelTabSwitch(): Boolean =
     initialState.destination.route in topLevelRoutes &&
         targetState.destination.route in topLevelRoutes
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.motion(isPop: Boolean) =
+    navigationMotion(initialState.destination.route, targetState.destination.route, isPop)
 
 private val topLevelEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition? = {
     if (isTopLevelTabSwitch()) EnterTransition.None else null
@@ -170,6 +177,28 @@ fun UniShareNavHost(
             modifier = Modifier
                 .padding(innerPadding)
                 .consumeWindowInsets(innerPadding),
+            enterTransition = {
+                when (motion(isPop = false)) {
+                    NavigationMotion.ForwardDetail -> slideInHorizontally(initialOffsetX = { it })
+                    else -> EnterTransition.None
+                }
+            },
+            exitTransition = {
+                when (motion(isPop = false)) {
+                    NavigationMotion.ForwardDetail -> slideOutHorizontally(targetOffsetX = { -it / 4 })
+                    else -> ExitTransition.None
+                }
+            },
+            popEnterTransition = { EnterTransition.None },
+            popExitTransition = {
+                when (motion(isPop = true)) {
+                    NavigationMotion.PopDetail -> slideOutHorizontally(targetOffsetX = { it }) + scaleOut(
+                        targetScale = 0.9f,
+                        transformOrigin = TransformOrigin.Center,
+                    )
+                    else -> ExitTransition.None
+                }
+            },
         ) {
             topLevelComposable(AppDestination.Home.route) {
                 HomeScreen(

@@ -3,12 +3,22 @@ package com.unishare.app.presentation.home
 import android.content.res.Configuration
 import android.os.LocaleList
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -111,6 +121,55 @@ class HomeScreenTest(
             "top-level content must already match its settled frame without a crossfade",
             firstRenderedFrame.sameAs(settledFrame),
         )
+    }
+
+    @Test
+    fun forward_session_moves_in_from_the_right_and_shifts_the_previous_page_left() {
+        composeRule.mainClock.autoAdvance = false
+        setMotionContent()
+        composeRule.onNodeWithText(copy.devices).performClick()
+        composeRule.mainClock.advanceTimeBy(1_000)
+        val prior = composeRule.onNodeWithTag("motion_prior")
+        val priorSettled = prior.fetchSemanticsNode().boundsInRoot
+
+        composeRule.onNodeWithText("Open motion session").performClick()
+        composeRule.mainClock.advanceTimeBy(100)
+        val detail = composeRule.onNodeWithTag("motion_detail")
+        val detailMidFrame = detail.fetchSemanticsNode().boundsInRoot
+        val priorMidFrame = prior.fetchSemanticsNode().boundsInRoot
+        composeRule.mainClock.advanceTimeBy(1_000)
+        val detailSettled = detail.fetchSemanticsNode().boundsInRoot
+
+        assertTrue("detail must enter from the right", detailMidFrame.left > detailSettled.left)
+        assertTrue("prior page must shift left", priorMidFrame.left < priorSettled.left)
+    }
+
+    @Test
+    fun pop_session_moves_right_and_shrinks_the_current_page_without_fading_its_color() {
+        composeRule.mainClock.autoAdvance = false
+        setMotionContent()
+        composeRule.onNodeWithText(copy.devices).performClick()
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithText("Open motion session").performClick()
+        composeRule.mainClock.advanceTimeBy(1_000)
+        val detail = composeRule.onNodeWithTag("motion_detail")
+        val settledBounds = detail.fetchSemanticsNode().boundsInRoot
+        val settledImage = detail.captureToImage().asAndroidBitmap()
+
+        composeRule.onNodeWithText("Back from motion session").performClick()
+        composeRule.mainClock.advanceTimeBy(100)
+        val midBounds = detail.fetchSemanticsNode().boundsInRoot
+        val midImage = detail.captureToImage().asAndroidBitmap()
+
+        assertTrue("detail center must move right on pop", midBounds.center.x > settledBounds.center.x + 1f)
+        assertTrue("detail left edge must move right on pop", midBounds.left > settledBounds.left)
+        assertTrue("detail width must shrink on pop", midBounds.width < settledBounds.width)
+        assertTrue("detail height must shrink on pop", midBounds.height < settledBounds.height)
+        assertEquals("solid detail color must stay opaque during pop",
+            settledImage.getPixel(settledImage.width / 2, settledImage.height / 2),
+            midImage.getPixel(midImage.width / 2, midImage.height / 2))
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithText("Open motion session").assertIsDisplayed()
     }
 
     @Test
@@ -260,6 +319,27 @@ class HomeScreenTest(
         composeRule.onNode(hasText(copy.share) and isSelected()).assertIsDisplayed()
     }
 
+    private fun setMotionContent() {
+        setHomeContent(
+            devicesContent = { open ->
+                Box(Modifier.fillMaxSize().background(Color.Red), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(80.dp).testTag("motion_prior").background(Color.Green))
+                    Button(onClick = { open(DeviceKey("motion-device")) },
+                        modifier = Modifier.align(Alignment.TopCenter)) {
+                        Text("Open motion session")
+                    }
+                }
+            },
+            sessionContent = { _, onBack ->
+                Box(Modifier.fillMaxSize().testTag("motion_detail").background(Color.Blue)) {
+                    Button(onClick = onBack, modifier = Modifier.align(Alignment.TopCenter)) {
+                        Text("Back from motion session")
+                    }
+                }
+            },
+        )
+    }
+
     private fun setHomeContent(
         state: HomeUiState = populatedState(),
         stateProvider: (() -> HomeUiState)? = null,
@@ -267,6 +347,7 @@ class HomeScreenTest(
         fontScale: Float = 1f,
         restoration: StateRestorationTester? = null,
         sessionContent: (@Composable (DeviceKey, () -> Unit) -> Unit)? = null,
+        devicesContent: (@Composable ((DeviceKey) -> Unit) -> Unit)? = null,
         edgeToEdge: Boolean = false,
     ) {
         val context = composeRule.activity
@@ -291,6 +372,7 @@ class HomeScreenTest(
                         homeUiState = stateProvider?.invoke() ?: state,
                         onRefresh = onRefresh,
                         sessionContent = sessionContent,
+                        devicesContent = devicesContent,
                     )
                 }
             }
