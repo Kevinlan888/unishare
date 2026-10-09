@@ -17,6 +17,7 @@ import com.unishare.app.domain.ShareOrigin
 import com.unishare.app.data.transfer.fakeUri
 import com.unishare.app.data.transfer.RetainedContentUri
 import com.unishare.app.data.transfer.ContentReadPermissionLease
+import com.unishare.app.presentation.pairing.PairingUiState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,6 +41,31 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionViewModelTest {
+    @Test
+    fun only_the_matching_device_marks_its_session_as_pairing() = runTest(dispatcher) {
+        val pairing = MutableStateFlow(
+            PairingUiState(matchingDeviceIds = setOf(deviceId)),
+        )
+        val viewModel = SessionViewModel(
+            deviceId = deviceId,
+            devices = FakeSessionDeviceRepository(device()),
+            activities = MutableStateFlow(emptyList()),
+            previewFor = { null },
+            operations = FakeSessionOperations(),
+            pairingState = pairing,
+        )
+        runCurrent()
+
+        assertTrue(viewModel.uiState.value.pairing)
+
+        pairing.value = PairingUiState(
+            matchingDeviceIds = setOf(DeviceKey("another-device")),
+        )
+        runCurrent()
+
+        assertFalse(viewModel.uiState.value.pairing)
+    }
+
     @Test fun outgoing_retry_waits_for_reconnection_after_background_stop() = runTest(dispatcher) {
         val repository = FakeSessionDeviceRepository(device())
         repository.connectGate = CompletableDeferred()

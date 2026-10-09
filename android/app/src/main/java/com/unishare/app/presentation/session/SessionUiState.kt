@@ -41,6 +41,7 @@ data class SessionUiState(
     val connected: Boolean = false,
     val trusted: Boolean = false,
     val identityChanged: Boolean = false,
+    val pairing: Boolean = false,
     val composerText: String = "",
     val composerMode: ComposerMode = ComposerMode.TEXT,
     val activities: List<SessionActivityUi> = emptyList(),

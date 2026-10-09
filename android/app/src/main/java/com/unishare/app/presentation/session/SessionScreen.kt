@@ -278,12 +278,14 @@ private fun SessionHeader(state: SessionUiState, onBack: () -> Unit, onMore: () 
                     StatusIndicator(
                         label = when {
                             state.identityChanged -> stringResource(R.string.status_identity_changed)
+                            state.pairing -> stringResource(R.string.status_pairing)
                             presence == DevicePresence.CONNECTED -> stringResource(R.string.status_connected)
                             presence == DevicePresence.ONLINE -> stringResource(R.string.status_online)
                             else -> stringResource(R.string.status_offline)
                         },
                         tone = when {
                             state.identityChanged -> StatusTone.ERROR
+                            state.pairing -> StatusTone.NEUTRAL
                             presence != DevicePresence.OFFLINE -> StatusTone.ONLINE
                             else -> StatusTone.NEUTRAL
                         },

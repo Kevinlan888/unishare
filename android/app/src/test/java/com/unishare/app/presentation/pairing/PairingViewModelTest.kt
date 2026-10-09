@@ -25,6 +25,53 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairingViewModelTest {
+    @Test
+    fun matching_confirmation_closes_the_prompt_and_tracks_the_device_until_timeout() = runTest {
+        val pairing = FakePairingOperations()
+        val viewModel = PairingViewModel(
+            PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()),
+        )
+
+        pairing.events.emit(pairingRequest(50, "123456"))
+        advanceUntilIdle()
+        viewModel.confirmMatch()
+        advanceUntilIdle()
+
+        assertEquals(listOf(PairingCall.Confirm(50, true)), pairing.calls)
+        assertEquals(setOf(DeviceKey("device-50")), viewModel.uiState.value.matchingDeviceIds)
+        assertNull(viewModel.uiState.value.prompt)
+
+        pairing.events.emit(
+            GatewayEvent.PairingCompleted(
+                50,
+                DeviceKey("device-50"),
+                ShareFailure(ShareErrorKind.TIMEOUT),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.matchingDeviceIds.isEmpty())
+    }
+
+    @Test
+    fun confirmed_matching_request_expires_locally_without_a_second_decision() = runTest {
+        val pairing = FakePairingOperations()
+        val viewModel = PairingViewModel(
+            PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope()),
+        )
+
+        pairing.events.emit(pairingRequest(51, "123456"))
+        advanceUntilIdle()
+        viewModel.confirmMatch()
+        advanceUntilIdle()
+        assertEquals(setOf(DeviceKey("device-51")), viewModel.uiState.value.matchingDeviceIds)
+
+        advanceTimeBy(120_001)
+
+        assertTrue(viewModel.uiState.value.matchingDeviceIds.isEmpty())
+        assertEquals(listOf(PairingCall.Confirm(51, true)), pairing.calls)
+    }
+
     @Test fun background_request_replays_to_recreated_activity_without_a_second_event_subscription() = runTest {
         val pairing = FakePairingOperations()
         val owner = PairingCoordinator(pairing, FakePairingDevices(), immediateBackgroundScope())
@@ -76,7 +123,9 @@ class PairingViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(PairingCall.Confirm(11, true)), pairing.calls)
-        assertTrue(viewModel.uiState.value.submitting)
+        assertNull(viewModel.uiState.value.prompt)
+        assertFalse(viewModel.uiState.value.submitting)
+        assertEquals(setOf(DeviceKey("device-11")), viewModel.uiState.value.matchingDeviceIds)
 
         pairing.events.emit(GatewayEvent.PairingCompleted(11, DeviceKey("device-11")))
         advanceUntilIdle()
@@ -84,6 +133,7 @@ class PairingViewModelTest {
         val second = viewModel.uiState.value.prompt as PairingPrompt.Verification
         assertEquals("654321", second.code)
         assertFalse(viewModel.uiState.value.submitting)
+        assertTrue(viewModel.uiState.value.matchingDeviceIds.isEmpty())
     }
 
     @Test

@@ -26,4 +26,5 @@ sealed interface PairingPrompt {
 data class PairingUiState(
     val prompt: PairingPrompt? = null,
     val submitting: Boolean = false,
+    val matchingDeviceIds: Set<DeviceKey> = emptySet(),
 )

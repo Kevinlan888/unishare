@@ -208,6 +208,14 @@ class SessionScreenTest {
         composeRule.onNode(hasText("Type a message…") and hasClickAction()).assertIsDisplayed()
     }
 
+    @Test
+    fun pairing_in_progress_replaces_the_presence_label_in_the_header() {
+        setSessionContent(stateProvider = { baseState().copy(pairing = true) })
+
+        composeRule.onNodeWithText("Pairing…").assertIsDisplayed()
+        composeRule.onNodeWithText("Online").assertDoesNotExist()
+    }
+
     @Suppress("DEPRECATION")
     @Test
     fun ime_keeps_header_fixed_and_composer_tight_above_keyboard_in_navigation_shell() {

@@ -3,6 +3,7 @@ package com.unishare.app.presentation.pairing
 import com.unishare.app.data.device.DeviceRepository
 import com.unishare.app.data.sdk.GatewayEvent
 import com.unishare.app.data.sdk.ShareSessionManager
+import com.unishare.app.domain.DeviceKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +42,7 @@ class PairingCoordinator(
     private val knownRequestIds = mutableSetOf<Long>()
     private val decidedRequestIds = mutableSetOf<Long>()
     private val expirations = mutableMapOf<Long, Job>()
+    private val matchingDevices = mutableMapOf<Long, DeviceKey>()
     private var current: PairingPrompt? = null
     private var submitting = false
 
@@ -91,7 +93,7 @@ class PairingCoordinator(
         workerScope.launch {
             try {
                 pairing.confirmPairing(prompt.requestId, codeMatches)
-                if (!codeMatches) finish(prompt)
+                if (codeMatches) waitForPeer(prompt) else finish(prompt)
             } catch (_: Exception) {
                 finish(prompt)
             }
@@ -158,12 +160,22 @@ class PairingCoordinator(
     private fun finishRequest(requestId: Long) = synchronized(gate) {
         knownRequestIds.add(requestId)
         expirations.remove(requestId)?.cancel()
+        matchingDevices.remove(requestId)
         val prompt = current
         if (prompt is PairingPrompt.Verification && prompt.requestId == requestId) {
             finishLocked(prompt)
         } else {
             queued.removeAll { it is PairingPrompt.Verification && it.requestId == requestId }
+            promoteLocked()
         }
+    }
+
+    private fun waitForPeer(prompt: PairingPrompt.Verification) = synchronized(gate) {
+        if (current != prompt) return@synchronized
+        matchingDevices[prompt.requestId] = prompt.deviceId
+        current = null
+        submitting = false
+        promoteLocked()
     }
 
     private fun finish(prompt: PairingPrompt) = synchronized(gate) {
@@ -187,12 +199,16 @@ class PairingCoordinator(
     }
 
     private fun promoteLocked() {
-        if (current == null) current = queued.removeFirstOrNull()
+        if (current == null && matchingDevices.isEmpty()) current = queued.removeFirstOrNull()
         publishLocked()
     }
 
     private fun publishLocked() {
-        mutableUiState.value = PairingUiState(current, submitting)
+        mutableUiState.value = PairingUiState(
+            prompt = current,
+            submitting = submitting,
+            matchingDeviceIds = matchingDevices.values.toSet(),
+        )
     }
 
 }

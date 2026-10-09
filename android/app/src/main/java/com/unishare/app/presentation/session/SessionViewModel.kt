@@ -17,6 +17,7 @@ import com.unishare.app.domain.ContentKind
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareActivity
 import com.unishare.app.domain.ShareErrorKind
+import com.unishare.app.presentation.pairing.PairingUiState
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -81,11 +82,16 @@ class SessionViewModel(
     private val previewFor: (ActivityKey) -> ActivityPreview?,
     private val operations: SessionOperations,
     private val awaitRuntime: suspend () -> Unit = {},
+    private val pairingState: Flow<PairingUiState> = MutableStateFlow(PairingUiState()),
 ) : ViewModel() {
     private data class RateSample(
         val bytes: Long,
         val timestampMillis: Long,
         val bytesPerSecond: Long?,
+    )
+    private data class DeviceState(
+        val devices: List<DeviceSummary>,
+        val pairing: PairingUiState,
     )
 
     private val composer = MutableStateFlow("")
@@ -97,16 +103,20 @@ class SessionViewModel(
     // Serializes connection/pairing and submission. Never held by the SDK event collector.
     private val submissions = Mutex()
     private class Blocked(val messageKind: SessionUserMessage) : Exception()
+    private val deviceState = combine(devices.devices, pairingState) { allDevices, pairing ->
+        DeviceState(allDevices, pairing)
+    }
 
     val events = eventChannel.receiveAsFlow()
 
     val uiState: StateFlow<SessionUiState> = combine(
-        devices.devices,
+        deviceState,
         activities,
         composer,
         shareSheetVisible,
         composerMode,
-    ) { allDevices, allActivities, composerText, sheetVisible, mode ->
+    ) { deviceState, allActivities, composerText, sheetVisible, mode ->
+        val allDevices = deviceState.devices
         val current = allDevices.firstOrNull { it.id == deviceId }
         if (current != null) lastDevice = current
         val visibleDevice = current ?: lastDevice
@@ -118,6 +128,7 @@ class SessionViewModel(
             connected = current?.connected == true,
             trusted = current?.trusted == true,
             identityChanged = current?.identityChanged == true,
+            pairing = deviceId in deviceState.pairing.matchingDeviceIds,
             composerText = composerText,
             composerMode = mode,
             activities = allActivities.map(::toUiActivity),
@@ -380,6 +391,7 @@ class SessionViewModel(
                     graph.selectedContentResolver,
                 ),
                 awaitRuntime = graph.runtimeController::awaitForegroundReady,
+                pairingState = graph.pairingCoordinator.uiState,
             ) as T
         }
     }

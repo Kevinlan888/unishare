@@ -46,6 +46,7 @@
     <string name="status_trusted">已信任</string>
     <string name="status_unpaired">未配对</string>
     <string name="status_connected">已连接</string>
+    <string name="status_pairing">正在匹配中…</string>
     <string name="status_identity_changed">身份已变化</string>
     <string name="device_status_format">%1$s · %2$s</string>
     <string name="recent_progress">%1$s · %2$d%%</string>
