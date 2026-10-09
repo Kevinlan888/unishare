@@ -3,32 +3,41 @@ package com.unishare.app.presentation.home
 import android.content.res.Configuration
 import android.os.LocaleList
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.core.view.WindowCompat
 import com.unishare.app.data.sdk.DevicePlatform
 import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.ActivityStatus
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareErrorKind
 import com.unishare.app.presentation.navigation.UniShareNavHost
+import com.unishare.app.presentation.session.SessionScreen
+import com.unishare.app.presentation.session.SessionUiState
 import com.unishare.app.presentation.theme.UniShareTheme
 import java.util.Locale
 import org.junit.Assert.assertEquals
@@ -98,6 +107,60 @@ class HomeScreenTest(
         composeRule.onNodeWithText(copy.sessionTitle).assertIsDisplayed()
         composeRule.onNodeWithText("pc-kevin").assertIsDisplayed()
         composeRule.onNodeWithText(copy.share).assertDoesNotExist()
+    }
+
+    @Test
+    fun nested_session_applies_the_status_bar_inset_only_once() {
+        var safeTopPx = 0f
+        var densityPxPerDp = 0f
+        setHomeContent(
+            edgeToEdge = true,
+            sessionContent = { deviceId, onBack ->
+                val density = LocalDensity.current
+                safeTopPx = WindowInsets.safeDrawing.getTop(density).toFloat()
+                densityPxPerDp = density.density
+                SessionScreen(
+                    state = SessionUiState(
+                        deviceId = deviceId,
+                        deviceName = "Kevin's Windows PC",
+                        platform = DevicePlatform.WINDOWS,
+                        online = true,
+                        trusted = true,
+                    ),
+                    onBack = onBack,
+                    onMore = {},
+                    onComposerChanged = {},
+                    onSend = {},
+                    onAddAttachment = {},
+                    onDismissShareSheet = {},
+                    onPickPhoto = {},
+                    onPickFile = {},
+                    onClipboard = {},
+                    onText = {},
+                    onLink = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            },
+        )
+
+        composeRule.onNodeWithText("Kevin's Windows PC").performClick()
+
+        composeRule.onNodeWithTag("session_header")
+            .assertHeightIsEqualTo(64.dp)
+        val expectedControlCenterY = safeTopPx + 32.dp.value * densityPxPerDp
+        listOf(copy.back, copy.more).forEach { description ->
+            val control = composeRule.onNodeWithContentDescription(description)
+                .assertWidthIsEqualTo(48.dp)
+                .assertHeightIsEqualTo(48.dp)
+                .fetchSemanticsNode().boundsInRoot
+            assertEquals(
+                "$description should be centered in the 64dp session app bar below the safe inset",
+                expectedControlCenterY,
+                control.center.y,
+                1f,
+            )
+        }
     }
 
     @Test
@@ -182,8 +245,15 @@ class HomeScreenTest(
         onRefresh: () -> Unit = {},
         fontScale: Float = 1f,
         restoration: StateRestorationTester? = null,
+        sessionContent: (@Composable (DeviceKey, () -> Unit) -> Unit)? = null,
+        edgeToEdge: Boolean = false,
     ) {
         val context = composeRule.activity
+        if (edgeToEdge) {
+            composeRule.activityRule.scenario.onActivity { activity ->
+                WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+            }
+        }
         val configuration = Configuration(context.resources.configuration).apply {
             setLocales(LocaleList.forLanguageTags(languageTag))
         }
@@ -199,6 +269,7 @@ class HomeScreenTest(
                     UniShareNavHost(
                         homeUiState = stateProvider?.invoke() ?: state,
                         onRefresh = onRefresh,
+                        sessionContent = sessionContent,
                     )
                 }
             }
@@ -247,6 +318,7 @@ class HomeScreenTest(
         val devicesTitle: String,
         val historyTitle: String,
         val sessionTitle: String,
+        val back: String,
         val loading: String,
         val discoveryError: String,
         val noRecent: String,
@@ -263,6 +335,7 @@ class HomeScreenTest(
                     "Share", "Devices", "History", "Settings", "This device", "Recent",
                     "Nearby Devices", "Trusted · Online", "Refresh nearby devices", "New share",
                     "Search", "More options", "Your devices", "Transfer history", "Device session",
+                    "Back",
                     "Finding nearby devices…", "Nearby discovery is unavailable.",
                     "No recent activity", "No nearby devices",
                 ),
@@ -272,7 +345,7 @@ class HomeScreenTest(
                 Copy(
                     "分享", "设备", "历史", "设置", "本机设备", "最近活动", "附近设备",
                     "已信任 · 在线", "刷新附近设备", "新建分享", "搜索", "更多选项", "设备管理", "传输历史",
-                    "设备会话", "正在查找附近设备…", "附近设备发现暂不可用。", "暂无最近活动", "暂无附近设备",
+                    "设备会话", "返回", "正在查找附近设备…", "附近设备发现暂不可用。", "暂无最近活动", "暂无附近设备",
                 ),
             ),
         )

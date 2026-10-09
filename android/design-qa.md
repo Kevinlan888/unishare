@@ -53,7 +53,6 @@ The normalized `372` px-wide comparison keeps typography, card edges, icons, sep
 - Revisit platform-icon styling only if a future approved icon asset set replaces the required Material icons.
 
 final result: passed
-
 ---
 
 # Task 10 Pairing and Receive Consent Design QA
@@ -231,3 +230,51 @@ Full-view inspection confirmed consistent spacing, rounded surface hierarchy, ic
 Traversal indices and geometry are an executable proxy for focus ordering, not a claim of physical TalkBack speech testing. Live-region semantics verify announcement eligibility, not recorded audio. The run is API 37 evidence and does not substitute for future physical-device or Android-to-Windows acceptance.
 
 Task 11 final visual result: passed; no remaining actionable P0/P1/P2 visual mismatch in the captured states.
+
+---
+
+# Android Session Top Bar Design QA
+
+- Date: 2026-10-09
+- Source visual truth: the approved 1536 x 1024 four-screen reference and the user's 1080 x 2424 report of the oversized session bar
+- Rendered implementation: Android emulator capture at 1080 x 2400, 420 dpi / 2.625 density, approximately 411 x 914 dp, font scale 1.0
+- State: light theme, device session open, standard system status and navigation bars
+- Evidence retention: the source attachment and local `.superpowers/sdd/2026-10-09-android-session-topbar/` captures are intentionally not tracked because they contain user/device-specific content. They were opened together during this review; the committed geometry regression test preserves the measurable result.
+
+## Full-view comparison evidence
+
+The approved reference and full emulator capture were opened together. The repaired implementation preserves the reference hierarchy: back action, device icon, two-line identity/status block, and overflow action. The composer and timeline implementation are unchanged by this fix. The fixture timeline was empty, so timeline content was not judged.
+
+## Focused comparison evidence
+
+The reported and repaired screens were cropped to the identical 1080 x 520 top region and opened together. Before the fix, the toolbar divider appeared at approximately y=475 px. After the fix it appeared at y=230 px, exposing content immediately below the compact header.
+
+The instrumented navigation test provides density-independent geometry evidence:
+
+- The nested header is exactly 64 dp high.
+- Back and overflow controls are exactly 48 dp and centered at `safeDrawing.top + 32 dp`.
+- With the original duplicate inset restored as a mutation, the test observes an 88 dp header and fails in both English and Chinese.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Material typography, weights, line heights, truncation, and two-line hierarchy are unchanged; excess vertical whitespace is removed.
+- Spacing and layout rhythm: The duplicate status-bar inset is removed. Navigation, identity, and overflow controls remain centered in the 64 dp app bar below the host safe area.
+- Colors and visual tokens: Background, foreground, primary blue, online green, and divider/background transitions are unchanged.
+- Image quality and asset fidelity: The existing platform device icon remains sharp and correctly scaled; no placeholder or generated asset was introduced.
+- Copy and content: Device name and presence localization and overflow behavior are unchanged. Fixture copy differs from the user's device name but does not change geometry.
+
+## Comparison history
+
+1. Initial evidence showed a P1 mismatch: the navigation shell and `TopAppBar` each applied the status-bar inset.
+2. The nested `TopAppBar` inset was disabled so the navigation shell is the single safe-area owner.
+3. Review identified that the first absolute-position assertion was device-dependent.
+4. The test was replaced with explicit edge-to-edge, inset-relative geometry checks. Mutation verification proved the duplicate-inset implementation fails at 88 dp while the repaired implementation passes at 64 dp.
+
+## Findings
+
+- P0: none.
+- P1: none remaining.
+- P2: none remaining.
+- P3: none for the requested header-height correction.
+
+final result: passed
