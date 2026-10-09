@@ -116,6 +116,51 @@ Transfer data must remain streamed and bounded. Do not reintroduce whole-file bu
 5. Re-run Android and iOS consumer/interoperability suites whenever the C ABI or wire protocol changes.
 6. For broader distribution, replace the internal self-signed identity with a protected production signing certificate and update publisher documentation deliberately.
 
+## Android application workflow update (2026-10-08)
+
+The Android app work on `feature/android-client` adds a Compose client,
+repository SDK integration, unit/connected tests and repeatable
+[`test-app.ps1`](../android/scripts/test-app.ps1) / [`build-app.ps1`](../android/scripts/build-app.ps1).
+Use the [app guide](integration/android-app.md) for prerequisites and command
+semantics. Outputs are worktree-local and ignored. `-VerifyOnly` reads existing
+evidence without running Gradle/adb; connected execution requires an explicitly
+selected online serial. Debug APK output is
+`android/app/build/outputs/apk/debug/app-debug.apk`; the build script prints its
+absolute path/hash/size without signing secrets.
+
+The current available device is `emulator-5554`, API 37, x86_64. Measured counts
+and package identity belong to [Android acceptance](../android/tests/app-acceptance.md).
+No API 26/33/35/36 or full Android 17 operator gate has passed in this app task.
+All physical Android app ↔ Windows app rows are BLOCKED / NOT RUN because a real
+Android device, a usable Windows application peer and operator are missing.
+Historical SDK host evidence cannot close these rows or the Windows GUI gate.
+
+Known Android release concerns include safe publication on API 26–28 and generic
+SAF directories, which the current publisher rejects, and the unchanged
+physical/version release gates. Task13 does not close these functional/operator gaps.
+The minimal app API lint fix adds an API29 recovery guard and day/night v27
+navigation-bar resources without suppressing errors or raising minimum SDK.
+
+Task13 resolved Task12's SDK automated blocker: the emulator's external host
+clipboard overwrite was dynamically identified, and the test now checks actual
+publication MIME/URI/bytes and current reads with bounded event-driven fixture
+reconstruction. Production never caches/pretends ownership after external writes.
+SDK NSD newer APIs now have actual runtime guards and legacy fallback without
+suppression. SDK lint is0 errors/15 warnings (previously7 NewApi errors plus1
+ignored local.properties format error); the machine-local property was not committed.
+
+Final evidence:211 app JVM,91 app connected and10 SDK public connected tests,
+91 focused JVM and27 verifier fixtures, all zero failures (JUnit also zero errors/skipped); app
+lint0 errors/22 warnings and SDK lint0 errors/15 warnings. A test-first ABI fix
+removed x86 dependency libraries that lacked a corresponding SDK JNI library.
+Debug builds and both release assemblies plus actual package/ELF inspection passed.
+The release APK is unsigned; exact hashes/sizes are in the acceptance matrix.
+Default/selected test-app wrapper attempts failed at Gradle inventory with sandbox
+network Permission denied; equivalent approved direct Gradle gates ran instead,
+with app/SDK connected serial. No passing wrapper, final VerifyOnly or standalone
+build-app claim. An earlier41/91 emulator-offline run and a stale UTP lock attempt
+are not counted passed; clean-process reruns passed without wiping the AVD.
+
 ## Useful references
 
 - [Windows native application](integration/windows-app.md)

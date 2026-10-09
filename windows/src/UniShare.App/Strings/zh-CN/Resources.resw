@@ -22,6 +22,7 @@
 <data name="Recent" xml:space="preserve"><value>最近设备</value></data>
 <data name="Nearby" xml:space="preserve"><value>附近设备</value></data>
 <data name="Online" xml:space="preserve"><value>在线</value></data>
+<data name="Connected" xml:space="preserve"><value>已连接</value></data>
 <data name="Yes" xml:space="preserve"><value>是</value></data>
 <data name="No" xml:space="preserve"><value>否</value></data>
 <data name="Yesterday" xml:space="preserve"><value>昨天</value></data>

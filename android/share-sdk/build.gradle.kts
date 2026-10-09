@@ -17,7 +17,9 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     buildTypes {
         getByName("debug") {
-            ndk { abiFilters += "arm64-v8a" }
+            // Keep debug builds runnable both on physical ARM64 devices and the standard
+            // x86_64 Android emulator used by connected UI tests.
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
             externalNativeBuild { cmake {
                 arguments += "-DUNISHARE_ANDROID_PORT_TESTS=${providers.gradleProperty("portTests").orElse("OFF").get()}"
                 if (providers.gradleProperty("portTests").orElse("OFF").get() == "ON") targets += "unishare_android_probe"

@@ -59,8 +59,9 @@ public sealed record DeviceProjection(string Name, string Glyph, string Summary,
     {
         get; init;
     }
-    public double OnlineIndicatorOpacity => PresentationState.OnlineIndicatorOpacity(Online);
-    public string StatusText => Strings.Get(PresentationState.StatusResourceKey(Online));
+    public bool Connected { get; init; }
+    public double OnlineIndicatorOpacity => PresentationState.OnlineIndicatorOpacity(Online || Connected);
+    public string StatusText => Strings.Get(PresentationState.StatusResourceKey(Online, Connected));
     public string AccessibleName => $"{Name}, {StatusText}";
 }
 public sealed class ShellProjection : ObservableObject
@@ -132,7 +133,7 @@ public sealed class ShellProjection : ObservableObject
         }
     }
     public bool CanSend => SelectedDevice is { } device && PresentationState.SendAvailable(
-        device.Online, device.Trusted, device.Blocked,
+        device.Online, device.Connected, device.Trusted, device.Blocked,
         IsDemo || Runtime?.Session.State == UniShare.Application.Services.SessionState.Running);
     public bool CanPair => SelectedDevice is { Online: true, Trusted: false, Blocked: false };
     public string ComposerText

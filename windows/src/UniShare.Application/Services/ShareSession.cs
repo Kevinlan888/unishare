@@ -201,7 +201,7 @@ public sealed class ShareSession : IAsyncDisposable
         Interlocked.Increment(ref generation);
         // Explicit native Stop clears discovery and retires event delivery, so
         // no later offline/disconnected events can reconcile the old entries.
-        Devices.Refresh();
+        Devices.Refresh(preserveConnections: false);
     }
 
     public async Task ExitAsync(CancellationToken cancellationToken = default)

@@ -132,7 +132,27 @@ public sealed class DeviceStoreTests
         sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Connected, null));
         Assert.IsTrue(entry.IsConnected);
         sdk.Emit(new ShareSdkEvent.DeviceOffline(device.Id));
+        Assert.IsTrue(entry.IsConnected);
+        Assert.IsTrue(entry.CanTransfer);
+        sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Disconnected, null));
         Assert.IsFalse(entry.IsConnected);
+        Assert.IsFalse(entry.CanTransfer);
+    }
+
+    [TestMethod]
+    public void PairingRequestAndConnectionCreatePeerWithoutDiscovery()
+    {
+        var sdk = new FakeShareSdkClient();
+        using var store = new DeviceStore(sdk);
+        var device = Device("LAN peer", false);
+
+        sdk.Emit(new ShareSdkEvent.PairingRequested(new(7), device, "123456"));
+        sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Connected, null));
+
+        var entry = store.Devices.Single();
+        Assert.AreEqual("LAN peer", entry.Name);
+        Assert.IsFalse(entry.IsOnline);
+        Assert.IsTrue(entry.IsConnected);
     }
 
     [TestMethod]

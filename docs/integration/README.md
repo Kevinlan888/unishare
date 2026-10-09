@@ -3,6 +3,7 @@
 - [Windows C++ package](windows.md)
 - [Windows native application: staging, MSIX, and acceptance](windows-app.md)
 - [Android Kotlin AAR](android.md)
+- [Android application: debug build, tests, and blocked release gates](android-app.md)
 - [iOS Swift XCFramework](ios.md)
 - [Public cross-platform test hosts](../../tests/interop/README.md)
 - [Measured interoperability matrix](../../tests/interop/matrix.md)
@@ -14,6 +15,11 @@ rediscovery, failure isolation and Offline. The matrix distinguishes physical
 Pixel and iPhone results from iOS Simulator results. All six physical directions
 passed; the matrix retains an earlier Windows→iPhone discovery timeout and the
 scope of remaining acceptance.
+
+Those historical SDK host results do not establish acceptance of the new Android
+application. Its [current matrix](../../android/tests/app-acceptance.md) separates
+automated API 37 emulator evidence from blocked API-version/operator gates and
+all physical Android application ↔ Windows application scenarios.
 
 Text transfer supports the configured 8 MiB default through bounded streaming
 on every platform while native buffers remain capped at 4 MiB. Kotlin/Swift

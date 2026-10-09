@@ -29,7 +29,7 @@ public sealed class ShellViewModelTests
     public void ShareAndStableSelectionSurviveTrustAndOfflineUpdates()
     {
         using var f = new ViewModelFixture();
-        var device = f.Online(false);
+        var device = f.Online(trusted: false, connected: false);
         using var shell = f.Shell();
         Assert.AreEqual(ShellSection.Share, shell.SelectedSection);
         shell.SelectedDevice = device;

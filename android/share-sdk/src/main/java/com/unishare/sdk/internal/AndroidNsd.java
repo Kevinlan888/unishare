@@ -20,17 +20,21 @@ final class AndroidNsd implements DnsPort.Boundary {
     private final Framework framework;private final Executor executor;private final int sdk;
     private final List<NsdManager.RegistrationListener> publications=new ArrayList<>();
     private final List<NsdManager.DiscoveryListener> browsers=new ArrayList<>();
-    private final List<NsdManager.ServiceInfoCallback> updates=new ArrayList<>();
+    // Keep newer framework types out of the API26 owner's fields and stop path.
+    private final List<Object> updates=new ArrayList<>();
     private final Set<String> updateKeys=new HashSet<>();
     private final ArrayDeque<Resolution> resolutions=new ArrayDeque<>();private Resolution activeResolution;private long generation;
     AndroidNsd(NsdManager nsd,Executor executor){this(new Framework(){
         public void register(NsdServiceInfo i,NsdManager.RegistrationListener l){nsd.registerService(i,NsdManager.PROTOCOL_DNS_SD,l);}
         public void unregister(NsdManager.RegistrationListener l){nsd.unregisterService(l);}
-        public void discover(int sdk,Executor e,NsdManager.DiscoveryListener l){if(sdk>=33)nsd.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,new android.net.NetworkRequest.Builder().build(),e,l);else nsd.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,l);}
+        public void discover(int sdk,Executor e,NsdManager.DiscoveryListener l){if(Build.VERSION.SDK_INT>=33)nsd.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,new android.net.NetworkRequest.Builder().build(),e,l);else nsd.discoverServices("_share._tcp.",NsdManager.PROTOCOL_DNS_SD,l);}
         public void stopDiscovery(NsdManager.DiscoveryListener l){nsd.stopServiceDiscovery(l);}
         public void resolve(NsdServiceInfo i,NsdManager.ResolveListener l){nsd.resolveService(i,l);}
-        public void registerUpdates(NsdServiceInfo i,Executor e,Object c){nsd.registerServiceInfoCallback(i,e,(NsdManager.ServiceInfoCallback)c);}
-        public void unregisterUpdates(Object c){nsd.unregisterServiceInfoCallback((NsdManager.ServiceInfoCallback)c);}
+        public void registerUpdates(NsdServiceInfo i,Executor e,Object c){
+            if(Build.VERSION.SDK_INT>=34)nsd.registerServiceInfoCallback(i,e,(NsdManager.ServiceInfoCallback)c);
+            else throw new UnsupportedOperationException("service updates require API34");
+        }
+        public void unregisterUpdates(Object c){if(Build.VERSION.SDK_INT>=34)nsd.unregisterServiceInfoCallback((NsdManager.ServiceInfoCallback)c);}
     },executor,Build.VERSION.SDK_INT);}
     AndroidNsd(Framework framework,Executor executor,int sdk){this.framework=framework;this.executor=executor;this.sdk=sdk;}
     private synchronized boolean alive(long current,DnsPort.Admission admission){return current==generation&&admission.active();}
@@ -73,6 +77,8 @@ final class AndroidNsd implements DnsPort.Boundary {
         try{framework.discover(sdk,executor,listener);}finally{if(!alive(current,admission))ignore(()->framework.stopDiscovery(listener));}
     }
     private void observe(long current,DnsPort.Admission admission,NsdServiceInfo info,Events events){
+        // An injected dispatch version never authorizes an unavailable runtime API.
+        if(Build.VERSION.SDK_INT<34){enqueue(new Resolution(current,admission,info,events));return;}
         DnsPort.Record discovered=record(info);
         NsdManager.ServiceInfoCallback update=new NsdManager.ServiceInfoCallback(){
             private volatile DnsPort.Record last=discovered;
@@ -104,12 +110,12 @@ final class AndroidNsd implements DnsPort.Boundary {
         });}catch(RuntimeException e){try{if(alive(request.generation,request.admission))request.events.failure(e);}finally{finish(request);}}
     }
     public void stop(){
-        List<NsdManager.DiscoveryListener> oldBrowsers;List<NsdManager.RegistrationListener> oldPublications;List<NsdManager.ServiceInfoCallback> oldUpdates;
+        List<NsdManager.DiscoveryListener> oldBrowsers;List<NsdManager.RegistrationListener> oldPublications;List<Object> oldUpdates;
         synchronized(this){++generation;resolutions.clear();activeResolution=null;
             oldBrowsers=new ArrayList<>(browsers);oldPublications=new ArrayList<>(publications);oldUpdates=new ArrayList<>(updates);
             browsers.clear();publications.clear();updates.clear();updateKeys.clear();}
         for(NsdManager.DiscoveryListener listener:oldBrowsers)ignore(()->framework.stopDiscovery(listener));
         for(NsdManager.RegistrationListener listener:oldPublications)ignore(()->framework.unregister(listener));
-        if(sdk>=34)for(NsdManager.ServiceInfoCallback callback:oldUpdates)ignore(()->framework.unregisterUpdates(callback));
+        for(Object callback:oldUpdates)ignore(()->framework.unregisterUpdates(callback));
     }
 }
