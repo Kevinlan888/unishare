@@ -3,7 +3,9 @@ package com.unishare.app.presentation.session
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.os.ParcelFileDescriptor
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +24,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
@@ -29,6 +32,10 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.rememberNavController
 import com.unishare.app.R
 import com.unishare.app.test.R as TestR
 import com.unishare.app.data.sdk.DevicePlatform
@@ -37,6 +44,9 @@ import com.unishare.app.domain.ActivityStatus
 import com.unishare.app.domain.ContentKind
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareDirection
+import com.unishare.app.presentation.home.HomeUiState
+import com.unishare.app.presentation.navigation.AppDestination
+import com.unishare.app.presentation.navigation.UniShareNavHost
 import com.unishare.app.presentation.theme.UniShareTheme
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
@@ -198,6 +208,62 @@ class SessionScreenTest {
         composeRule.onNode(hasText("Type a message…") and hasClickAction()).assertIsDisplayed()
     }
 
+    @Suppress("DEPRECATION")
+    @Test
+    fun ime_keeps_header_fixed_and_composer_tight_above_keyboard_in_navigation_shell() {
+        composeRule.activityRule.scenario.onActivity { activity ->
+            WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+            activity.window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+        setSessionContent(
+            activities = listOf(activity("message", ShareDirection.INCOMING, text = "Visible message")),
+            inNavigationHost = true,
+        )
+        composeRule.waitForIdle()
+        val headerTopBefore = composeRule.onNodeWithTag("session_header")
+            .fetchSemanticsNode().boundsInRoot.top
+
+        composeRule.onNode(hasText("Type a message…") and hasClickAction()).performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            var visible = false
+            composeRule.activityRule.scenario.onActivity { activity ->
+                visible = ViewCompat.getRootWindowInsets(activity.window.decorView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+            visible
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            var currentImeTop = 0f
+            composeRule.activityRule.scenario.onActivity { activity ->
+                val insets = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
+                currentImeTop = activity.window.decorView.height -
+                    insets.getInsets(WindowInsetsCompat.Type.ime()).bottom.toFloat()
+            }
+            composeRule.onNode(hasText("Type a message…") and hasClickAction())
+                .fetchSemanticsNode().boundsInRoot.bottom <= currentImeTop
+        }
+
+        var imeTop = 0f
+        composeRule.activityRule.scenario.onActivity { activity ->
+            val insets = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
+            imeTop = activity.window.decorView.height -
+                insets.getInsets(WindowInsetsCompat.Type.ime()).bottom.toFloat()
+        }
+        val headerTopAfter = composeRule.onNodeWithTag("session_header")
+            .fetchSemanticsNode().boundsInRoot.top
+        val composerBounds = composeRule.onNode(hasText("Type a message…") and hasClickAction())
+            .fetchSemanticsNode().boundsInRoot
+        val maxComposerGapPx = composeRule.activity.resources.displayMetrics.density * 16f
+
+        assertEquals(headerTopBefore, headerTopAfter, 1f)
+        assertTrue("composer must remain above the IME", composerBounds.bottom <= imeTop)
+        assertTrue(
+            "composer should not leave duplicated system-bar space above the IME",
+            imeTop - composerBounds.bottom <= maxComposerGapPx,
+        )
+        composeRule.onNodeWithText("Visible message").assertIsDisplayed()
+    }
+
     @Test
     fun capture_reference_session_and_share_sheet_for_design_qa() {
         var state by mutableStateOf(
@@ -254,8 +320,10 @@ class SessionScreenTest {
         onLink: () -> Unit = {},
         onSend: () -> Unit = {},
         fontScale: Float = 1f,
+        inNavigationHost: Boolean = false,
     ) {
         val context = composeRule.activity
+        var navController: NavHostController? = null
         composeRule.activityRule.scenario.onActivity { activity ->
             WindowCompat.getInsetsController(activity.window, activity.window.decorView).isAppearanceLightStatusBars = true
         }
@@ -269,24 +337,45 @@ class SessionScreenTest {
                 LocalDensity provides Density(density.density, fontScale),
             ) {
                 UniShareTheme(darkTheme = false) {
-                    SessionScreen(
-                        state = stateProvider?.invoke() ?: baseState().copy(activities = activities),
-                        onBack = {},
-                        onMore = {},
-                        onComposerChanged = {},
-                        onSend = onSend,
-                        onAddAttachment = onAdd,
-                        onDismissShareSheet = {},
-                        onPickPhoto = {},
-                        onPickFile = {},
-                        onClipboard = {},
-                        onText = onText,
-                        onLink = onLink,
-                        onCancel = {},
-                        onRetry = {},
-                    )
+                    val sessionContent: @Composable (() -> Unit) = {
+                        SessionScreen(
+                            state = stateProvider?.invoke() ?: baseState().copy(activities = activities),
+                            onBack = {},
+                            onMore = {},
+                            onComposerChanged = {},
+                            onSend = onSend,
+                            onAddAttachment = onAdd,
+                            onDismissShareSheet = {},
+                            onPickPhoto = {},
+                            onPickFile = {},
+                            onClipboard = {},
+                            onText = onText,
+                            onLink = onLink,
+                            onCancel = {},
+                            onRetry = {},
+                        )
+                    }
+                    if (inNavigationHost) {
+                        val rememberedNavController = rememberNavController()
+                        navController = rememberedNavController
+                        UniShareNavHost(
+                            homeUiState = HomeUiState(),
+                            onRefresh = {},
+                            navController = rememberedNavController,
+                            sessionContent = { _, _ -> sessionContent() },
+                        )
+                    } else {
+                        sessionContent()
+                    }
                 }
             }
+        }
+        if (inNavigationHost) {
+            composeRule.waitForIdle()
+            composeRule.activity.runOnUiThread {
+                requireNotNull(navController).navigate(AppDestination.Session(DeviceKey("pc-kevin")).route)
+            }
+            composeRule.waitForIdle()
         }
     }
 
