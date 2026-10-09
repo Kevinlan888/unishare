@@ -34,7 +34,7 @@ class HomeViewModel(
     val uiState: StateFlow<HomeUiState> = combine(
         settingsRepository.settings,
         deviceRepository.devices,
-        activityRepository.observeRecent(3),
+        activityRepository.observeRecentByDevice(3),
         sessionState,
         discoveryError,
     ) { settings, devices, activities, state, error ->

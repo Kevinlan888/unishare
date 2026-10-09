@@ -24,6 +24,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -100,6 +101,43 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun recent_keeps_only_the_latest_activity_per_device_before_applying_the_limit() = runTest(dispatcher) {
+        val firstDevice = DeviceKey("pc-1")
+        val secondDevice = DeviceKey("pc-2")
+        val thirdDevice = DeviceKey("pc-3")
+        val devices = FakeDeviceRepository(
+            listOf(
+                DeviceSummary(firstDevice, "First PC", DevicePlatform.WINDOWS, online = true, trusted = true),
+                DeviceSummary(secondDevice, "Second PC", DevicePlatform.WINDOWS, online = true, trusted = true),
+                DeviceSummary(thirdDevice, "Third PC", DevicePlatform.WINDOWS, online = true, trusted = true),
+            ),
+        )
+        val activities = FakeActivityRepository(
+            listOf(
+                activity(firstDevice, 10, 10, ActivityStatus.COMPLETED, ActivityKey("first-new"), "new.txt", 400),
+                activity(firstDevice, 10, 10, ActivityStatus.COMPLETED, ActivityKey("first-old"), "old.txt", 300),
+                activity(secondDevice, 10, 10, ActivityStatus.COMPLETED, ActivityKey("second"), "second.txt", 200),
+                activity(thirdDevice, 10, 10, ActivityStatus.COMPLETED, ActivityKey("third"), "third.txt", 100),
+            ),
+        )
+        val viewModel = HomeViewModel(
+            deviceRepository = devices,
+            activityRepository = activities,
+            settingsRepository = FakeSettingsRepository(AppSettings()),
+            sessionState = MutableStateFlow(SessionState.RUNNING),
+            sessionEvents = MutableSharedFlow(),
+            refreshDevices = devices::refresh,
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(ActivityKey("first-new"), ActivityKey("second"), ActivityKey("third")),
+            viewModel.uiState.value.recent.map { it.activityId },
+        )
+    }
+
+    @Test
     fun discovery_failure_is_non_blocking_and_refresh_clears_it_then_uses_existing_repository() = runTest(dispatcher) {
         val devices = FakeDeviceRepository(emptyList())
         val events = MutableSharedFlow<GatewayEvent>(extraBufferCapacity = 1)
@@ -129,17 +167,20 @@ class HomeViewModelTest {
         byteCount: Long,
         transferredBytes: Long,
         status: ActivityStatus,
+        id: ActivityKey = ActivityKey("a-1"),
+        displayName: String = "project.zip",
+        updatedAtMillis: Long = 200,
     ) = ShareActivity(
-        id = ActivityKey("a-1"),
+        id = id,
         deviceId = deviceId,
         direction = ShareDirection.OUTGOING,
         kind = ContentKind.FILE,
         origin = ShareOrigin.DIRECT,
-        displayName = "project.zip",
+        displayName = displayName,
         mimeType = "application/zip",
         byteCount = byteCount,
         createdAtMillis = 100,
-        updatedAtMillis = 200,
+        updatedAtMillis = updatedAtMillis,
         status = status,
         transferredBytes = transferredBytes,
     )
@@ -159,7 +200,7 @@ private class FakeDeviceRepository(initial: List<DeviceSummary>) : DeviceReposit
 
 private class FakeActivityRepository(initial: List<ShareActivity>) : ActivityRepository {
     private val recent = MutableStateFlow(initial)
-    override fun observeRecent(limit: Int): Flow<List<ShareActivity>> = recent
+    override fun observeRecent(limit: Int): Flow<List<ShareActivity>> = recent.map { it.take(limit) }
     override fun observeDevice(device: DeviceKey): Flow<List<ShareActivity>> = MutableStateFlow(emptyList())
     override suspend fun upsert(activity: ShareActivity) = Unit
     override suspend fun markNonTerminalInterrupted(nowMillis: Long) = Unit

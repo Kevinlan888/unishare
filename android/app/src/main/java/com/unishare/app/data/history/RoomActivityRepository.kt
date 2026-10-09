@@ -26,6 +26,11 @@ class RoomActivityRepository(
         return dao.observeRecent(limit).map { rows -> rows.map(ActivityEntity::toDomain) }
     }
 
+    override fun observeRecentByDevice(limit: Int): Flow<List<ShareActivity>> {
+        require(limit > 0) { "History limit must be positive" }
+        return dao.observeRecentByDevice(limit).map { rows -> rows.map(ActivityEntity::toDomain) }
+    }
+
     override fun observeDevice(device: DeviceKey): Flow<List<ShareActivity>> =
         dao.observeDevice(device.value).map { rows -> rows.map(ActivityEntity::toDomain) }
 

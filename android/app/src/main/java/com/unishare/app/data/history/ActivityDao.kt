@@ -23,6 +23,21 @@ interface ActivityDao {
     @Query("SELECT * FROM activities ORDER BY updatedAt DESC, id DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<ActivityEntity>>
 
+    @Query("""
+        SELECT activity.* FROM activities AS activity
+        WHERE NOT EXISTS (
+            SELECT 1 FROM activities AS newer
+            WHERE newer.deviceId = activity.deviceId
+              AND (
+                  newer.updatedAt > activity.updatedAt OR
+                  (newer.updatedAt = activity.updatedAt AND newer.id > activity.id)
+              )
+        )
+        ORDER BY activity.updatedAt DESC, activity.id DESC
+        LIMIT :limit
+    """)
+    fun observeRecentByDevice(limit: Int): Flow<List<ActivityEntity>>
+
     @Query("SELECT * FROM activities WHERE deviceId = :deviceId ORDER BY updatedAt DESC, id DESC")
     fun observeDevice(deviceId: String): Flow<List<ActivityEntity>>
 

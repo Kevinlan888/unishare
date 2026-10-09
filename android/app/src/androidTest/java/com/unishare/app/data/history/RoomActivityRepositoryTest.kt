@@ -71,6 +71,30 @@ class RoomActivityRepositoryTest {
         assertEquals(listOf(other, newer), repository.observeRecent(2).first())
     }
 
+    @Test fun recentByDeviceKeepsOnlyEachDevicesLatestActivityBeforeApplyingLimit() = runBlocking {
+        val thirdDevice = DeviceKey(UUID.randomUUID().toString())
+        val fourthDevice = DeviceKey(UUID.randomUUID().toString())
+        val latest = activity().copy(updatedAtMillis = now + 4)
+        val olderSameDevice = activity().copy(updatedAtMillis = now + 3)
+        val second = activity().copy(deviceId = otherDevice, updatedAtMillis = now + 2)
+        val third = activity().copy(deviceId = thirdDevice, updatedAtMillis = now + 1)
+        val fourth = activity().copy(deviceId = fourthDevice, updatedAtMillis = now)
+        listOf(olderSameDevice, fourth, latest, third, second).forEach { repository.upsert(it) }
+
+        assertEquals(listOf(latest, second, third), repository.observeRecentByDevice(3).first())
+    }
+
+    @Test fun recentByDeviceUsesActivityIdToBreakUpdatedAtTies() = runBlocking {
+        val lowerId = activity().copy(id = ActivityKey("activity-001"), updatedAtMillis = now + 1)
+        val higherId = activity().copy(id = ActivityKey("activity-002"), updatedAtMillis = now + 1)
+        val other = activity().copy(deviceId = otherDevice, updatedAtMillis = now)
+        repository.upsert(higherId)
+        repository.upsert(lowerId)
+        repository.upsert(other)
+
+        assertEquals(listOf(higherId, other), repository.observeRecentByDevice(2).first())
+    }
+
     @Test fun upsertReplacesTheSameIdentityWithoutDuplicatingIt() = runBlocking {
         val original = activity()
         repository.upsert(original)
