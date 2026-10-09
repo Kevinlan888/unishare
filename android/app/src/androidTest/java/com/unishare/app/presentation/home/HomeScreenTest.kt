@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.assertWidthIsEqualTo
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasText
@@ -90,6 +92,25 @@ class HomeScreenTest(
         composeRule.onNodeWithText(copy.history).performClick()
         composeRule.onNodeWithText(copy.historyTitle).assertIsDisplayed()
         composeRule.onNode(hasText(copy.history) and isSelected()).assertIsSelected()
+    }
+
+    @Test
+    fun top_level_tab_switch_replaces_content_without_a_crossfade() {
+        composeRule.mainClock.autoAdvance = false
+        setHomeContent()
+
+        composeRule.onNodeWithText(copy.devices).performClick()
+        composeRule.mainClock.advanceTimeBy(100)
+        val destinationTitle = composeRule.onNodeWithText(copy.devicesTitle).assertExists()
+        val firstRenderedFrame = destinationTitle.captureToImage().asAndroidBitmap()
+
+        composeRule.mainClock.advanceTimeBy(1_000)
+        val settledFrame = destinationTitle.captureToImage().asAndroidBitmap()
+
+        assertTrue(
+            "top-level content must already match its settled frame without a crossfade",
+            firstRenderedFrame.sameAs(settledFrame),
+        )
     }
 
     @Test

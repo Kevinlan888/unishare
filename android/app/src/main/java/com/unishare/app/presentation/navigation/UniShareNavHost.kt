@@ -1,6 +1,10 @@
 package com.unishare.app.presentation.navigation
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedContentScope
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,8 +37,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -65,6 +71,34 @@ private enum class TopLevelItem(
     SETTINGS(AppDestination.Settings, R.string.nav_settings, Icons.Outlined.Settings),
 }
 
+private val topLevelRoutes = AppDestination.topLevel.map { it.route }.toSet()
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTopLevelTabSwitch(): Boolean =
+    initialState.destination.route in topLevelRoutes &&
+        targetState.destination.route in topLevelRoutes
+
+private val topLevelEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition? = {
+    if (isTopLevelTabSwitch()) EnterTransition.None else null
+}
+
+private val topLevelExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition? = {
+    if (isTopLevelTabSwitch()) ExitTransition.None else null
+}
+
+private fun NavGraphBuilder.topLevelComposable(
+    route: String,
+    content: @Composable AnimatedContentScope.(NavBackStackEntry) -> Unit,
+) {
+    composable(
+        route = route,
+        enterTransition = topLevelEnterTransition,
+        exitTransition = topLevelExitTransition,
+        popEnterTransition = topLevelEnterTransition,
+        popExitTransition = topLevelExitTransition,
+        content = content,
+    )
+}
+
 @Composable
 fun UniShareNavHost(
     homeUiState: HomeUiState,
@@ -83,7 +117,7 @@ fun UniShareNavHost(
 ) {
     val entry by navController.currentBackStackEntryAsState()
     val currentRoute = entry?.destination?.route ?: AppDestination.Home.route
-    val showBottomNavigation = currentRoute in AppDestination.topLevel.map { it.route }
+    val showBottomNavigation = currentRoute in topLevelRoutes
 
     LaunchedEffect(pendingReceiveActivityId?.value) {
         pendingReceiveActivityId?.let { activityId ->
@@ -134,7 +168,7 @@ fun UniShareNavHost(
             startDestination = AppDestination.Home.route,
             modifier = Modifier.padding(innerPadding),
         ) {
-            composable(AppDestination.Home.route) {
+            topLevelComposable(AppDestination.Home.route) {
                 HomeScreen(
                     state = homeUiState,
                     onThisDeviceClick = { navigateTopLevel(navController, AppDestination.Settings) },
@@ -146,16 +180,16 @@ fun UniShareNavHost(
                     onMore = { navigateTopLevel(navController, AppDestination.Settings) },
                 )
             }
-            composable(AppDestination.Devices.route) {
+            topLevelComposable(AppDestination.Devices.route) {
                 val open: (DeviceKey) -> Unit = { navController.navigate(AppDestination.Session(it).route) }
                 if (devicesContent != null) devicesContent(open)
                 else DevicesScreen(DevicesUiState(), {}, {}, {}, {}, open)
             }
-            composable(AppDestination.History.route) {
+            topLevelComposable(AppDestination.History.route) {
                 if (historyContent != null) historyContent()
                 else HistoryScreen(HistoryUiState(), {}, {})
             }
-            composable(AppDestination.Settings.route) {
+            topLevelComposable(AppDestination.Settings.route) {
                 if (settingsContent != null) settingsContent()
                 else SettingsScreen(SettingsUiState(), {}, {}, {}, {}, {}, {})
             }
