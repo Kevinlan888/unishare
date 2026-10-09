@@ -266,7 +266,7 @@ void Session::Message(const protocol::Message& message){
   if(peer_.device_id==local_.device_id){Fail(ErrorCode::AuthenticationFailed,"self connection");return;}
   auto match=trust_.Match(peer_.device_id,peer_.public_key_fingerprint);if(!match.ok()){Close(match.error());return;}known_=match.value();
   EndDiagnostic(DiagnosticStage::IdentityVerify,DiagnosticOutcome::Succeeded);
-  if(known_&&initiator_){local_confirmed_=true;decision_sent_=true;Queue(protocol::PairDecision{true});MaybeConnected();return;}
+  if(known_){local_confirmed_=true;decision_sent_=true;Queue(protocol::PairDecision{true});MaybeConnected();return;}
   BeginDiagnostic(DiagnosticStage::Pairing);
   if(!admission_.Pair(socket_->RemoteEndpoint(),scheduler_.Now())){Fail(ErrorCode::ResourceLimit,"pairing admission limit");return;}pair_slot_=true;request_=next_request.fetch_add(1);
   std::array<unsigned char,32> exporter{};constexpr char label[]="EXPORTER-unishare-pairing-v1";

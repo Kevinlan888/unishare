@@ -192,8 +192,8 @@ void Both(ApiPeer &a, ApiPeer &b, const std::function<bool()> &done) {
             << b.events.size() << "\n";
   CHECK(done());
 }
-// Bypassing either peer's consent, losing IDs/bytes, or releasing live streams
-// breaks this real TLS flow.
+// Bypassing either peer's first-pair consent, losing IDs/bytes, or releasing
+// live streams breaks this real TLS flow.
 void TlsFlow() {
   ApiPeer a, b;
   auto record = b.p->dns.publication;
@@ -314,16 +314,13 @@ void TlsFlow() {
   file_sink->pending(Result<void>::Success());
   Both(a, b, [&] { return b.Count(USDK_EVENT_TRANSFER_RESULT) == 3; });
   CHECK(file_sent.calls == 1 && file_sink->aborted && file_sink->bytes.empty());
-  Completion reconnected, reconfirmed;
+  Completion reconnected;
   CHECK(
       !usdk_connect(a.sdk, b.Id(), Completion::Done, &reconnected, &a.op).code);
-  Both(a, b, [&] { return b.codes.size() == 2 || reconnected.calls; });
-  CHECK(!reconnected.calls);
-  CHECK(!usdk_confirm_pairing(b.sdk, b.Last(USDK_EVENT_PAIRING_REQUEST).request,
-                              1, Completion::Done, &reconfirmed, &b.op)
-             .code);
-  Both(a, b, [&] { return reconnected.calls && reconfirmed.calls; });
+  Both(a, b, [&] { return reconnected.calls; });
   CHECK(!reconnected.error.code);
+  CHECK(a.Count(USDK_EVENT_PAIRING_REQUEST) == 1 &&
+        b.Count(USDK_EVENT_PAIRING_REQUEST) == 1);
   Completion image_sent;
   auto image = std::make_shared<Memory>();
   CHECK(!RegisterStream(image, &source_handle).code);
