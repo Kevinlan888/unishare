@@ -45,7 +45,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -306,10 +305,10 @@ private fun UniShareBottomNavigation(selectedRoute: String, onSelect: (TopLevelI
 }
 
 private fun navigateTopLevel(navController: NavController, destination: AppDestination) {
+    if (navController.currentDestination?.route == destination.route) return
     navController.navigate(destination.route) {
-        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+        popUpTo(navController.graph.id)
         launchSingleTop = true
-        restoreState = true
     }
 }
 

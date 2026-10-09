@@ -43,17 +43,22 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.core.view.WindowCompat
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.rememberNavController
 import com.unishare.app.data.sdk.DevicePlatform
 import com.unishare.app.domain.ActivityKey
 import com.unishare.app.domain.ActivityStatus
 import com.unishare.app.domain.DeviceKey
 import com.unishare.app.domain.ShareErrorKind
 import com.unishare.app.presentation.navigation.UniShareNavHost
+import com.unishare.app.presentation.navigation.AppDestination
 import com.unishare.app.presentation.session.SessionScreen
 import com.unishare.app.presentation.session.SessionUiState
 import com.unishare.app.presentation.theme.UniShareTheme
 import java.util.Locale
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -103,6 +108,44 @@ class HomeScreenTest(
         composeRule.onNodeWithText(copy.history).performClick()
         composeRule.onNodeWithText(copy.historyTitle).assertIsDisplayed()
         composeRule.onNode(hasText(copy.history) and isSelected()).assertIsSelected()
+    }
+
+    @Test
+    fun switching_tabs_discards_previous_tabs_from_the_back_stack() {
+        lateinit var navController: NavHostController
+        setHomeContent(onNavController = { navController = it })
+
+        composeRule.onNodeWithText(copy.devices).performClick()
+        composeRule.onNodeWithText(copy.history).performClick()
+
+        composeRule.runOnIdle {
+            assertEquals("history", navController.currentDestination?.route)
+            assertNull("previous tabs must not remain below History", navController.previousBackStackEntry)
+            assertFalse("back must not reveal an earlier tab", navController.popBackStack())
+            assertNull(navController.currentBackStackEntry)
+        }
+    }
+
+    @Test
+    fun session_returns_to_the_current_tab_without_an_earlier_tab_below_it() {
+        lateinit var navController: NavHostController
+        setHomeContent(onNavController = { navController = it })
+        composeRule.onNodeWithText(copy.devices).performClick()
+        composeRule.runOnIdle {
+            navController.navigate(AppDestination.Session(DeviceKey("pc-kevin")).route)
+        }
+
+        composeRule.onNodeWithText(copy.sessionTitle).assertIsDisplayed()
+        composeRule.runOnIdle {
+            assertEquals("session/{deviceId}", navController.currentDestination?.route)
+            assertEquals("devices", navController.previousBackStackEntry?.destination?.route)
+            assertTrue("Session must pop back to its opening tab", navController.popBackStack())
+        }
+        composeRule.onNodeWithText(copy.devicesTitle).assertIsDisplayed()
+        composeRule.runOnIdle {
+            assertEquals("devices", navController.currentDestination?.route)
+            assertNull("returning to Devices must not restore Home", navController.previousBackStackEntry)
+        }
     }
 
     @Test
@@ -383,6 +426,7 @@ class HomeScreenTest(
         sessionContent: (@Composable (DeviceKey, () -> Unit) -> Unit)? = null,
         devicesContent: (@Composable ((DeviceKey) -> Unit) -> Unit)? = null,
         edgeToEdge: Boolean = false,
+        onNavController: (NavHostController) -> Unit = {},
     ) {
         val context = composeRule.activity
         if (edgeToEdge) {
@@ -402,11 +446,14 @@ class HomeScreenTest(
                 LocalDensity provides Density(density.density, fontScale),
             ) {
                 UniShareTheme(darkTheme = false) {
+                    val navController = rememberNavController()
+                    onNavController(navController)
                     UniShareNavHost(
                         homeUiState = stateProvider?.invoke() ?: state,
                         onRefresh = onRefresh,
                         sessionContent = sessionContent,
                         devicesContent = devicesContent,
+                        navController = navController,
                     )
                 }
             }

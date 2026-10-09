@@ -18,6 +18,8 @@
 - Toolbar back and system/predictive back must share the same Navigation Compose pop transition.
 - Do not add a custom `PredictiveBackHandler`, change dependency versions, or animate dialogs and bottom sheets.
 - Follow the LTR left-edge gesture toward the right. Navigation Compose 2.9.7 does not expose the gesture edge to transition callbacks, so right-edge gestures cannot mirror the transition under these constraints.
+- Switching bottom tabs must replace the current top-level destination; system back from any top-level tab must exit instead of revisiting tab history.
+- Session and Receive must still pop back to the top-level tab that opened them.
 
 ## Review Focus
 
@@ -84,3 +86,43 @@ Install the debug APK on device `62041JEA316847`. Verify entry to Session uses r
 - [ ] **Step 10: Commit**
 
 Commit the spec, plan, production code, and tests with message `feat(android): add predictive navigation motion`.
+
+### Task 2: Replace top-level tab history
+
+**Files:**
+- Modify: `android/app/src/main/java/com/unishare/app/presentation/navigation/UniShareNavHost.kt`
+- Modify: `android/app/src/androidTest/java/com/unishare/app/presentation/home/HomeScreenTest.kt`
+
+**Interfaces:**
+- Consumes: `navigateTopLevel(navController: NavController, destination: AppDestination)` and the existing Navigation Compose graph.
+- Produces: a top-level back stack containing only the currently selected tab, while nested destinations retain their direct top-level parent.
+
+- [x] **Step 1: Write failing Compose navigation-stack tests**
+
+Capture the `NavHostController` used by `UniShareNavHost`. Add one test that switches Home → Devices → History and asserts History is current, `previousBackStackEntry` is null, and `popBackStack()` returns false without revealing Home or Devices. Add a second test that switches to Devices, pushes a Session route, then asserts one pop returns to Devices and the top-level stack still has no earlier tab entry. These tests catch both retained tab history and accidental removal of the detail parent.
+
+- [x] **Step 2: Run the focused emulator instrumentation tests and verify RED**
+
+Run: `./gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.unishare.app.presentation.home.HomeScreenTest` with `ANDROID_SERIAL=emulator-5554`.
+
+Expected: the top-level replacement assertion fails because the current navigation options retain Home below the selected tab.
+
+- [x] **Step 3: Replace the top-level stack without restoring prior tabs**
+
+Update `navigateTopLevel` to no-op when the destination is already current. For a different tab, pop to the navigation graph root (leaving the graph entry itself), remove all destination entries, and navigate to the selected destination with `launchSingleTop = true`. Do not save or restore popped tab entries.
+
+- [x] **Step 4: Run focused tests and verify GREEN**
+
+Run the Step 2 command and expect all `HomeScreenTest` cases to pass on `emulator-5554`.
+
+- [x] **Step 5: Run complete Android verification on the emulator**
+
+Run `./gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` and `./gradlew.bat :app:connectedDebugAndroidTest` with `ANDROID_SERIAL=emulator-5554`. Expect all commands to pass without new warnings or failures.
+
+- [x] **Step 6: Verify the user flow on the emulator**
+
+Switch across all four tabs and press system back from a non-Home tab; confirm the app exits instead of showing an earlier tab. Relaunch, open Session from a non-Home tab, and confirm back returns to that tab before a second back exits.
+
+- [x] **Step 7: Commit**
+
+Commit the navigation implementation, tests, updated spec, and plan with message `fix(android): replace top-level tab history`.

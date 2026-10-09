@@ -15,9 +15,13 @@ Apply hierarchical page motion only when navigating between one of the four top-
 - A predictive-back gesture scrubs the horizontal and scale transition with gesture progress and restores the page if the gesture is cancelled.
 - Use Navigation Compose's native predictive-back integration; do not add a custom `PredictiveBackHandler` or update dependencies.
 - The pinned Navigation Compose 2.9.7 transition callbacks do not expose the swipe edge. Follow the LTR left-edge gesture toward the right; right-edge gestures use the same rightward transition rather than mirroring it.
+- Switching among Share, Devices, History, and Settings replaces the current top-level destination instead of adding tab history.
+- Pressing system back from any top-level tab delegates to the Activity and exits the app rather than returning to a previously selected tab.
+- Popping Session or Receive still returns to the top-level tab from which the detail destination was opened.
 
 ## Verification
 
 - Automated tests cover the route motion policy, immediate top-level switching, forward horizontal movement, and a rightward pop with shrinking rendered bounds and opaque color.
 - Build, lint, unit tests, and connected tests pass.
 - Verify the predictive-back gesture and toolbar back behavior on the connected physical Android phone.
+- Verify top-level replacement and detail-return behavior on the Android emulator.
