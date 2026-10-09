@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -124,8 +125,12 @@ fun UniShareNavHost(
     settingsContent: (@Composable () -> Unit)? = null,
 ) {
     val entry by navController.currentBackStackEntryAsState()
+    val visibleEntries by navController.visibleEntries.collectAsState()
     val currentRoute = entry?.destination?.route ?: AppDestination.Home.route
     val showBottomNavigation = currentRoute in topLevelRoutes
+    // Popped details remain visible until their exit transition completes.
+    val showHomeFab = currentRoute == AppDestination.Home.route &&
+        visibleEntries.all { it.destination.route in topLevelRoutes }
 
     LaunchedEffect(pendingReceiveActivityId?.value) {
         pendingReceiveActivityId?.let { activityId ->
@@ -154,7 +159,7 @@ fun UniShareNavHost(
             }
         },
         floatingActionButton = {
-            if (currentRoute == AppDestination.Home.route) {
+            if (showHomeFab) {
                 FloatingActionButton(
                     onClick = { navigateTopLevel(navController, AppDestination.Devices) },
                     modifier = Modifier.size(64.dp),

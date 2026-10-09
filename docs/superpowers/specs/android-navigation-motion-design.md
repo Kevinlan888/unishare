@@ -11,6 +11,7 @@ Apply hierarchical page motion only when navigating between one of the four top-
 - No navigation transition changes alpha; there is no fade or crossfade.
 - Popping Session or Receive moves the current page to the right while scaling from `1.0` toward `0.9` around its center and reveals the previous page underneath. The horizontal exit target is the full page width.
 - The toolbar back button and system back use the same pop transition.
+- Home's New Share FAB stays hidden while any detail entry remains visible during exit, and returns after Navigation reports that exit complete.
 - A predictive-back gesture scrubs the horizontal and scale transition with gesture progress and restores the page if the gesture is cancelled.
 - Use Navigation Compose's native predictive-back integration; do not add a custom `PredictiveBackHandler` or update dependencies.
 - The pinned Navigation Compose 2.9.7 transition callbacks do not expose the swipe edge. Follow the LTR left-edge gesture toward the right; right-edge gestures use the same rightward transition rather than mirroring it.

@@ -36,6 +36,7 @@ import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
@@ -137,11 +138,44 @@ class HomeScreenTest(
         val detail = composeRule.onNodeWithTag("motion_detail")
         val detailMidFrame = detail.fetchSemanticsNode().boundsInRoot
         val priorMidFrame = prior.fetchSemanticsNode().boundsInRoot
+        val detailMidImage = detail.captureToImage().asAndroidBitmap()
+        val rootMidImage = composeRule.onRoot().captureToImage().asAndroidBitmap()
         composeRule.mainClock.advanceTimeBy(1_000)
         val detailSettled = detail.fetchSemanticsNode().boundsInRoot
 
         assertTrue("detail must enter from the right", detailMidFrame.left > detailSettled.left)
         assertTrue("prior page must shift left", priorMidFrame.left < priorSettled.left)
+        assertEquals("entering detail must keep its opaque blue color", 0xff0000ff.toInt(),
+            detailMidImage.getPixel(detailMidImage.width / 2, detailMidImage.height / 2))
+        assertEquals("visible previous page must keep its opaque red color", 0xffff0000.toInt(),
+            rootMidImage.getPixel(1, rootMidImage.height / 2))
+    }
+
+    @Test
+    fun home_fab_waits_until_the_popped_session_is_no_longer_visible() {
+        composeRule.mainClock.autoAdvance = false
+        setHomeContent(
+            sessionContent = { _, onBack ->
+                Box(Modifier.fillMaxSize().testTag("motion_detail").background(Color.Blue)) {
+                    Button(onClick = onBack, modifier = Modifier.align(Alignment.TopCenter)) {
+                        Text("Back from motion session")
+                    }
+                }
+            },
+        )
+        composeRule.onNodeWithContentDescription(copy.newShare).assertIsDisplayed()
+        composeRule.onNodeWithText("Kevin's Windows PC").performClick()
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithContentDescription(copy.newShare).assertDoesNotExist()
+
+        composeRule.onNodeWithText("Back from motion session").performClick()
+        composeRule.mainClock.advanceTimeBy(100)
+        composeRule.onNodeWithTag("motion_detail").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(copy.newShare).assertDoesNotExist()
+
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithTag("motion_detail").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(copy.newShare).assertIsDisplayed()
     }
 
     @Test
