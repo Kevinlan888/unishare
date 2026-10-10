@@ -103,6 +103,7 @@ public sealed partial class MainWindow : Window, IWindowPlatform
     {
         this.model = model;
         InitializeComponent();
+        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
         Root.Loaded += (_, _) => rootReady.TrySetResult();
         Title = Strings.Get("AppTitle");
         ExtendsContentIntoTitleBar = true;

@@ -136,7 +136,7 @@ class ShareNotificationFactory(context: Context, private val locale: AppLocaleRe
 
     private fun baseBuilder(channel: String): Notification.Builder =
         Notification.Builder(application, channel)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification_logo)
             .setVisibility(Notification.VISIBILITY_SECRET)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)

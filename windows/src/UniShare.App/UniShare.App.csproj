@@ -10,6 +10,7 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <EnableMsixTooling>true</EnableMsixTooling>
     <EnableDefaultAssets>false</EnableDefaultAssets>
     <NativeStageRoot>$(MSBuildThisFileDirectory)..\..\artifacts\native</NativeStageRoot>

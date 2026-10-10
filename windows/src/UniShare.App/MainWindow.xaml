@@ -18,10 +18,11 @@
         Orientation="Horizontal"
         Spacing="12"
         VerticalAlignment="Center">
-        <FontIcon
-          Glyph="&#xE72D;"
-          FontSize="22"
-          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+        <Image
+          Source="ms-appx:///Assets/Square44x44Logo.png"
+          Width="22"
+          Height="22"
+          Stretch="Uniform" />
         <TextBlock
           x:Name="WindowTitleText"
           x:Uid="WindowTitle"
