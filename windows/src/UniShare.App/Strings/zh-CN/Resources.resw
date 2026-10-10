@@ -35,6 +35,8 @@
 <data name="DemoClipboard" xml:space="preserve"><value>演示模式不读取或修改剪贴板。</value></data>
 <data name="LanguageRestart" xml:space="preserve"><value>使用 --en-US 或 --zh-CN 重新启动演示以预览所选语言。</value></data>
 <data name="Content.Text" xml:space="preserve"><value>文本</value></data>
+<data name="Activity.TextNotSaved" xml:space="preserve"><value>此旧消息的正文未保存</value></data>
+<data name="Image.PreviewClose" xml:space="preserve"><value>关闭</value></data>
 <data name="Content.Image" xml:space="preserve"><value>图片</value></data>
 <data name="Content.File" xml:space="preserve"><value>文件</value></data>
 <data name="Activity.AwaitingPeer" xml:space="preserve"><value>等待设备</value></data>

@@ -33,15 +33,18 @@
     </VisualStateManager.VisualStateGroups>
     <StackPanel
       Spacing="8">
-      <Border
-        CornerRadius="10">
+      <Button
+        x:Name="PreviewButton"
+        Click="PreviewClick"
+        Padding="0"
+        CornerRadius="10"
+        Visibility="Collapsed">
         <Image
-          x:Uid="MountainImage"
-          Source="ms-appx:///Assets/DemoMountainLake.png"
+          x:Name="Thumbnail"
           Width="368"
           Height="174"
-          Stretch="UniformToFill" />
-      </Border>
+          Stretch="Uniform" />
+      </Button>
       <TextBlock
         Text="{Binding Name}"
         FontWeight="SemiBold" />

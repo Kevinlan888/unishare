@@ -20,7 +20,7 @@ public sealed class ActivityTracker : ITransferDrain
     private readonly Dictionary<DeviceId, Task> historyLoads = [];
     private readonly HashSet<DeviceId> historyReady = [];
     private readonly HashSet<ActivityId> deferredIncoming = [];
-    // Process-only content is deliberately separate from the repository contract.
+    // Live previews supplement durable chat content (received images use their final file).
     private readonly Dictionary<ActivityId, ShareContent> previews = [];
     private readonly HashSet<ActivityId> active = [];
     private readonly HashSet<OutgoingReservation> reservations = [];
@@ -59,7 +59,16 @@ public sealed class ActivityTracker : ITransferDrain
     public ShareContent? GetPreview(ActivityId activity)
     {
         lock (gate)
-            return previews.GetValueOrDefault(ResolveActivity(activity));
+        {
+            activity = ResolveActivity(activity);
+            if (previews.TryGetValue(activity, out var preview))
+                return preview;
+            if (!activities.TryGetValue(activity, out var record))
+                return null;
+            return record.TextBody is { } text ? new(ContentKind.Text, text, record.MimeType, [])
+                : record.ImagePreviewBytes is { } bytes ? new(ContentKind.Image, null, record.MimeType,
+                    System.Collections.Immutable.ImmutableArray.CreateRange(bytes)) : null;
+        }
     }
 
     public void PublishIncomingPreview(ActivityId activity, ShareContent preview)
@@ -72,6 +81,20 @@ public sealed class ActivityTracker : ITransferDrain
             if (record.Direction != ShareDirection.Incoming || preview.Kind != record.Kind)
                 throw new ArgumentException("Preview does not match incoming activity.", nameof(preview));
             previews[activity] = preview;
+            if (preview.Kind == ContentKind.Text)
+                Save(record with { TextBody = preview.Text });
+        }
+        NotifyChanged();
+    }
+
+    public void SetImageSourcePath(ActivityId activity, string path)
+    {
+        lock (gate)
+        {
+            var record = RequireActivity(ResolveActivity(activity));
+            if (record.Kind != ContentKind.Image || record.Direction != ShareDirection.Outgoing)
+                throw new ArgumentException("Only outgoing images have a source path.", nameof(activity));
+            Save(record with { ImageSourcePath = path });
         }
         NotifyChanged();
     }
@@ -176,7 +199,11 @@ public sealed class ActivityTracker : ITransferDrain
         var now = clock.UtcNow;
         var record = new ActivityRecord(new(Guid.NewGuid()), device, earlyTransfer, operation, retryOf,
             ShareDirection.Outgoing, kind, origin, MetadataName(kind, displayName), mimeType, byteCount,
-            now, now, null, ActivityStatus.AwaitingPeer, 0, null, null);
+            now, now, null, ActivityStatus.AwaitingPeer, 0, null, null)
+        {
+            TextBody = kind == ContentKind.Text ? preview?.Text : null,
+            ImagePreviewBytes = kind == ContentKind.Image && preview is not null ? preview.ImageBytes.ToArray() : null
+        };
         if (earlyTransfer is { } progressing && earlyProgress.Remove(progressing, out var bytes))
             record = record with
             {
@@ -539,7 +566,8 @@ public sealed class ActivityTracker : ITransferDrain
                             UpdatedAt = replay.UpdatedAt > record.UpdatedAt ? replay.UpdatedAt : record.UpdatedAt,
                             CompletedAt = replay.CompletedAt,
                             ErrorKind = replay.ErrorKind,
-                            ReceivedFilePath = replay.ReceivedFilePath
+                            ReceivedFilePath = replay.ReceivedFilePath,
+                            TextBody = replay.TextBody ?? record.TextBody
                         };
                         activities.Add(canonical.Id, canonical);
                         if (previews.Remove(owner, out var preview))
@@ -552,7 +580,7 @@ public sealed class ActivityTracker : ITransferDrain
                     else
                     {
                         // Historical pending records are not live native work.
-                        // No payload or process operation index is reconstructed.
+                        // Chat content is restored, but process operation indexes are not.
                         activities.Add(record.Id, record);
                         if (record.TransferId is { } registered)
                             transfers.Add(registered, record.Id);

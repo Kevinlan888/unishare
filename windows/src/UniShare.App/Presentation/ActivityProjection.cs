@@ -52,6 +52,17 @@ public sealed class ActivityProjection : ObservableObject
     public ContentKind Kind { get; }
     public ShareDirection Direction { get; }
     public ShareOrigin Origin { get; }
+    public string? ImageSourcePath { get; private set; }
+    public byte[]? ImagePreviewBytes { get; private set; }
+    public string? ImagePath => Kind == ContentKind.Image
+        ? ImageSourcePath ?? (Status == ActivityStatus.Completed ? receivedFilePath : null) : null;
+    public void SetImageContent(string? path, byte[]? bytes)
+    {
+        ImageSourcePath = path;
+        ImagePreviewBytes = bytes;
+        OnPropertyChanged(nameof(ImagePath));
+        OnPropertyChanged(nameof(ImagePreviewBytes));
+    }
     public string Name
     {
         get => name;
@@ -149,6 +160,7 @@ public sealed class ActivityProjection : ObservableObject
         Size = value.Size;
         Time = value.Time;
         receivedFilePath = value.receivedFilePath;
+        SetImageContent(value.ImageSourcePath, value.ImagePreviewBytes);
         fileExists = value.fileExists;
         open = value.open;
         var statusChanged = Status != value.Status;

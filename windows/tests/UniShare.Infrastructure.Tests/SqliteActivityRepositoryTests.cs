@@ -20,6 +20,82 @@ public sealed class SqliteActivityRepositoryTests
         created ?? Now, Now, Now, ActivityStatus.Completed, ulong.MaxValue, null, null);
 
     [TestMethod]
+    public async Task SelectedImageSourceSurvivesRestart()
+    {
+        using var directory = new TemporaryDirectory();
+        var tracker = new ActivityTracker(Repository(directory), new FixedClock(Now));
+        var image = tracker.BeginOutgoing(Device, new(1), ContentKind.Image, "photo.png", "image/png", 4);
+        tracker.SetImageSourcePath(image.Id, "C:\\Pictures\\photo.png");
+        tracker.Complete(image.Id, new(null, null));
+        await tracker.SavePendingAsync();
+        var restarted = new ActivityTracker(Repository(directory), new FixedClock(Now));
+        await restarted.LoadDeviceAsync(Device);
+        Assert.AreEqual("C:\\Pictures\\photo.png", restarted.GetDeviceSnapshot(Device).Single().ImageSourcePath);
+    }
+
+    [TestMethod]
+    public async Task VersionTwoMetadataMigratesAndNewChatContentCanBeSaved()
+    {
+        using var directory = new TemporaryDirectory();
+        var record = Record();
+        await Repository(directory).UpsertAsync(record, default);
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = System.IO.Path.Combine(directory.Path, "activity.db"), Pooling = false }.ToString()))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE activities DROP COLUMN text_body;
+                ALTER TABLE activities DROP COLUMN image_source_path;
+                ALTER TABLE activities DROP COLUMN image_preview_bytes;
+                PRAGMA user_version=2;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        var repository = Repository(directory);
+        Assert.AreEqual(record, (await repository.LoadDeviceAsync(Device, default)).Single());
+        var chat = record with { Id = new(Guid.NewGuid()), Kind = ContentKind.Text, TextBody = "after migration" };
+        await repository.UpsertAsync(chat, default);
+        Assert.AreEqual("after migration", (await Repository(directory).LoadDeviceAsync(Device, default))
+            .Single(row => row.Id == chat.Id).TextBody);
+    }
+
+    [TestMethod]
+    public async Task ClipboardImageSurvivesRestartWithoutItsTemporarySourceFile()
+    {
+        using var directory = new TemporaryDirectory();
+        var tracker = new ActivityTracker(Repository(directory), new FixedClock(Now));
+        var image = tracker.BeginOutgoing(Device, new(1), ContentKind.Image, "clipboard.png", "image/png", 4,
+            ShareOrigin.Clipboard, new(ContentKind.Image, null, "image/png", [11, 22, 33, 44]));
+        tracker.Complete(image.Id, new(null, null));
+        await tracker.SavePendingAsync();
+        var restarted = new ActivityTracker(Repository(directory), new FixedClock(Now));
+        await restarted.LoadDeviceAsync(Device);
+        CollectionAssert.AreEqual(new byte[] { 11, 22, 33, 44 }, restarted.GetPreview(image.Id)?.ImageBytes.ToArray());
+    }
+
+    [TestMethod]
+    public async Task ChatTextSurvivesTrackerAndRepositoryRestart()
+    {
+        using var directory = new TemporaryDirectory();
+        var tracker = new ActivityTracker(Repository(directory), new FixedClock(Now));
+        var sent = tracker.BeginOutgoing(Device, new(1), ContentKind.Text, "Text", "text/plain", 12,
+            preview: new(ContentKind.Text, "你好 👋\nsecond line", "text/plain", []));
+        tracker.Complete(sent.Id, new(null, null));
+        var received = tracker.AddIncomingOffer(new(new(2), new(Guid.NewGuid()), Device,
+            ContentKind.Text, "Text", "text/plain", 8));
+        tracker.PublishIncomingPreview(received.Id, new(ContentKind.Text, "收到的文字", "text/plain", []));
+        tracker.Complete(received.Id, new(received.TransferId, null));
+        await tracker.SavePendingAsync();
+
+        var restarted = new ActivityTracker(Repository(directory), new FixedClock(Now));
+        await restarted.LoadDeviceAsync(Device);
+        Assert.AreEqual("你好 👋\nsecond line", restarted.GetPreview(sent.Id)?.Text);
+        Assert.AreEqual("收到的文字", restarted.GetPreview(received.Id)?.Text);
+        Assert.AreEqual(0, restarted.ActiveCount);
+    }
+
+    [TestMethod]
     public async Task UpsertRetainsNewestFiveHundredWithoutChangingAnotherDevice()
     {
         using var directory = new TemporaryDirectory();
@@ -127,7 +203,7 @@ public sealed class SqliteActivityRepositoryTests
         await ActivitySchema.InitializeAsync(connection, default);
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA user_version";
-        Assert.AreEqual(2L, command.ExecuteScalar());
+        Assert.AreEqual(3L, command.ExecuteScalar());
         command.CommandText = "PRAGMA journal_mode";
         Assert.AreEqual("wal", command.ExecuteScalar());
         command.CommandText = "PRAGMA foreign_keys";
@@ -211,7 +287,7 @@ public sealed class SqliteActivityRepositoryTests
         await reopened.OpenAsync();
         using var version = reopened.CreateCommand();
         version.CommandText = "PRAGMA user_version";
-        Assert.AreEqual(2L, version.ExecuteScalar());
+        Assert.AreEqual(3L, version.ExecuteScalar());
     }
 
     [TestMethod]

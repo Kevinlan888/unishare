@@ -301,6 +301,8 @@ public sealed class TransferCoordinator
             try
             {
                 record = reservation.Commit(spec.Device, pending.OperationId, spec.Kind, spec.Name, spec.Mime, spec.Bytes, spec.Origin, spec.Preview, retryOf);
+                if (spec.Kind == ContentKind.Image && spec.Source is { } imageSource)
+                    tracker.SetImageSourcePath(record.Id, imageSource.Path);
             }
             catch
             {

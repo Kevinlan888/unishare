@@ -35,6 +35,8 @@
 <data name="DemoClipboard" xml:space="preserve"><value>Demo mode does not read or change the clipboard.</value></data>
 <data name="LanguageRestart" xml:space="preserve"><value>Restart the demo with --en-US or --zh-CN to preview the selected language.</value></data>
 <data name="Content.Text" xml:space="preserve"><value>Text</value></data>
+<data name="Activity.TextNotSaved" xml:space="preserve"><value>This older message's text was not saved</value></data>
+<data name="Image.PreviewClose" xml:space="preserve"><value>Close</value></data>
 <data name="Content.Image" xml:space="preserve"><value>Image</value></data>
 <data name="Content.File" xml:space="preserve"><value>File</value></data>
 <data name="Activity.AwaitingPeer" xml:space="preserve"><value>Waiting for device</value></data>

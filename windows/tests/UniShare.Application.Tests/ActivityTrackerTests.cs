@@ -21,7 +21,7 @@ public sealed class ActivityTrackerTests
     private static TransferTerminal Failure(ShareErrorKind kind, TransferId? transfer = null) => new(transfer, new(kind, "private payload C:\\private\\secret.txt"));
 
     [TestMethod]
-    public async Task IncomingPreviewPublicationIsProcessOnlyAndValidatesKind()
+    public async Task IncomingTextPublicationIsDurableAndValidatesKind()
     {
         var repository = new Repository();
         var tracker = Create(repository);
@@ -38,7 +38,7 @@ public sealed class ActivityTrackerTests
         Assert.AreEqual("private body", tracker.GetPreview(record.Id)!.Text);
         Assert.AreEqual(1, changes);
         await tracker.SavePendingAsync();
-        Assert.IsFalse(repository.Records[record.Id].ToString().Contains("private body"));
+        Assert.AreEqual("private body", repository.Records[record.Id].TextBody);
         var wrong = Assert.Throws<System.Reflection.TargetInvocationException>(() => setter.Invoke(tracker, [record.Id, new ShareContent(ContentKind.Image, null, "image/png", [])]));
         Assert.IsInstanceOfType<ArgumentException>(wrong.InnerException);
         var unknown = Assert.Throws<System.Reflection.TargetInvocationException>(() => setter.Invoke(tracker, [new ActivityId(Guid.NewGuid()), new ShareContent(ContentKind.Text, "body", "text/plain", [])]));
@@ -625,7 +625,7 @@ public sealed class ActivityTrackerTests
     }
 
     [TestMethod]
-    public async Task PayloadAndFailureMessageNeverReachHistoryAndReloadCannotReconstructThem()
+    public async Task ChatPayloadSurvivesReloadButFailureDetailsAndTransientPathsDoNot()
     {
         var repository = new Repository();
         var tracker = Create(repository);
@@ -639,14 +639,13 @@ public sealed class ActivityTrackerTests
         tracker.Complete(second.Id, new(null, null), "C:\\private\\image-payload.png");
         await tracker.SavePendingAsync();
         var persisted = JsonSerializer.Serialize(repository.Writes);
-        Assert.IsFalse(persisted.Contains("SECRET", StringComparison.Ordinal));
+        Assert.IsTrue(persisted.Contains("SECRET", StringComparison.Ordinal));
         Assert.IsFalse(persisted.Contains("private", StringComparison.Ordinal));
-        Assert.IsFalse(persisted.Contains("ImageBytes", StringComparison.Ordinal));
         var reload = Create(repository);
         await reload.LoadDeviceAsync(Device);
         Assert.AreEqual(2, reload.GetDeviceSnapshot(Device).Count);
-        Assert.IsNull(reload.GetPreview(first.Id));
-        Assert.IsNull(reload.GetPreview(second.Id));
+        Assert.AreEqual("SECRET clipboard text", reload.GetPreview(first.Id)?.Text);
+        CollectionAssert.AreEqual(new byte[] { 11, 22, 33, 44 }, reload.GetPreview(second.Id)?.ImageBytes.ToArray());
         Assert.AreEqual(0, reload.ActiveCount);
     }
 

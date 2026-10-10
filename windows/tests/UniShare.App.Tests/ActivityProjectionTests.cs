@@ -11,6 +11,28 @@ public sealed class ActivityProjectionTests
     private static readonly ActivityId SecondActivity = new(Guid.Parse("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"));
 
     [TestMethod]
+    public void ImagePreviewFollowsCompletionAndSurvivesCardSynchronization()
+    {
+        var current = new ActivityProjection(ContentKind.Image, ShareDirection.Incoming, "photo.png", "", "1 MB", "12:00",
+            ActivityStatus.Transferring) { Id = Activity };
+        Assert.IsNull(current.ImagePath);
+        var completed = new ActivityProjection(ContentKind.Image, ShareDirection.Incoming, "photo.png", "", "1 MB", "12:01",
+            ActivityStatus.Completed, receivedFilePath: "C:\\Downloads\\photo.png") { Id = Activity };
+        ActivityProjectionCollection.Synchronize(new ObservableCollection<ActivityProjection> { current }, [completed]);
+        Assert.AreEqual("C:\\Downloads\\photo.png", current.ImagePath);
+
+        var outgoing = new ActivityProjection(ContentKind.Image, ShareDirection.Outgoing, "photo.png", "", "1 MB", "12:00",
+            ActivityStatus.Completed) { Id = Activity };
+        outgoing.SetImageContent("C:\\Pictures\\sent.png", null);
+        ActivityProjectionCollection.Synchronize(new ObservableCollection<ActivityProjection> { current }, [outgoing]);
+        Assert.AreEqual("C:\\Pictures\\sent.png", current.ImagePath);
+        outgoing.SetImageContent(null, [11, 22, 33, 44]);
+        ActivityProjectionCollection.Synchronize(new ObservableCollection<ActivityProjection> { current }, [outgoing]);
+        Assert.IsNull(current.ImagePath);
+        CollectionAssert.AreEqual(new byte[] { 11, 22, 33, 44 }, current.ImagePreviewBytes);
+    }
+
+    [TestMethod]
     public void SynchronizingProgressKeepsTheExistingCardAndNeverMovesBackward()
     {
         var current = Projection(25);

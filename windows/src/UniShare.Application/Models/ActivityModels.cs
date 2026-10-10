@@ -14,7 +14,7 @@ public enum LanguagePolicy
     System, SimplifiedChinese, English
 }
 
-// Metadata only. Text, clipboard data and image bytes must stay outside this record.
+// Chat content follows the same retention policy as its activity.
 public sealed record ActivityRecord(
     ActivityId Id,
     DeviceId DeviceId,
@@ -33,7 +33,14 @@ public sealed record ActivityRecord(
     ActivityStatus Status,
     ulong TransferredBytes,
     ShareErrorKind? ErrorKind,
-    string? ReceivedFilePath);
+    string? ReceivedFilePath)
+{
+    public string? TextBody { get; init; }
+    public string? ImageSourcePath { get; init; }
+    public byte[]? ImagePreviewBytes { get; init; }
+    // Diagnostic formatting must not expose chat bodies or local paths.
+    public override string ToString() => $"ActivityRecord {{ Id = {Id}, Kind = {Kind}, Direction = {Direction}, Status = {Status} }}";
+}
 
 public sealed record ActivityQuery(string? Text, DeviceId? Device, ActivityStatus? Status, ShareDirection? Direction);
 

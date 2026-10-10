@@ -17,7 +17,7 @@ public static class ActivitySchema
         command.Transaction = transaction;
         command.CommandText = "PRAGMA user_version";
         var version = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
-        if (version > 2)
+        if (version > 3)
             throw new InvalidOperationException("Activity database schema is newer than supported.");
         command.CommandText = version == 1 ? """
             ALTER TABLE activities RENAME TO activities_v1;
@@ -83,6 +83,16 @@ public static class ActivitySchema
             """ : string.Empty;
         if (command.CommandText.Length != 0)
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        if (version < 3)
+        {
+            command.CommandText = """
+                ALTER TABLE activities ADD COLUMN text_body TEXT;
+                ALTER TABLE activities ADD COLUMN image_source_path TEXT;
+                ALTER TABLE activities ADD COLUMN image_preview_bytes BLOB;
+                PRAGMA user_version=3;
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();
     }

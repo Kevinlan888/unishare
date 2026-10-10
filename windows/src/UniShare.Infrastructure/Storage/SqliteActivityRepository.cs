@@ -47,9 +47,11 @@ public sealed class SqliteActivityRepository : IActivityRepository
             command.CommandText = """
                 INSERT INTO activities (id, device_id, transfer_id, operation_id, retry_of,
                     direction, kind, origin, display_name, mime_type, byte_count, created_at,
-                    created_ticks, updated_at, completed_at, status, transferred_bytes, error_kind, received_file_path)
+                    created_ticks, updated_at, completed_at, status, transferred_bytes, error_kind, received_file_path,
+                    text_body, image_source_path, image_preview_bytes)
                 VALUES ($id, $device, $transfer, $operation, $retry, $direction, $kind, $origin,
-                    $name, $mime, $bytes, $created, $ticks, $updated, $completed, $status, $transferred, $error, $path)
+                    $name, $mime, $bytes, $created, $ticks, $updated, $completed, $status, $transferred, $error, $path,
+                    $textBody, $imagePath, $imageBytes)
                 ON CONFLICT(id) DO UPDATE SET device_id=excluded.device_id,
                     transfer_id=excluded.transfer_id, operation_id=excluded.operation_id,
                     retry_of=excluded.retry_of, direction=excluded.direction, kind=excluded.kind,
@@ -57,7 +59,9 @@ public sealed class SqliteActivityRepository : IActivityRepository
                     byte_count=excluded.byte_count, created_at=excluded.created_at, created_ticks=excluded.created_ticks,
                     updated_at=excluded.updated_at, completed_at=excluded.completed_at,
                     status=excluded.status, transferred_bytes=excluded.transferred_bytes,
-                    error_kind=excluded.error_kind, received_file_path=excluded.received_file_path
+                    error_kind=excluded.error_kind, received_file_path=excluded.received_file_path,
+                    text_body=excluded.text_body, image_source_path=excluded.image_source_path,
+                    image_preview_bytes=excluded.image_preview_bytes
                 """;
             Add(command, "$id", record.Id.Value.ToString("D"));
             Add(command, "$device", record.DeviceId.Value.ToString("D"));
@@ -79,6 +83,9 @@ public sealed class SqliteActivityRepository : IActivityRepository
             Add(command, "$error", record.ErrorKind is { } error ? (int)error : null);
             Add(command, "$path", record.Direction == ShareDirection.Incoming && record.Kind is ContentKind.File or ContentKind.Image &&
                 record.Status == ActivityStatus.Completed && record.ErrorKind is null ? record.ReceivedFilePath : null);
+            Add(command, "$textBody", record.Kind == ContentKind.Text ? record.TextBody : null);
+            Add(command, "$imagePath", record.Kind == ContentKind.Image ? record.ImageSourcePath : null);
+            Add(command, "$imageBytes", record.Kind == ContentKind.Image ? record.ImagePreviewBytes : null);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             await PruneCoreAsync(connection, transaction, clock?.UtcNow ?? DateTimeOffset.UtcNow,
                 maxPerDevice, maxAge, record.DeviceId, cancellationToken).ConfigureAwait(false);
@@ -102,7 +109,7 @@ public sealed class SqliteActivityRepository : IActivityRepository
             command.CommandText = """
                 SELECT id, device_id, transfer_id, operation_id, retry_of, direction, kind, origin,
                     display_name, mime_type, byte_count, created_at, updated_at, completed_at,
-                    status, transferred_bytes, error_kind, received_file_path
+                    status, transferred_bytes, error_kind, received_file_path, text_body, image_source_path, image_preview_bytes
                 FROM activities
                 WHERE ($device IS NULL OR device_id=$device)
                     AND ($status IS NULL OR status=$status)
@@ -127,7 +134,12 @@ public sealed class SqliteActivityRepository : IActivityRepository
                     reader.IsDBNull(13) ? null : ParseTimestamp(reader.GetString(13)),
                     (ActivityStatus)reader.GetInt32(14), Unsigned(reader.GetString(15)),
                     reader.IsDBNull(16) ? null : (ShareErrorKind)reader.GetInt32(16),
-                    reader.IsDBNull(17) ? null : reader.GetString(17)));
+                    reader.IsDBNull(17) ? null : reader.GetString(17))
+                {
+                    TextBody = reader.IsDBNull(18) ? null : reader.GetString(18),
+                    ImageSourcePath = reader.IsDBNull(19) ? null : reader.GetString(19),
+                    ImagePreviewBytes = reader.IsDBNull(20) ? null : (byte[])reader.GetValue(20)
+                });
             return records;
         }
         finally { gate.Release(); }

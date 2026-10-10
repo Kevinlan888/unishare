@@ -144,7 +144,7 @@ public sealed class TransferCoordinatorTests
     }
 
     [TestMethod]
-    public async Task TextAndClipboardTextUseOrdinaryTextRouteAndKeepBodyProcessLocal()
+    public async Task TextAndClipboardTextUseOrdinaryTextRouteAndRetainChatBody()
     {
         var repo = new Repository();
         var tracker = Tracker(repo);
@@ -161,11 +161,12 @@ public sealed class TransferCoordinatorTests
         Assert.AreEqual(ShareOrigin.Clipboard, record.Origin);
         Assert.AreEqual("Text", record.DisplayName);
         Assert.IsNull(record.ReceivedFilePath);
+        Assert.AreEqual("private body", record.TextBody);
         Assert.IsFalse(record.ToString().Contains("private body"));
     }
 
     [TestMethod]
-    public async Task SelectedImageAndFileUseMatchingRouteWithoutPersistingSourcePath()
+    public async Task SelectedImageAndFileUseMatchingRouteAndOnlyImagesRetainPreviewSource()
     {
         var path = Path.GetTempFileName();
         try
@@ -180,6 +181,8 @@ public sealed class TransferCoordinatorTests
                 Assert.AreEqual(kind + ":" + path, sdk.Sends.Single());
                 sdk.Finish(new(null, null));
                 await tracker.WaitForIdleAsync(default);
+                Assert.AreEqual(kind == ContentKind.Image ? path : null,
+                    tracker.GetDeviceSnapshot(Device).Single().ImageSourcePath);
                 Assert.IsFalse(tracker.GetDeviceSnapshot(Device).Single().ToString().Contains(path));
                 Assert.IsTrue(File.Exists(path));
             }
@@ -232,6 +235,7 @@ public sealed class TransferCoordinatorTests
         Assert.IsTrue(files.Destination!.Deleted);
         await tracker.SavePendingAsync();
         Assert.IsNull(repo.Records[record.Id].ReceivedFilePath);
+        Assert.AreEqual("秘密 text", repo.Records[record.Id].TextBody);
         Assert.IsFalse(repo.Records[record.Id].ToString().Contains("秘密"));
         Assert.IsFalse(repo.Records[record.Id].ToString().Contains(files.Destination.Path));
     }

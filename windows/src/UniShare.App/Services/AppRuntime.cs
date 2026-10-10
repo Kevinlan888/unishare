@@ -255,15 +255,22 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         ActivityProjectionCollection.Synchronize(model.SharedFiles,
             RecentFileActivities.Select(records).Select(record => ProjectActivity(record, includePreview: false)).ToArray());
     }
-    private ActivityProjection ProjectActivity(ActivityRecord record, bool includePreview) => new(
-        record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
-        includePreview ? tracker.GetPreview(record.Id)?.Text ?? "" : "", ActivityProjection.FormatSize(record.ByteCount),
-        record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin,
-        ActivityProjection.ProgressPercentage(record.TransferredBytes, record.ByteCount), record.TransferredBytes,
-        record.ByteCount, record.UpdatedAt, record.ReceivedFilePath, viewModelFiles.FileExists, OpenReceivedFileAsync)
+    private ActivityProjection ProjectActivity(ActivityRecord record, bool includePreview)
     {
-        Id = record.Id
-    };
+        var projection = new ActivityProjection(
+            record.Kind, record.Direction, record.Kind == ContentKind.Text ? Strings.Get("Content.Text") : record.DisplayName,
+            includePreview && record.Kind == ContentKind.Text
+                ? tracker.GetPreview(record.Id)?.Text ?? Strings.Get("Activity.TextNotSaved") : "", ActivityProjection.FormatSize(record.ByteCount),
+            record.CreatedAt.LocalDateTime.ToShortTimeString(), record.Status, record.Origin,
+            ActivityProjection.ProgressPercentage(record.TransferredBytes, record.ByteCount), record.TransferredBytes,
+            record.ByteCount, record.UpdatedAt, record.ReceivedFilePath, viewModelFiles.FileExists, OpenReceivedFileAsync)
+        {
+            Id = record.Id
+        };
+        if (includePreview && record.Kind == ContentKind.Image)
+            projection.SetImageContent(record.ImageSourcePath, record.ImagePreviewBytes);
+        return projection;
+    }
     private DeviceSessionViewModel? CurrentSession()
     {
         if (model.SelectedDevice?.Id is not { } id)
