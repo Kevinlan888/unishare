@@ -280,9 +280,12 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
     }
     private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName == nameof(DeviceSessionViewModel.IsConnecting) &&
-            sender is DeviceSessionViewModel session && model.SelectedDevice?.Id == session.Device.Id)
+        if (sender is not DeviceSessionViewModel session || model.SelectedDevice?.Id != session.Device.Id)
+            return;
+        if (args.PropertyName == nameof(DeviceSessionViewModel.IsConnecting))
             UpdateConnectionNotice(session);
+        else if (args.PropertyName == nameof(DeviceSessionViewModel.ErrorResourceKey))
+            UpdateSessionErrorNotice(session);
     }
     private void UpdateConnectionNotice(DeviceSessionViewModel? session)
     {
@@ -291,6 +294,21 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
             model.Notice = waiting;
         else if (model.Notice == waiting)
             model.Notice = null;
+    }
+    private string? sessionErrorNotice;
+    private void UpdateSessionErrorNotice(DeviceSessionViewModel session)
+    {
+        if (session.ErrorResourceKey is { } key)
+        {
+            sessionErrorNotice = Strings.Get(key);
+            model.Notice = sessionErrorNotice;
+        }
+        else
+        {
+            if (model.Notice == sessionErrorNotice)
+                model.Notice = null;
+            sessionErrorNotice = null;
+        }
     }
     public Task SendTextAsync(string text) => RunAsync(async vm =>
     {
@@ -340,8 +358,7 @@ public sealed class AppRuntime : IDisposable, IRuntimeProjection
         if (vm is null)
             return;
         await work(vm);
-        if (vm.ErrorResourceKey is { } key)
-            model.Notice = Strings.Get(key);
+        UpdateSessionErrorNotice(vm);
         if (refreshDevices)
             projection.Refresh();
         else

@@ -80,6 +80,7 @@
         x:Name="NoticeBar"
         IsOpen="False"
         IsClosable="True"
+        Closed="NoticeClosed"
         Severity="Informational" />
       <TextBox
         x:Name="SearchBox"

@@ -192,8 +192,10 @@ public sealed class DeviceSessionViewModel : CommandViewModel, IDisposable
                 Interlocked.Increment(ref connectionGeneration);
             RevokeSendEligibility();
         }
-        if (value is ShareSdkEvent.DeviceOnline or ShareSdkEvent.DeviceUpdated or ShareSdkEvent.DeviceOffline or
-            ShareSdkEvent.ConnectionChanged or ShareSdkEvent.IdentityChanged or ShareSdkEvent.PairingCompleted)
+        if (value is ShareSdkEvent.ConnectionChanged { State: ConnectionState.Connected } connected && connected.Device == Device.Id)
+            Dispatcher.Post(() => { ClearError(); Refresh(); });
+        else if (value is ShareSdkEvent.DeviceOnline or ShareSdkEvent.DeviceUpdated or ShareSdkEvent.DeviceOffline or
+                 ShareSdkEvent.ConnectionChanged or ShareSdkEvent.IdentityChanged or ShareSdkEvent.PairingCompleted)
             Dispatcher.Post(Refresh);
     }
 

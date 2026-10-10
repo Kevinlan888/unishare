@@ -33,6 +33,8 @@ public abstract class CommandViewModel(IViewModelDispatcher dispatcher) : Observ
         get => errorResourceKey; private set => SetProperty(ref errorResourceKey, value);
     }
 
+    protected void ClearError() => ErrorResourceKey = null;
+
     protected sealed class CommandLane
     {
         internal int Busy;

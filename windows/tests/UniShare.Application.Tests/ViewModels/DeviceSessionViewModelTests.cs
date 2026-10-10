@@ -43,6 +43,24 @@ public sealed class DeviceSessionViewModelTests
     }
 
     [TestMethod]
+    public async Task ConnectedEventClearsAnEarlierPairingFailure()
+    {
+        using var f = new ViewModelFixture();
+        var device = f.Online(trusted: false, connected: false);
+        using var vm = f.Session(device);
+        f.Sdk.Wait = () => Task.FromException(new IOException("peer was not ready"));
+
+        await vm.PairCommand.ExecuteAsync(null);
+        Assert.AreEqual("Pairing.ConnectFailed", vm.ErrorResourceKey);
+
+        f.Sdk.Trusted.Add(device.Id);
+        f.Sdk.Emit(new ShareSdkEvent.ConnectionChanged(device.Id, ConnectionState.Connected, null));
+
+        Assert.IsNull(vm.ErrorResourceKey,
+            "A live connection must retire the stale failure instead of redisplaying it on each activity refresh.");
+    }
+
+    [TestMethod]
     public async Task TrustedDisconnectedDeviceReconnectsBeforeSendingText()
     {
         using var f = new ViewModelFixture();

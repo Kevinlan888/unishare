@@ -53,6 +53,7 @@ public sealed partial class DeviceSessionView : UserControl, IDisposable
         NoticeBar.IsOpen = !string.IsNullOrEmpty(NoticeBar.Message);
         ReconcileActivities();
     }
+    private void NoticeClosed(InfoBar sender, InfoBarClosedEventArgs args) => model.Notice = null;
     private void ReconcileActivities()
     {
         if (disposed)
