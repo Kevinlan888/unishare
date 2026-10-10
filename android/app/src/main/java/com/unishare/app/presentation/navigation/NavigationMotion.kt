@@ -6,6 +6,10 @@ enum class NavigationMotion {
     PopDetail,
 }
 
+internal fun detailPageOffscreenOffset(fullWidth: Int): Int = fullWidth
+
+internal fun backgroundPageParallaxOffset(fullWidth: Int): Int = -fullWidth / 4
+
 private val motionTopLevelRoutes = AppDestination.topLevel.map { it.route }.toSet()
 
 fun navigationMotion(initialRoute: String?, targetRoute: String?, isPop: Boolean): NavigationMotion = when {

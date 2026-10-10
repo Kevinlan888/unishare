@@ -5,6 +5,12 @@ import org.junit.Test
 
 class NavigationMotionTest {
     @Test
+    fun detail_motion_uses_matching_offscreen_and_parallax_offsets() {
+        assertEquals(1_000, detailPageOffscreenOffset(fullWidth = 1_000))
+        assertEquals(-250, backgroundPageParallaxOffset(fullWidth = 1_000))
+    }
+
+    @Test
     fun top_level_tabs_never_inherit_detail_motion() {
         val routes = listOf("home", "devices", "history", "settings")
         for (initial in routes) {

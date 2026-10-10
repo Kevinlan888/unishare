@@ -5,7 +5,6 @@ import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +36,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -183,22 +181,32 @@ fun UniShareNavHost(
                 .consumeWindowInsets(innerPadding),
             enterTransition = {
                 when (motion(isPop = false)) {
-                    NavigationMotion.ForwardDetail -> slideInHorizontally(initialOffsetX = { it })
+                    NavigationMotion.ForwardDetail -> slideInHorizontally(
+                        initialOffsetX = ::detailPageOffscreenOffset,
+                    )
                     else -> EnterTransition.None
                 }
             },
             exitTransition = {
                 when (motion(isPop = false)) {
-                    NavigationMotion.ForwardDetail -> slideOutHorizontally(targetOffsetX = { -it / 4 })
+                    NavigationMotion.ForwardDetail -> slideOutHorizontally(
+                        targetOffsetX = ::backgroundPageParallaxOffset,
+                    )
                     else -> ExitTransition.None
                 }
             },
-            popEnterTransition = { EnterTransition.None },
+            popEnterTransition = {
+                when (motion(isPop = true)) {
+                    NavigationMotion.PopDetail -> slideInHorizontally(
+                        initialOffsetX = ::backgroundPageParallaxOffset,
+                    )
+                    else -> EnterTransition.None
+                }
+            },
             popExitTransition = {
                 when (motion(isPop = true)) {
-                    NavigationMotion.PopDetail -> slideOutHorizontally(targetOffsetX = { it }) + scaleOut(
-                        targetScale = 0.9f,
-                        transformOrigin = TransformOrigin.Center,
+                    NavigationMotion.PopDetail -> slideOutHorizontally(
+                        targetOffsetX = ::detailPageOffscreenOffset,
                     )
                     else -> ExitTransition.None
                 }
