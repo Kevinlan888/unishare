@@ -28,6 +28,7 @@
     <string name="action_see_all">查看全部</string>
     <string name="action_back">返回</string>
     <string name="action_cancel">取消</string>
+    <string name="action_close">关闭</string>
     <string name="action_open_device">打开设备</string>
     <string name="home_this_device">本机设备</string>
     <string name="home_recent">最近活动</string>
@@ -96,6 +97,13 @@
     <string name="session_link_detail">发送链接</string>
     <string name="session_text_unavailable">文本内容仅在当前会话中可用。</string>
     <string name="session_image_preview">图片附件 %1$s</string>
+    <string name="session_image_unavailable">此图片已不可用。</string>
+    <string name="session_device_information">设备信息</string>
+    <string name="session_forget_device">忘记设备</string>
+    <string name="session_device_platform">平台</string>
+    <string name="session_device_connection">连接状态</string>
+    <string name="session_device_trust">信任状态</string>
+    <string name="session_close_image_preview">关闭图片预览</string>
     <string name="session_open_received_file">打开已接收文件</string>
     <string name="session_cancel_transfer">取消传输</string>
     <string name="session_retry_transfer">重试传输</string>
@@ -120,6 +128,7 @@
     <string name="session_error_clipboard_foreground">请打开 UniShare 后再读取剪贴板。</string>
     <string name="session_error_content_permission">请允许持续访问所选内容后再发送。</string>
     <string name="session_error_invalid_link">请输入有效的 http 或 https 链接。</string>
+    <string name="session_error_forget_failed">无法忘记此设备。</string>
     <string name="pairing_title">与 %1$s 配对？</string>
     <string name="pairing_detail">请确认两台设备上显示的六位安全码完全一致。</string>
     <string name="pairing_code_accessibility">配对验证码 %1$s</string>

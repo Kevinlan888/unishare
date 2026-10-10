@@ -4,6 +4,7 @@ import android.text.format.DateFormat
 import com.unishare.app.presentation.format.DisplayFormatters
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +64,7 @@ fun ActivityCard(
     activity: SessionActivityUi,
     onCancel: (ActivityKey) -> Unit,
     onRetry: (ActivityKey) -> Unit,
+    onOpenImage: (SessionActivityUi) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val outgoing = activity.direction == ShareDirection.OUTGOING
@@ -91,7 +94,7 @@ fun ActivityCard(
             Column(modifier = Modifier.padding(12.dp)) {
                 when (activity.kind) {
                     ContentKind.TEXT -> TextActivityContent(activity)
-                    ContentKind.IMAGE -> ImageActivityContent(activity, onCancel, onRetry)
+                    ContentKind.IMAGE -> ImageActivityContent(activity, onCancel, onRetry, onOpenImage)
                     ContentKind.FILE -> FileActivityContent(activity, onCancel, onRetry)
                 }
                 if (activity.kind == ContentKind.TEXT) {
@@ -183,11 +186,18 @@ private fun ImageActivityContent(
     activity: SessionActivityUi,
     onCancel: (ActivityKey) -> Unit,
     onRetry: (ActivityKey) -> Unit,
+    onOpenImage: (SessionActivityUi) -> Unit,
 ) {
+    val canPreview = activity.status == ActivityStatus.COMPLETED &&
+        (activity.previewBitmap != null || activity.previewReference != null)
     val previewModifier = Modifier
         .fillMaxWidth()
         .aspectRatio(1.95f)
         .clip(RoundedCornerShape(12.dp))
+        .then(
+            if (canPreview) Modifier.clickable(role = Role.Button) { onOpenImage(activity) }
+            else Modifier,
+        )
     val previewDescription = stringResource(R.string.session_image_preview, activity.displayName)
     val previewBitmap = activity.previewBitmap
     if (previewBitmap != null) {

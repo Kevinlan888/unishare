@@ -42,6 +42,47 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionViewModelTest {
     @Test
+    fun forgetting_the_device_completes_before_leaving_the_session() = runTest(dispatcher) {
+        val repository = FakeSessionDeviceRepository(device())
+        val viewModel = SessionViewModel(
+            deviceId = deviceId,
+            devices = repository,
+            activities = MutableStateFlow(emptyList()),
+            previewFor = { null },
+            operations = FakeSessionOperations(),
+        )
+        var leftSession = false
+
+        viewModel.forgetDevice { leftSession = true }
+        advanceUntilIdle()
+
+        assertEquals(listOf(deviceId), repository.forgotten)
+        assertTrue(leftSession)
+    }
+
+    @Test
+    fun forgetting_failure_keeps_the_session_open_and_reports_the_device_error() = runTest(dispatcher) {
+        val repository = FakeSessionDeviceRepository(device()).apply {
+            forgetFailure = IllegalStateException("native failure")
+        }
+        val viewModel = SessionViewModel(
+            deviceId = deviceId,
+            devices = repository,
+            activities = MutableStateFlow(emptyList()),
+            previewFor = { null },
+            operations = FakeSessionOperations(),
+        )
+        var leftSession = false
+        val event = async { viewModel.events.first() }
+
+        viewModel.forgetDevice { leftSession = true }
+        advanceUntilIdle()
+
+        assertFalse(leftSession)
+        assertEquals(SessionUserMessage.FORGET_FAILED, event.await().message)
+    }
+
+    @Test
     fun only_the_matching_device_marks_its_session_as_pairing() = runTest(dispatcher) {
         val pairing = MutableStateFlow(
             PairingUiState(matchingDeviceIds = setOf(deviceId)),
@@ -505,6 +546,8 @@ private class FakeSessionDeviceRepository(initial: DeviceSummary) : DeviceReposi
     var connectGate: CompletableDeferred<Unit>? = null
     var connectCalls = 0
     var trustOnConnect = false
+    var forgetFailure: RuntimeException? = null
+    val forgotten = mutableListOf<DeviceKey>()
     val mutableDevices = MutableStateFlow(listOf(initial))
     override val devices = mutableDevices
     override fun find(deviceId: DeviceKey) = devices.value.firstOrNull { it.id == deviceId }
@@ -515,5 +558,8 @@ private class FakeSessionDeviceRepository(initial: DeviceSummary) : DeviceReposi
         connectGate?.await()
         mutableDevices.value = mutableDevices.value.map { it.copy(connected = true, trusted = it.trusted || trustOnConnect) }
     }
-    override suspend fun forget(deviceId: DeviceKey) = Unit
+    override suspend fun forget(deviceId: DeviceKey) {
+        forgetFailure?.let { throw it }
+        forgotten += deviceId
+    }
 }

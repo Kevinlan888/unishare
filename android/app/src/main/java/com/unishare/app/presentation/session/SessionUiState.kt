@@ -61,6 +61,7 @@ enum class SessionUserMessage {
     CLIPBOARD_REQUIRES_FOREGROUND,
     CONTENT_PERMISSION_DENIED,
     INVALID_LINK,
+    FORGET_FAILED,
 }
 
 data class SessionEvent(val message: SessionUserMessage)

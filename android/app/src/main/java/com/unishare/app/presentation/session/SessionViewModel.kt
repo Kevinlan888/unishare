@@ -282,6 +282,17 @@ class SessionViewModel(
         }
     }
 
+    fun forgetDevice(onForgotten: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                devices.forget(deviceId)
+                onForgotten()
+            } catch (_: Exception) {
+                emit(SessionUserMessage.FORGET_FAILED)
+            }
+        }
+    }
+
     private fun sendText(text: String, accepted: () -> Unit = {}) {
         viewModelScope.launch {
             try {

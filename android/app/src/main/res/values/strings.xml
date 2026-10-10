@@ -28,6 +28,7 @@
     <string name="action_see_all">See All</string>
     <string name="action_back">Back</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
     <string name="action_open_device">Open device</string>
     <string name="home_this_device">This device</string>
     <string name="home_recent">Recent</string>
@@ -97,6 +98,13 @@
     <string name="session_link_detail">Send link</string>
     <string name="session_text_unavailable">Text content is available only in the current session.</string>
     <string name="session_image_preview">Image attachment %1$s</string>
+    <string name="session_image_unavailable">This image is no longer available.</string>
+    <string name="session_device_information">Device information</string>
+    <string name="session_forget_device">Forget device</string>
+    <string name="session_device_platform">Platform</string>
+    <string name="session_device_connection">Connection</string>
+    <string name="session_device_trust">Trust</string>
+    <string name="session_close_image_preview">Close image preview</string>
     <string name="session_open_received_file">Open received file</string>
     <string name="session_cancel_transfer">Cancel transfer</string>
     <string name="session_retry_transfer">Retry transfer</string>
@@ -121,6 +129,7 @@
     <string name="session_error_clipboard_foreground">Open UniShare before reading the clipboard.</string>
     <string name="session_error_content_permission">Keep access to the selected item before sending.</string>
     <string name="session_error_invalid_link">Enter a valid http or https link.</string>
+    <string name="session_error_forget_failed">Couldn’t forget this device.</string>
     <string name="pairing_title">Pair with %1$s?</string>
     <string name="pairing_detail">Make sure this six-digit code matches on both devices.</string>
     <string name="pairing_code_accessibility">Pairing verification code %1$s</string>

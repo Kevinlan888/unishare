@@ -3,6 +3,7 @@ package com.unishare.app.presentation.session
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.os.ParcelFileDescriptor
+import android.view.View
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
@@ -30,6 +31,12 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
@@ -53,6 +60,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.hamcrest.Matcher
 
 @RunWith(AndroidJUnit4::class)
 class SessionScreenTest {
@@ -137,7 +145,7 @@ class SessionScreenTest {
     }
 
     @Test
-    fun decorative_download_and_emoji_icons_do_not_announce_false_actions() {
+    fun decorative_download_icon_does_not_announce_a_false_action() {
         setSessionContent(
             activities = listOf(
                 activity(
@@ -151,10 +159,85 @@ class SessionScreenTest {
         )
 
         composeRule.onNodeWithContentDescription("Open received file").assertDoesNotExist()
-        composeRule.onNodeWithContentDescription("Choose emoji").assertDoesNotExist()
         composeRule.onNodeWithText("received.pdf").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Transfer completed").assertExists()
         composeRule.onNodeWithText("Type a message…").assertIsDisplayed()
+    }
+
+    @Test
+    fun emoji_button_opens_the_full_androidx_picker() {
+        setSessionContent()
+
+        composeRule.onNodeWithContentDescription("Choose emoji").performClick()
+
+        waitForDisplayedView(withText("SMILEYS AND EMOTIONS"))
+    }
+
+    @Test
+    fun emoji_picker_appends_multiple_selected_emoji() {
+        var state by mutableStateOf(baseState())
+        setSessionContent(
+            stateProvider = { state },
+            onComposerChanged = { state = state.copy(composerText = it) },
+        )
+
+        composeRule.onNodeWithContentDescription("Choose emoji").performClick()
+        waitForDisplayedView(withContentDescription("😀 emoji"))
+        onView(withContentDescription("😀 emoji")).perform(click())
+        waitForDisplayedView(withContentDescription("😃 emoji"))
+        onView(withContentDescription("😃 emoji")).perform(click())
+
+        composeRule.onNodeWithText("😀😃").assertIsDisplayed()
+    }
+
+    @Test
+    fun completed_image_opens_and_closes_an_in_app_preview() {
+        setSessionContent(
+            activities = listOf(
+                activity(
+                    "photo",
+                    ShareDirection.INCOMING,
+                    kind = ContentKind.IMAGE,
+                    name = "photo.jpg",
+                    imageBitmap = sampleMountainLake(),
+                ),
+            ),
+        )
+
+        composeRule.onNode(
+            hasContentDescription("Image attachment photo.jpg") and hasClickAction(),
+        ).performClick()
+        composeRule.onNodeWithContentDescription("Close image preview").assertIsDisplayed()
+
+        composeRule.onNodeWithContentDescription("Close image preview").performClick()
+        composeRule.onNodeWithContentDescription("Close image preview").assertDoesNotExist()
+    }
+
+    @Test
+    fun overflow_menu_opens_device_information() {
+        setSessionContent(stateProvider = { baseState().copy(connected = true) })
+
+        composeRule.onNodeWithContentDescription("More options").performClick()
+        composeRule.onNodeWithText("Device information").performClick()
+
+        composeRule.onNodeWithText("Device information").assertIsDisplayed()
+        composeRule.onNodeWithText("Platform").assertIsDisplayed()
+        composeRule.onNodeWithText("Connection").assertIsDisplayed()
+        composeRule.onNodeWithText("Trust").assertIsDisplayed()
+    }
+
+    @Test
+    fun forgetting_from_overflow_requires_confirmation_before_invoking_the_action() {
+        var forgetCalls = 0
+        setSessionContent(onForgetDevice = { forgetCalls++ })
+
+        composeRule.onNodeWithContentDescription("More options").performClick()
+        composeRule.onNodeWithText("Forget device").performClick()
+        assertEquals(0, forgetCalls)
+        composeRule.onNodeWithText("Forget Kevin's Windows PC?").assertIsDisplayed()
+
+        composeRule.onNodeWithText("Forget").performClick()
+        assertEquals(1, forgetCalls)
     }
 
     @Test
@@ -320,6 +403,12 @@ class SessionScreenTest {
         ParcelFileDescriptor.AutoCloseInputStream(result).use { it.readBytes() }
     }
 
+    private fun waitForDisplayedView(matcher: Matcher<View>) {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runCatching { onView(matcher).check(matches(isDisplayed())) }.isSuccess
+        }
+    }
+
     private fun setSessionContent(
         activities: List<SessionActivityUi> = emptyList(),
         stateProvider: (() -> SessionUiState)? = null,
@@ -327,6 +416,8 @@ class SessionScreenTest {
         onText: () -> Unit = {},
         onLink: () -> Unit = {},
         onSend: () -> Unit = {},
+        onComposerChanged: (String) -> Unit = {},
+        onForgetDevice: () -> Unit = {},
         fontScale: Float = 1f,
         inNavigationHost: Boolean = false,
     ) {
@@ -349,8 +440,8 @@ class SessionScreenTest {
                         SessionScreen(
                             state = stateProvider?.invoke() ?: baseState().copy(activities = activities),
                             onBack = {},
-                            onMore = {},
-                            onComposerChanged = {},
+                            onForgetDevice = onForgetDevice,
+                            onComposerChanged = onComposerChanged,
                             onSend = onSend,
                             onAddAttachment = onAdd,
                             onDismissShareSheet = {},

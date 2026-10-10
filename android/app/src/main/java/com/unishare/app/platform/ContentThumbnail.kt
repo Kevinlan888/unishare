@@ -20,6 +20,7 @@ fun ContentUriThumbnail(
     reference: String,
     contentDescription: String,
     modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
     fallback: @Composable () -> Unit,
 ) {
     val resolver = LocalContext.current.contentResolver
@@ -35,7 +36,7 @@ fun ContentUriThumbnail(
         Image(
             bitmap = image,
             contentDescription = contentDescription,
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
             modifier = modifier,
         )
     }

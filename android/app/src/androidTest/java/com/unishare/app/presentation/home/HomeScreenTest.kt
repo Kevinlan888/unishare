@@ -285,7 +285,7 @@ class HomeScreenTest(
                         trusted = true,
                     ),
                     onBack = onBack,
-                    onMore = {},
+                    onForgetDevice = {},
                     onComposerChanged = {},
                     onSend = {},
                     onAddAttachment = {},
