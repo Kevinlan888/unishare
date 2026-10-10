@@ -5,10 +5,13 @@ import androidx.datastore.preferences.core.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-class DataStoreSettingsRepository(private val store: DataStore<Preferences>) : SettingsRepository {
+class DataStoreSettingsRepository(
+    private val store: DataStore<Preferences>,
+    private val defaultDeviceName: String,
+) : SettingsRepository {
     override val settings: Flow<AppSettings> = store.data.map { preferences ->
         AppSettings(
-            deviceName = preferences[DEVICE_NAME] ?: "UniShare",
+            deviceName = preferences[DEVICE_NAME] ?: defaultDeviceName,
             receiveTreeUri = preferences[RECEIVE_TREE_URI],
             receiveDirectoryDisplayName = preferences[RECEIVE_DIRECTORY_DISPLAY_NAME],
             backgroundReceiveEnabled = preferences[BACKGROUND_RECEIVE] ?: false,

@@ -17,6 +17,7 @@ import com.unishare.app.data.transfer.TransferCoordinator
 import com.unishare.app.domain.ActivityTracker
 import com.unishare.app.platform.AndroidNotificationPermissionChecker
 import com.unishare.app.platform.AndroidContentUriPermissionRetainer
+import com.unishare.app.platform.AndroidDeviceNameProvider
 import com.unishare.app.platform.AppLocaleResources
 import kotlinx.coroutines.flow.filterNotNull
 import com.unishare.app.service.ForegroundServiceController
@@ -62,7 +63,10 @@ class AppGraph(application: Application) {
     private val settingsStore = PreferenceDataStoreFactory.create(scope = scope) {
         application.preferencesDataStoreFile("settings")
     }
-    val settingsRepository = DataStoreSettingsRepository(settingsStore)
+    val settingsRepository = DataStoreSettingsRepository(
+        settingsStore,
+        AndroidDeviceNameProvider(application.contentResolver).deviceName(),
+    )
     val localeResources = AppLocaleResources(application, settingsRepository.settings, scope)
 
     private val activityDatabase = Room.databaseBuilder(

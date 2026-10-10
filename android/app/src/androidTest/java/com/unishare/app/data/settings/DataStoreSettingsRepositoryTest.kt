@@ -40,6 +40,21 @@ class DataStoreSettingsRepositoryTest {
         assertNull(settings.receiveDirectoryDisplayName)
     }
 
+    @Test fun firstReadUsesInjectedDeviceNameDefault() = runBlocking {
+        recreate(defaultDeviceName = "Pixel 10a")
+
+        assertEquals("Pixel 10a", repository.settings.first().deviceName)
+    }
+
+    @Test fun savedDeviceNameWinsWhenInjectedDefaultChanges() = runBlocking {
+        recreate(defaultDeviceName = "Pixel 10a")
+        repository.setDeviceName("My phone")
+
+        recreate(defaultDeviceName = "Different system name")
+
+        assertEquals("My phone", repository.settings.first().deviceName)
+    }
+
     @Test fun everySetterSurvivesRepositoryAndDataStoreRecreation() = runBlocking {
         repository.setDeviceName("  Laptop  ")
         repository.setReceiveDirectory("content://provider/tree/1", "C:\\private\\Transfers\n")
@@ -81,15 +96,18 @@ class DataStoreSettingsRepositoryTest {
         assertEquals("Folder", repository.settings.first().receiveDirectoryDisplayName)
     }
 
-    private suspend fun recreate() {
+    private suspend fun recreate(defaultDeviceName: String = "UniShare") {
         scope.coroutineContext[Job]!!.cancelAndJoin()
-        openRepository()
+        openRepository(defaultDeviceName)
     }
 
-    private fun openRepository() {
+    private fun openRepository(defaultDeviceName: String = "UniShare") {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        repository = DataStoreSettingsRepository(PreferenceDataStoreFactory.create(scope = scope) {
-            File(directory, "settings.preferences_pb")
-        })
+        repository = DataStoreSettingsRepository(
+            store = PreferenceDataStoreFactory.create(scope = scope) {
+                File(directory, "settings.preferences_pb")
+            },
+            defaultDeviceName = defaultDeviceName,
+        )
     }
 }
