@@ -295,7 +295,7 @@ private fun UniShareBottomNavigation(selectedRoute: String, onSelect: (TopLevelI
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
                         selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .58f),
                         unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),

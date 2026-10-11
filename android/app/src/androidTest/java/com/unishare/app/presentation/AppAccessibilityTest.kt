@@ -110,7 +110,7 @@ class AppAccessibilityTest {
         setContent { HistoryScreen(HistoryUiState(rows = listOf(HistoryRow(item, "Studio PC", false))), {}, {}) }
         rule.onNodeWithText("Content unavailable").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Open").assertIsNotEnabled()
-        rule.onNodeWithText("Transfer completed").assertExists()
+        rule.onNodeWithContentDescription("Transfer completed").assertExists()
     }
     @Test fun denied_settings_offer_system_recovery_with_background_switch_off() {
         var opens = 0

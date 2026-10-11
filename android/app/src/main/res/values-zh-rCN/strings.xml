@@ -58,7 +58,7 @@
     <string name="device_icon_ios">iOS 设备</string>
     <string name="device_icon_unknown">设备</string>
     <string name="screen_devices_title">设备管理</string>
-    <string name="screen_history_title">传输历史</string>
+    <string name="screen_history_title">历史</string>
     <string name="screen_settings_title">设置</string>
     <string name="screen_session_title">设备会话</string>
     <string name="screen_receive_title">接收</string>
@@ -176,6 +176,16 @@
     <string name="devices_forget_detail">再次向此设备分享前需要重新配对。</string>
     <string name="devices_action_failed">设备操作未完成，请重试。</string>
     <string name="history_search">搜索历史</string>
+    <string name="history_all_devices">全部设备</string>
+    <string name="history_all_types">全部类型</string>
+    <string name="history_filters">筛选</string>
+    <string name="history_today">今天</string>
+    <string name="history_yesterday">昨天</string>
+    <string name="history_document">文档</string>
+    <string name="history_open">打开</string>
+    <string name="history_details">详情</string>
+    <string name="history_reset">重置</string>
+    <string name="history_done">完成</string>
     <string name="history_device">设备</string>
     <string name="history_unknown_device">未知设备（%1$s）</string>
     <string name="history_direction">方向</string>

@@ -142,12 +142,21 @@ class MainActivity : ComponentActivity() {
                         devicesContent = { open -> DevicesScreen(devicesState, devicesViewModel::connect, devicesViewModel::requestForget, devicesViewModel::confirmForget, devicesViewModel::dismissForget, open) },
                         historyContent = {
                             val historyState by historyViewModel.uiState.collectAsStateWithLifecycle()
-                            HistoryScreen(historyState, historyViewModel::setQuery) { id -> uiScope.launch {
-                            historyViewModel.openFinalContent(id)?.let { uri ->
-                                val mime = historyState.rows.find { it.activity.id == id }?.activity?.mimeType ?: "application/octet-stream"
-                                openPublishedContent(uri, mime)
-                            }
-                        } } },
+                            HistoryScreen(
+                                state = historyState,
+                                onQuery = historyViewModel::setQuery,
+                                onOpen = { id ->
+                                    uiScope.launch {
+                                        historyViewModel.openFinalContent(id)?.let { uri ->
+                                            val mime = historyState.rows.find { it.activity.id == id }?.activity?.mimeType
+                                                ?: "application/octet-stream"
+                                            openPublishedContent(uri, mime)
+                                        }
+                                    }
+                                },
+                                loadPreview = graph.activityRepository::loadPreview,
+                            )
+                        },
                         settingsContent = { SettingsScreen(settingsState, settingsViewModel::saveDeviceName, { enabled ->
                             settingsViewModel.requestBackgroundReceive(enabled, AndroidNotificationPermissionChecker(this).isGranted(), lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
                         }, settingsViewModel::setNotifications, settingsViewModel::setLanguage, settingsViewModel::setTheme,

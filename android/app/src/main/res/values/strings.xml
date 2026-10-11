@@ -58,7 +58,7 @@
     <string name="device_icon_ios">iOS device</string>
     <string name="device_icon_unknown">Device</string>
     <string name="screen_devices_title">Your devices</string>
-    <string name="screen_history_title">Transfer history</string>
+    <string name="screen_history_title">History</string>
     <string name="screen_settings_title">Settings</string>
     <string name="screen_session_title">Device session</string>
     <string name="screen_receive_title">Receive</string>
@@ -177,6 +177,16 @@
     <string name="devices_forget_detail">You will need to pair again before sharing with this device.</string>
     <string name="devices_action_failed">Couldn’t complete the device action. Try again.</string>
     <string name="history_search">Search history</string>
+    <string name="history_all_devices">All devices</string>
+    <string name="history_all_types">All types</string>
+    <string name="history_filters">Filters</string>
+    <string name="history_today">Today</string>
+    <string name="history_yesterday">Yesterday</string>
+    <string name="history_document">Document</string>
+    <string name="history_open">Open</string>
+    <string name="history_details">Details</string>
+    <string name="history_reset">Reset</string>
+    <string name="history_done">Done</string>
     <string name="history_device">Device</string>
     <string name="history_unknown_device">Unknown device (%1$s)</string>
     <string name="history_direction">Direction</string>
