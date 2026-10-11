@@ -138,6 +138,7 @@ fun SessionRoute(
         onLink = viewModel::selectLinkComposer,
         onCancel = viewModel::cancel,
         onRetry = viewModel::retry,
+        onLoadPreview = viewModel::loadPreview,
         snackbarHostState = snackbar,
     )
 }
@@ -161,6 +162,7 @@ fun SessionScreen(
     onRetry: (ActivityKey) -> Unit,
     modifier: Modifier = Modifier,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    onLoadPreview: suspend (ActivityKey) -> com.unishare.app.domain.ActivityPreview? = { null },
 ) {
     val listState = rememberLazyListState()
     val locale = LocalConfiguration.current.locales[0]
@@ -252,6 +254,7 @@ fun SessionScreen(
                     onCancel = onCancel,
                     onRetry = onRetry,
                     onOpenImage = { previewedImage = it },
+                    loadPreview = onLoadPreview,
                 )
                 }
             }

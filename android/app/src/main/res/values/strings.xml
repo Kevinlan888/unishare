@@ -96,7 +96,7 @@
     <string name="session_text_detail">Send text</string>
     <string name="session_link">Link</string>
     <string name="session_link_detail">Send link</string>
-    <string name="session_text_unavailable">Text content is available only in the current session.</string>
+    <string name="session_text_unavailable">Text content is unavailable.</string>
     <string name="session_image_preview">Image attachment %1$s</string>
     <string name="session_image_unavailable">This image is no longer available.</string>
     <string name="session_device_information">Device information</string>
@@ -214,7 +214,7 @@
     <string name="settings_light">Light</string>
     <string name="settings_dark">Dark</string>
     <string name="settings_storage">Storage</string>
-    <string name="settings_storage_detail">History stores transfer summaries only, up to 500 per device for 30 days. Text and clipboard contents are not saved.</string>
+    <string name="settings_storage_detail">History keeps direct text and small image previews with transfer summaries, up to 500 per device for 30 days. Clipboard content is not saved.</string>
     <string name="settings_about">About</string>
     <string name="settings_version">UniShare 0.1.0 · Local network sharing</string>
     <string name="formatted_bytes">%1$s %2$s</string>

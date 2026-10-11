@@ -95,7 +95,7 @@
     <string name="session_text_detail">发送文本</string>
     <string name="session_link">链接</string>
     <string name="session_link_detail">发送链接</string>
-    <string name="session_text_unavailable">文本内容仅在当前会话中可用。</string>
+    <string name="session_text_unavailable">文本内容不可用。</string>
     <string name="session_image_preview">图片附件 %1$s</string>
     <string name="session_image_unavailable">此图片已不可用。</string>
     <string name="session_device_information">设备信息</string>
@@ -213,7 +213,7 @@
     <string name="settings_light">浅色</string>
     <string name="settings_dark">深色</string>
     <string name="settings_storage">存储</string>
-    <string name="settings_storage_detail">历史仅保存传输摘要，每台设备最多保留 500 条且不超过 30 天，不保存文本或剪贴板正文。</string>
+    <string name="settings_storage_detail">历史会保存普通文本和小型图片预览，每台设备最多保留 500 条且不超过 30 天；剪贴板内容不会保存。</string>
     <string name="settings_about">关于</string>
     <string name="settings_version">UniShare 0.1.0 · 局域网分享</string>
     <string name="formatted_bytes">%1$s %2$s</string>

@@ -68,6 +68,7 @@ class TransferCoordinator internal constructor(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis,
     private val idFactory: () -> ActivityKey = { ActivityKey(UUID.randomUUID().toString()) },
+    private val imagePreviewEncoder: (Uri) -> ByteArray? = { null },
 ) {
     constructor(
         session: ShareSessionManager,
@@ -80,6 +81,7 @@ class TransferCoordinator internal constructor(
         ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
         clock: () -> Long = System::currentTimeMillis,
         idFactory: () -> ActivityKey = { ActivityKey(UUID.randomUUID().toString()) },
+        imagePreviewEncoder: (Uri) -> ByteArray? = { null },
     ) : this(
         session, tracker, devices, settings,
         object : StagingAccess {
@@ -89,7 +91,7 @@ class TransferCoordinator internal constructor(
         ContentPublication { prepared, name, mime, destination ->
             receivePublisher.publish(prepared, name, mime, destination).toString()
         },
-        scope, ioDispatcher, clock, idFactory,
+        scope, ioDispatcher, clock, idFactory, imagePreviewEncoder,
     )
 
     private enum class OfferDecision { PENDING, ACCEPTING, REJECTING, DONE }
@@ -391,7 +393,7 @@ class TransferCoordinator internal constructor(
         return activity.id
     }
 
-    private fun submitContent(
+    private suspend fun submitContent(
         deviceId: DeviceKey,
         content: SelectedContent,
         origin: ShareOrigin,
@@ -399,6 +401,14 @@ class TransferCoordinator internal constructor(
         ownedStaging: TransferKey?,
     ): ActivityKey {
         val activity = outgoingActivity(deviceId, content.kind, origin, content.displayName, content.mimeType, content.byteCount, retryOf)
+        val imagePreview = if (content.kind == ContentKind.IMAGE) {
+            try {
+                withContext(ioDispatcher) { imagePreviewEncoder(content.uri) }
+            } catch (failure: Exception) {
+                content.readPermission?.close()
+                throw failure
+            }
+        } else null
         synchronized(gate) {
             retryPayloads[activity.id] = RetryPayload.Content(content, origin)
             ownedStaging?.let { outgoingStaging[activity.id] = it }
@@ -407,7 +417,7 @@ class TransferCoordinator internal constructor(
             tracker.reserve(
                 activity,
                 preview = if (content.kind == ContentKind.IMAGE) {
-                    ActivityPreview.Image(content.uri.toString())
+                    ActivityPreview.Image(content.uri.toString(), imagePreview)
                 } else null,
             )
         } catch (failure: Exception) {

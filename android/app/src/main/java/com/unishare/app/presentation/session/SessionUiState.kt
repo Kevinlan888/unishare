@@ -24,6 +24,7 @@ data class SessionActivityUi(
     val text: String? = null,
     val previewReference: String? = null,
     val previewBitmap: ImageBitmap? = null,
+    val previewBytes: ByteArray? = null,
     val rateBytesPerSecond: Long? = null,
     val etaSeconds: Long? = null,
     val errorKind: ShareErrorKind? = null,

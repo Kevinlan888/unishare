@@ -72,8 +72,13 @@ data class ShareActivity(
     val finalContentUri: String? = null,
 )
 
-/** Process-only content: keep outside history records and persistence entities. */
+/** Preview content lives outside activity summaries; direct content is persisted with its activity. */
 sealed interface ActivityPreview {
-    data class Text(val text: String) : ActivityPreview
-    data class Image(val reference: String) : ActivityPreview
+    data class Text(val text: String) : ActivityPreview {
+        override fun toString(): String = "Text(length=${text.length})"
+    }
+
+    data class Image(val reference: String, val encodedBytes: ByteArray? = null) : ActivityPreview {
+        override fun toString(): String = "Image(hasEncodedBytes=${encodedBytes != null})"
+    }
 }

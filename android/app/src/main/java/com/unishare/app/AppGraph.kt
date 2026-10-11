@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import com.unishare.app.data.content.AndroidReceivePublisher
+import com.unishare.app.data.content.AndroidImagePreviewEncoder
 import com.unishare.app.data.content.StagingStore
 import com.unishare.app.data.device.DefaultDeviceRepository
 import com.unishare.app.data.history.ActivityDatabase
@@ -73,7 +74,7 @@ class AppGraph(application: Application) {
         application,
         ActivityDatabase::class.java,
         "unishare-activity.db",
-    ).build()
+    ).addMigrations(ActivityDatabase.MIGRATION_1_2).build()
     val activityRepository = RoomActivityRepository(activityDatabase)
 
     private val sessionComposition = AppSessionComposition(
@@ -88,6 +89,7 @@ class AppGraph(application: Application) {
     val activityTracker = ActivityTracker(activityRepository, scope)
     val stagingStore = StagingStore(application)
     val receivePublisher = AndroidReceivePublisher(application)
+    private val imagePreviewEncoder = AndroidImagePreviewEncoder(application.contentResolver)
     val selectedContentResolver = SelectedContentResolver(application.contentResolver)
     val contentUriPermissionRetainer = AndroidContentUriPermissionRetainer(application)
     val transferCoordinator = TransferCoordinator(
@@ -98,6 +100,7 @@ class AppGraph(application: Application) {
         stagingStore = stagingStore,
         receivePublisher = receivePublisher,
         scope = scope,
+        imagePreviewEncoder = imagePreviewEncoder::encode,
     )
     private val shareNotifications = ShareNotificationFactory(application, localeResources)
     @Suppress("unused") // Keeps the application-scope collector owned by this graph.

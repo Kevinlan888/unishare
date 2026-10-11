@@ -43,6 +43,14 @@ interface ActivityDao {
 
     @Upsert suspend fun upsert(activity: ActivityEntity)
 
+    @Upsert suspend fun upsertPreview(preview: ActivityPreviewEntity)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM activities WHERE id = :activityId)")
+    suspend fun activityExists(activityId: String): Boolean
+
+    @Query("SELECT * FROM activity_previews WHERE activityId = :activityId")
+    suspend fun loadPreview(activityId: String): ActivityPreviewEntity?
+
     @Query("""
         UPDATE activities SET status = 'FAILED', errorKind = 'INTERRUPTED',
             updatedAt = MAX(updatedAt, createdAt, :nowMillis),

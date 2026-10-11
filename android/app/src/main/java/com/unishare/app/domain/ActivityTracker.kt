@@ -31,7 +31,12 @@ class ActivityTracker(
         val hydrated: CompletableDeferred<Unit> = CompletableDeferred(),
     )
 
-    private data class Persist(val deviceId: DeviceKey, val activity: ShareActivity)
+    private sealed interface Persist {
+        val deviceId: DeviceKey
+
+        data class Activity(override val deviceId: DeviceKey, val activity: ShareActivity) : Persist
+        data class Preview(override val deviceId: DeviceKey, val activityId: ActivityKey, val preview: ActivityPreview) : Persist
+    }
 
     private val gate = Any()
     private val devices = LinkedHashMap<DeviceKey, DeviceState>()
@@ -47,7 +52,10 @@ class ActivityTracker(
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             for (write in persistence) {
                 stateFor(write.deviceId).hydrated.await()
-                repository.upsert(write.activity)
+                when (write) {
+                    is Persist.Activity -> repository.upsert(write.activity)
+                    is Persist.Preview -> repository.upsertPreview(write.activityId, write.preview)
+                }
             }
         }
     }
@@ -66,8 +74,18 @@ class ActivityTracker(
 
     fun preview(activityId: ActivityKey): ActivityPreview? = synchronized(gate) { previews[activityId] }
 
+    suspend fun loadPreview(activityId: ActivityKey): ActivityPreview? {
+        synchronized(gate) { previews[activityId] }?.let { return it }
+        val loaded = repository.loadPreview(activityId) ?: return null
+        return synchronized(gate) { previews.getOrPut(activityId) { loaded } }
+    }
+
     fun setPreview(activityId: ActivityKey, preview: ActivityPreview) = synchronized(gate) {
-        if (activityId in byId) previews[activityId] = preview
+        val activity = byId[activityId] ?: return@synchronized
+        previews[activityId] = preview
+        if (activity.origin != ShareOrigin.CLIPBOARD) {
+            check(persistence.trySend(Persist.Preview(activity.deviceId, activityId, preview)).isSuccess)
+        }
     }
 
     fun reserve(activity: ShareActivity, preview: ActivityPreview? = null): ActivityKey = synchronized(gate) {
@@ -78,9 +96,14 @@ class ActivityTracker(
         state.liveIds += sanitized.id
         byId[sanitized.id] = sanitized
         sanitized.operationId?.let { claimOperation(sanitized.id, it) }
-        preview?.let { previews[sanitized.id] = it }
         publish(state)
         enqueue(sanitized)
+        preview?.let {
+            previews[sanitized.id] = it
+            if (sanitized.origin != ShareOrigin.CLIPBOARD) {
+                check(persistence.trySend(Persist.Preview(sanitized.deviceId, sanitized.id, it)).isSuccess)
+            }
+        }
         sanitized.transferId?.let { transferId ->
             if (claimTransfer(sanitized.id, transferId)) {
                 pendingEvents.remove(transferId).orEmpty().forEach { update(sanitized.id, it) }
@@ -123,8 +146,7 @@ class ActivityTracker(
             errorKind = null,
             finalContentUri = null,
         )
-        previews[originalId]?.let { previews[retry.id] = it }
-        reserve(retry)
+        reserve(retry, previews[originalId])
     }
 
     fun bindOperation(activityId: ActivityKey, operationId: OperationKey, atMillis: Long) = synchronized(gate) {
@@ -269,7 +291,7 @@ class ActivityTracker(
     }
 
     private fun enqueue(activity: ShareActivity) {
-        check(persistence.trySend(Persist(activity.deviceId, sanitize(activity))).isSuccess)
+        check(persistence.trySend(Persist.Activity(activity.deviceId, sanitize(activity))).isSuccess)
     }
 
     private fun sanitize(activity: ShareActivity): ShareActivity {

@@ -2,6 +2,8 @@ package com.unishare.app.data.history
 
 import androidx.room.withTransaction
 import com.unishare.app.domain.DeviceKey
+import com.unishare.app.domain.ActivityKey
+import com.unishare.app.domain.ActivityPreview
 import com.unishare.app.domain.ShareActivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -40,6 +42,16 @@ class RoomActivityRepository(
             pruneRows(clock())
         }
     }
+
+    override suspend fun upsertPreview(activityId: ActivityKey, preview: ActivityPreview) {
+        val entity = ActivityPreviewEntity.fromDomain(activityId, preview) ?: return
+        database.withTransaction {
+            if (dao.activityExists(activityId.value)) dao.upsertPreview(entity)
+        }
+    }
+
+    override suspend fun loadPreview(activityId: ActivityKey): ActivityPreview? =
+        dao.loadPreview(activityId.value)?.toDomain()
 
     override suspend fun markNonTerminalInterrupted(nowMillis: Long) {
         database.withTransaction {

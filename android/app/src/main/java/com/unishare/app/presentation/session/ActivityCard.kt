@@ -1,5 +1,6 @@
 package com.unishare.app.presentation.session
 
+import android.graphics.BitmapFactory
 import android.text.format.DateFormat
 import com.unishare.app.presentation.format.DisplayFormatters
 import androidx.compose.foundation.Image
@@ -35,11 +36,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -51,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unishare.app.R
 import com.unishare.app.domain.ActivityKey
+import com.unishare.app.domain.ActivityPreview
 import com.unishare.app.domain.ActivityStatus
 import com.unishare.app.domain.ContentKind
 import com.unishare.app.domain.ShareDirection
@@ -58,6 +63,9 @@ import com.unishare.app.domain.ShareOrigin
 import com.unishare.app.domain.ShareErrorKind
 import com.unishare.app.platform.ContentUriThumbnail
 import java.util.Date
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ActivityCard(
@@ -66,7 +74,47 @@ fun ActivityCard(
     onRetry: (ActivityKey) -> Unit,
     onOpenImage: (SessionActivityUi) -> Unit = {},
     modifier: Modifier = Modifier,
+    loadPreview: suspend (ActivityKey) -> ActivityPreview? = { null },
 ) {
+    val needsStoredPreview = (activity.kind == ContentKind.TEXT && activity.text == null) ||
+        (activity.kind == ContentKind.IMAGE && activity.previewBitmap == null &&
+            activity.previewBytes == null && activity.previewReference == null)
+    val storedPreview by produceState<ActivityPreview?>(
+        initialValue = null,
+        activity.id,
+        activity.kind,
+        activity.text,
+        activity.previewReference,
+    ) {
+        value = if (needsStoredPreview) {
+            try {
+                loadPreview(activity.id)
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+    }
+    val storedText = (storedPreview as? ActivityPreview.Text)?.text
+    val storedImage = storedPreview as? ActivityPreview.Image
+    val encodedPreview = activity.previewBytes ?: storedImage?.encodedBytes
+    val restoredBitmap by produceState(
+        initialValue = activity.previewBitmap,
+        activity.previewBitmap,
+        encodedPreview,
+    ) {
+        value = activity.previewBitmap ?: encodedPreview?.let { bytes ->
+            withContext(Dispatchers.IO) {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+            }
+        }
+    }
+    val displayActivity = activity.copy(
+        text = activity.text ?: storedText,
+        previewReference = activity.previewReference ?: storedImage?.reference?.takeIf(String::isNotBlank),
+        previewBitmap = activity.previewBitmap ?: restoredBitmap,
+    )
     val outgoing = activity.direction == ShareDirection.OUTGOING
     val stateDescription = activityStatusDescription(activity.status)
     val visibleTerminal = activity.status in setOf(ActivityStatus.FAILED, ActivityStatus.REJECTED, ActivityStatus.CANCELLED)
@@ -93,13 +141,13 @@ fun ActivityCard(
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 when (activity.kind) {
-                    ContentKind.TEXT -> TextActivityContent(activity)
-                    ContentKind.IMAGE -> ImageActivityContent(activity, onCancel, onRetry, onOpenImage)
+                    ContentKind.TEXT -> TextActivityContent(displayActivity)
+                    ContentKind.IMAGE -> ImageActivityContent(displayActivity, onCancel, onRetry, onOpenImage)
                     ContentKind.FILE -> FileActivityContent(activity, onCancel, onRetry)
                 }
                 if (activity.kind == ContentKind.TEXT) {
                     Spacer(Modifier.height(7.dp))
-                    ActivityMeta(activity, onCancel, onRetry)
+                    ActivityMeta(displayActivity, onCancel, onRetry)
                 }
                 if (visibleTerminal) {
                     Text(stateDescription, style = MaterialTheme.typography.labelMedium)

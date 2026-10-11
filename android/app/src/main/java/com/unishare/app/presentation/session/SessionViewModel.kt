@@ -83,6 +83,7 @@ class SessionViewModel(
     private val operations: SessionOperations,
     private val awaitRuntime: suspend () -> Unit = {},
     private val pairingState: Flow<PairingUiState> = MutableStateFlow(PairingUiState()),
+    private val storedPreviewFor: suspend (ActivityKey) -> ActivityPreview? = { null },
 ) : ViewModel() {
     private data class RateSample(
         val bytes: Long,
@@ -314,6 +315,9 @@ class SessionViewModel(
         }
     }
 
+    suspend fun loadPreview(activityId: ActivityKey): ActivityPreview? =
+        previewFor(activityId) ?: storedPreviewFor(activityId)
+
     private suspend fun ensureConnection(waitForDiscovery: Boolean = false) {
         awaitRuntime()
         if (waitForDiscovery) withTimeout(30_000) {
@@ -379,6 +383,7 @@ class SessionViewModel(
             timestampMillis = activity.updatedAtMillis,
             text = (preview as? ActivityPreview.Text)?.text,
             previewReference = (preview as? ActivityPreview.Image)?.reference ?: activity.finalContentUri,
+            previewBytes = (preview as? ActivityPreview.Image)?.encodedBytes,
             rateBytesPerSecond = computedRate,
             etaSeconds = eta,
             errorKind = activity.errorKind,
@@ -403,6 +408,7 @@ class SessionViewModel(
                 ),
                 awaitRuntime = graph.runtimeController::awaitForegroundReady,
                 pairingState = graph.pairingCoordinator.uiState,
+                storedPreviewFor = graph.activityTracker::loadPreview,
             ) as T
         }
     }

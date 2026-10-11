@@ -1,6 +1,8 @@
 package com.unishare.app.data.history
 
 import com.unishare.app.domain.DeviceKey
+import com.unishare.app.domain.ActivityKey
+import com.unishare.app.domain.ActivityPreview
 import com.unishare.app.domain.ShareActivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -19,6 +21,8 @@ interface ActivityRepository {
     fun observeRecent(limit: Int): Flow<List<ShareActivity>>
     fun observeDevice(device: DeviceKey): Flow<List<ShareActivity>>
     suspend fun upsert(activity: ShareActivity)
+    suspend fun upsertPreview(activityId: ActivityKey, preview: ActivityPreview) = Unit
+    suspend fun loadPreview(activityId: ActivityKey): ActivityPreview? = null
     suspend fun markNonTerminalInterrupted(nowMillis: Long)
     suspend fun prune(nowMillis: Long)
 }

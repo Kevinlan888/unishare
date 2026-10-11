@@ -6,7 +6,7 @@ import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import com.unishare.app.domain.*
 
-/** Only summary metadata belongs here; payloads and sending source URIs have no columns. */
+/** Summary metadata only; message bodies and image thumbnails live in ActivityPreviewEntity. */
 @Entity(tableName = "activities", indices = [
     Index(value = ["deviceId", "updatedAt"]),
     Index(value = ["status", "updatedAt"]),
